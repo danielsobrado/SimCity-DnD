@@ -1,0 +1,146 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0f1411;
+  color: #edf3ee;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+button, input { font: inherit; }
+
+.editor-shell {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  background: #111713;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid #2c3930;
+  background: #172019;
+  overflow-y: auto;
+}
+
+.sidebar-header { padding: 18px 18px 14px; border-bottom: 1px solid #2c3930; }
+.sidebar-header h1 { margin: 0; font-size: 18px; font-weight: 650; }
+.sidebar-header p { margin: 6px 0 0; color: #9eaea2; font-size: 13px; }
+.panel { padding: 14px 16px; border-bottom: 1px solid #2c3930; }
+.panel h2 {
+  margin: 0 0 10px;
+  color: #cfd9d1;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tile-palette { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tile-button, .brush-button, .action-button {
+  border: 1px solid #36463b;
+  border-radius: 8px;
+  background: #202b23;
+  color: #e5eee7;
+  cursor: pointer;
+}
+.tile-button:hover, .brush-button:hover, .action-button:hover { border-color: #5f7967; background: #28352c; }
+.tile-button.is-active, .brush-button.is-active {
+  border-color: #d4b65e;
+  box-shadow: inset 0 0 0 1px #d4b65e;
+  background: #343522;
+}
+.tile-button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 7px 8px;
+  text-align: left;
+}
+.tile-button__swatch { width: 20px; height: 20px; border: 1px solid rgb(255 255 255 / 25%); border-radius: 5px; }
+.tile-button__label { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.tile-button__shortcut { color: #8fa094; font-size: 11px; }
+.brush-row, .action-grid { display: grid; gap: 8px; }
+.brush-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.brush-button, .action-button { min-height: 36px; padding: 8px; font-size: 13px; }
+.action-button:disabled { cursor: not-allowed; opacity: 0.45; }
+
+.minimap-frame {
+  position: relative;
+  aspect-ratio: 1;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #36463b;
+  border-radius: 8px;
+  background: #0d120f;
+}
+.minimap-frame canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+.help-list { display: grid; gap: 7px; margin: 0; padding: 0; color: #a9b7ad; font-size: 12px; list-style: none; }
+.help-list kbd {
+  display: inline-block;
+  min-width: 48px;
+  margin-right: 7px;
+  padding: 2px 5px;
+  border: 1px solid #425448;
+  border-radius: 4px;
+  background: #111713;
+  color: #dce6de;
+  text-align: center;
+}
+
+.viewport-shell { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #0b100d; }
+.viewport-shell canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.topbar, .statusbar, .toast {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid rgb(255 255 255 / 10%);
+  background: rgb(18 25 20 / 92%);
+  backdrop-filter: blur(8px);
+}
+.topbar {
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 11px;
+  border-radius: 8px;
+  color: #c7d2c9;
+  font-size: 12px;
+}
+.statusbar {
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 14px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  color: #c7d2c9;
+  font-size: 12px;
+}
+.toast {
+  top: 12px;
+  right: 12px;
+  max-width: 340px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #e8efe9;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-5px);
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+.toast.is-visible { opacity: 1; transform: translateY(0); }
+
+@media (max-width: 800px) {
+  .editor-shell { grid-template-columns: 220px minmax(0, 1fr); }
+  .tile-palette { grid-template-columns: 1fr; }
+}
