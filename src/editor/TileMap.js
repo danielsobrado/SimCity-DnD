@@ -1,4 +1,4 @@
-import { MAP_FORMAT_VERSION } from './constants.js';
+import { LEGACY_MAP_FORMAT_VERSION, MAP_FORMAT_VERSION } from './constants.js';
 
 export class TileMap {
   constructor({ width, height, tileSize, defaultTileId }) {
@@ -22,20 +22,14 @@ export class TileMap {
   }
 
   coordinatesOf(index) {
-    return {
-      x: index % this.width,
-      z: Math.floor(index / this.width),
-    };
+    return { x: index % this.width, z: Math.floor(index / this.width) };
   }
 
   get(x, z) {
-    if (!this.inBounds(x, z)) {
-      return null;
-    }
-    return this.tiles[this.indexOf(x, z)];
+    return this.inBounds(x, z) ? this.tiles[this.indexOf(x, z)] : null;
   }
 
-  paintSquare(centerX, centerZ, brushSize, tileId) {
+  paintSquare(centerX, centerZ, brushSize, tileId, canPaint = null) {
     const radius = Math.floor(brushSize / 2);
     const indices = [];
     const before = [];
@@ -46,13 +40,14 @@ export class TileMap {
         if (!this.inBounds(x, z)) {
           continue;
         }
-
         const index = this.indexOf(x, z);
+        if (canPaint && !canPaint(x, z, index, tileId)) {
+          continue;
+        }
         const previous = this.tiles[index];
         if (previous === tileId) {
           continue;
         }
-
         this.tiles[index] = tileId;
         indices.push(index);
         before.push(previous);
@@ -63,12 +58,16 @@ export class TileMap {
     return { indices, before, after };
   }
 
-  fill(tileId) {
+  fill(tileId, canPaint = null) {
     const indices = [];
     const before = [];
     const after = [];
 
     for (let index = 0; index < this.tiles.length; index += 1) {
+      const { x, z } = this.coordinatesOf(index);
+      if (canPaint && !canPaint(x, z, index, tileId)) {
+        continue;
+      }
       const previous = this.tiles[index];
       if (previous === tileId) {
         continue;
@@ -108,7 +107,9 @@ export class TileMap {
   }
 
   loadDocument(document) {
-    if (document?.version !== MAP_FORMAT_VERSION) {
+    const supported = document?.version === MAP_FORMAT_VERSION
+      || document?.version === LEGACY_MAP_FORMAT_VERSION;
+    if (!supported) {
       throw new Error(`Unsupported map version: ${document?.version ?? 'missing'}.`);
     }
     if (document.width !== this.width || document.height !== this.height) {

@@ -2,16 +2,35 @@ import {
   MAX_HISTORY_ENTRIES,
   PAINT_INTERVAL_MS,
   PRIMARY_POINTER_BUTTON,
+  VALID_EDITOR_TOOLS,
 } from './constants.js';
+import { createWorldDocument, loadWorldDocument } from './WorldDocument.js';
 import { TILE_BY_ID, TILE_BY_SHORTCUT } from './tileCatalog.js';
 
 export class EditorController {
-  constructor({ tileMap, terrainView, editorCamera, brushSizes, defaultBrushSize }) {
+  constructor({
+    tileMap,
+    objectMap,
+    terrainView,
+    objectView,
+    editorCamera,
+    objectCatalog,
+    brushSizes,
+    defaultBrushSize,
+  }) {
     this.tileMap = tileMap;
+    this.objectMap = objectMap;
     this.terrainView = terrainView;
+    this.objectView = objectView;
     this.editorCamera = editorCamera;
+    this.objectCatalog = objectCatalog;
     this.brushSizes = brushSizes;
+    this.tool = 'terrain';
     this.selectedTileId = 0;
+    this.selectedObjectKey = objectCatalog[0].key;
+    this.objectRotation = 0;
+    this.selectedObjectId = null;
+    this.movingObjectId = null;
     this.brushSize = brushSizes.includes(defaultBrushSize) ? defaultBrushSize : brushSizes[0];
     this.undoStack = [];
     this.redoStack = [];
@@ -24,6 +43,7 @@ export class EditorController {
     this.listeners = new Set();
     this.mapListeners = new Set();
     this.hoverListeners = new Set();
+    this.noticeListeners = new Set();
 
     this.canvas = terrainView.renderer.domElement;
     this.boundHandlers = {
@@ -62,13 +82,39 @@ export class EditorController {
     return () => this.hoverListeners.delete(listener);
   }
 
+  subscribeNotice(listener) {
+    this.noticeListeners.add(listener);
+    return () => this.noticeListeners.delete(listener);
+  }
+
   getState() {
+    const selectedObject = this.selectedObjectId
+      ? this.objectMap.getById(this.selectedObjectId)
+      : null;
     return {
+      tool: this.tool,
       selectedTileId: this.selectedTileId,
+      selectedObjectKey: this.selectedObjectKey,
+      objectRotation: this.objectRotation,
+      selectedObject,
+      isMovingSelected: this.movingObjectId !== null,
+      objectCount: this.objectMap.size,
       brushSize: this.brushSize,
       canUndo: this.undoStack.length > 0,
       canRedo: this.redoStack.length > 0,
     };
+  }
+
+  selectTool(tool) {
+    if (!VALID_EDITOR_TOOLS.includes(tool)) {
+      return;
+    }
+    this.tool = tool;
+    if (tool !== 'select') {
+      this.setSelectedObject(null);
+    }
+    this.updatePreviews();
+    this.emitState();
   }
 
   selectTile(tileId) {
@@ -76,7 +122,20 @@ export class EditorController {
       return;
     }
     this.selectedTileId = tileId;
-    this.updatePreview();
+    this.tool = 'terrain';
+    this.setSelectedObject(null);
+    this.updatePreviews();
+    this.emitState();
+  }
+
+  selectObjectDefinition(definitionKey) {
+    if (!this.objectMap.definitionByKey.has(definitionKey)) {
+      return;
+    }
+    this.selectedObjectKey = definitionKey;
+    this.tool = 'object';
+    this.setSelectedObject(null);
+    this.updatePreviews();
     this.emitState();
   }
 
@@ -85,49 +144,136 @@ export class EditorController {
       return;
     }
     this.brushSize = brushSize;
-    this.updatePreview();
+    this.updatePreviews();
     this.emitState();
   }
 
-  undo() {
-    const patch = this.undoStack.pop();
-    if (!patch) {
+  rotatePlacement() {
+    this.objectRotation = (this.objectRotation + 1) % 4;
+    this.updatePreviews();
+    this.emitState();
+  }
+
+  rotateSelected() {
+    const before = this.selectedObjectId
+      ? this.objectMap.getById(this.selectedObjectId)
+      : null;
+    if (!before) {
       return;
     }
-    this.tileMap.applyPatch(patch, 'undo');
-    this.terrainView.updatePatch(patch);
-    this.redoStack.push(patch);
+
+    try {
+      const after = this.objectMap.transform(before.id, {
+        x: before.x,
+        z: before.z,
+        rotation: before.rotation + 1,
+      });
+      this.commitHistory({ kind: 'object', before, after });
+      this.refreshObjects();
+      this.emitMap();
+    } catch (error) {
+      this.emitNotice(error.message, true);
+    }
+  }
+
+  startMoveSelected() {
+    if (!this.selectedObjectId) {
+      return;
+    }
+    this.movingObjectId = this.selectedObjectId;
+    this.updatePreviews();
+    this.emitState();
+  }
+
+  deleteSelected() {
+    if (!this.selectedObjectId) {
+      return;
+    }
+    const before = this.objectMap.remove(this.selectedObjectId);
+    if (!before) {
+      return;
+    }
+    this.selectedObjectId = null;
+    this.movingObjectId = null;
+    this.commitHistory({ kind: 'object', before, after: null });
+    this.refreshObjects();
+    this.emitMap();
+  }
+
+  undo() {
+    const entry = this.undoStack.pop();
+    if (!entry) {
+      return;
+    }
+    this.applyHistory(entry, 'undo');
+    this.redoStack.push(entry);
     this.emitMap();
     this.emitState();
   }
 
   redo() {
-    const patch = this.redoStack.pop();
-    if (!patch) {
+    const entry = this.redoStack.pop();
+    if (!entry) {
       return;
     }
-    this.tileMap.applyPatch(patch, 'redo');
-    this.terrainView.updatePatch(patch);
-    this.undoStack.push(patch);
+    this.applyHistory(entry, 'redo');
+    this.undoStack.push(entry);
     this.emitMap();
     this.emitState();
   }
 
-  fill(tileId) {
-    const patch = this.tileMap.fill(tileId);
-    if (patch.indices.length === 0) {
+  applyHistory(entry, direction) {
+    if (entry.kind === 'terrain') {
+      this.tileMap.applyPatch(entry.patch, direction);
+      this.terrainView.updatePatch(entry.patch);
       return;
     }
-    this.terrainView.updatePatch(patch);
-    this.commitPatch(patch);
+
+    if (entry.kind === 'object') {
+      this.objectMap.applyChange(entry, direction);
+      this.refreshObjects();
+      return;
+    }
+
+    if (entry.kind === 'world') {
+      this.tileMap.applyPatch(entry.terrainPatch, direction);
+      this.terrainView.updatePatch(entry.terrainPatch);
+      this.objectMap.replaceAll(direction === 'undo' ? entry.beforeObjects : entry.afterObjects);
+      this.setSelectedObject(null);
+      this.refreshObjects();
+    }
+  }
+
+  clearWorld() {
+    const beforeObjects = this.objectMap.clear();
+    const terrainPatch = this.tileMap.fill(0);
+    if (beforeObjects.length === 0 && terrainPatch.indices.length === 0) {
+      return;
+    }
+
+    this.commitHistory({
+      kind: 'world',
+      terrainPatch,
+      beforeObjects,
+      afterObjects: [],
+    });
+    this.setSelectedObject(null);
+    this.terrainView.updatePatch(terrainPatch);
+    this.refreshObjects();
     this.emitMap();
   }
 
+  toDocument() {
+    return createWorldDocument(this.tileMap, this.objectMap);
+  }
+
   loadDocument(document) {
-    this.tileMap.loadDocument(document);
+    loadWorldDocument(document, this.tileMap, this.objectMap);
     this.terrainView.refreshAll();
+    this.refreshObjects();
     this.undoStack = [];
     this.redoStack = [];
+    this.setSelectedObject(null);
     this.emitMap();
     this.emitState();
   }
@@ -147,17 +293,44 @@ export class EditorController {
     }
 
     event.preventDefault();
-    this.canvas.setPointerCapture(event.pointerId);
-    this.painting = true;
-    this.stroke = new Map();
-    this.lastPaintKey = null;
-    this.paintFromPointer(event, true);
+    if (this.tool === 'terrain') {
+      this.canvas.setPointerCapture(event.pointerId);
+      this.painting = true;
+      this.stroke = new Map();
+      this.lastPaintKey = null;
+      this.paintFromPointer(event, true);
+      return;
+    }
+
+    if (this.tool === 'object') {
+      const cell = this.terrainView.pickCell(event.clientX, event.clientY, this.editorCamera.camera);
+      if (cell) {
+        this.placeObject(cell);
+      }
+      return;
+    }
+
+    if (this.movingObjectId) {
+      const cell = this.terrainView.pickCell(event.clientX, event.clientY, this.editorCamera.camera);
+      if (cell) {
+        this.moveSelectedTo(cell);
+      }
+      return;
+    }
+
+    const objectId = this.objectView.pickObject(
+      event.clientX,
+      event.clientY,
+      this.editorCamera.camera,
+    );
+    this.setSelectedObject(objectId);
+    this.emitState();
   }
 
   onPointerMove(event) {
     const cell = this.terrainView.pickCell(event.clientX, event.clientY, this.editorCamera.camera);
     this.hoveredCell = cell;
-    this.updatePreview();
+    this.updatePreviews();
     this.emitHover(cell);
 
     if (this.painting && !this.spacePressed) {
@@ -179,11 +352,12 @@ export class EditorController {
   }
 
   onPointerLeave() {
-    if (!this.painting) {
-      this.hoveredCell = null;
-      this.terrainView.setPreview(null);
-      this.emitHover(null);
+    if (this.painting) {
+      return;
     }
+    this.hoveredCell = null;
+    this.updatePreviews();
+    this.emitHover(null);
   }
 
   paintFromPointer(event, force) {
@@ -202,7 +376,13 @@ export class EditorController {
       return;
     }
 
-    const patch = this.tileMap.paintSquare(cell.x, cell.z, this.brushSize, this.selectedTileId);
+    const patch = this.tileMap.paintSquare(
+      cell.x,
+      cell.z,
+      this.brushSize,
+      this.selectedTileId,
+      (x, z) => this.objectMap.canSetTerrain(x, z, this.selectedTileId),
+    );
     this.lastPaintKey = key;
     this.lastPaintAt = now;
 
@@ -244,12 +424,59 @@ export class EditorController {
     }
 
     this.stroke = null;
-    this.commitPatch(patch);
+    this.commitHistory({ kind: 'terrain', patch });
     this.emitMap();
   }
 
-  commitPatch(patch) {
-    this.undoStack.push(patch);
+  placeObject(cell) {
+    const validation = this.objectMap.validatePlacement({
+      definitionKey: this.selectedObjectKey,
+      x: cell.x,
+      z: cell.z,
+      rotation: this.objectRotation,
+    });
+    if (!validation.valid) {
+      this.emitNotice(validation.reason, true);
+      return;
+    }
+
+    const after = this.objectMap.place({
+      definitionKey: this.selectedObjectKey,
+      x: cell.x,
+      z: cell.z,
+      rotation: this.objectRotation,
+    });
+    this.commitHistory({ kind: 'object', before: null, after });
+    this.refreshObjects();
+    this.emitMap();
+  }
+
+  moveSelectedTo(cell) {
+    const before = this.movingObjectId
+      ? this.objectMap.getById(this.movingObjectId)
+      : null;
+    if (!before) {
+      this.movingObjectId = null;
+      return;
+    }
+
+    try {
+      const after = this.objectMap.transform(before.id, {
+        x: cell.x,
+        z: cell.z,
+        rotation: before.rotation,
+      });
+      this.movingObjectId = null;
+      this.commitHistory({ kind: 'object', before, after });
+      this.refreshObjects();
+      this.emitMap();
+    } catch (error) {
+      this.emitNotice(error.message, true);
+    }
+  }
+
+  commitHistory(entry) {
+    this.undoStack.push(entry);
     if (this.undoStack.length > MAX_HISTORY_ENTRIES) {
       this.undoStack.shift();
     }
@@ -287,10 +514,39 @@ export class EditorController {
       return;
     }
 
-    if (event.key === '[') {
-      this.cycleBrush(-1);
-    } else if (event.key === ']') {
-      this.cycleBrush(1);
+    switch (event.key.toLowerCase()) {
+      case 't':
+        this.selectTool('terrain');
+        break;
+      case 'o':
+        this.selectTool('object');
+        break;
+      case 'v':
+        this.selectTool('select');
+        break;
+      case 'r':
+        this.tool === 'select' ? this.rotateSelected() : this.rotatePlacement();
+        break;
+      case 'delete':
+      case 'backspace':
+        if (this.tool === 'select') {
+          event.preventDefault();
+          this.deleteSelected();
+        }
+        break;
+      case 'escape':
+        this.movingObjectId = null;
+        this.setSelectedObject(null);
+        this.emitState();
+        break;
+      case '[':
+        this.cycleBrush(-1);
+        break;
+      case ']':
+        this.cycleBrush(1);
+        break;
+      default:
+        break;
     }
   }
 
@@ -308,9 +564,76 @@ export class EditorController {
     this.selectBrush(this.brushSizes[nextIndex]);
   }
 
-  updatePreview() {
-    const tile = TILE_BY_ID.get(this.selectedTileId);
-    this.terrainView.setPreview(this.hoveredCell, this.brushSize, tile.color);
+  updatePreviews() {
+    if (this.tool === 'terrain') {
+      const tile = TILE_BY_ID.get(this.selectedTileId);
+      this.terrainView.setPreview(this.hoveredCell, this.brushSize, tile.color);
+      this.objectView.setPreview(null);
+      return;
+    }
+
+    this.terrainView.setPreview(null);
+    if (!this.hoveredCell) {
+      this.objectView.setPreview(null);
+      return;
+    }
+
+    if (this.tool === 'select' && this.movingObjectId) {
+      const object = this.objectMap.getById(this.movingObjectId);
+      const validation = this.objectMap.validatePlacement({
+        definitionKey: object.definitionKey,
+        x: this.hoveredCell.x,
+        z: this.hoveredCell.z,
+        rotation: object.rotation,
+        ignoreObjectId: object.id,
+      });
+      this.objectView.setPreview({
+        definitionKey: object.definitionKey,
+        x: this.hoveredCell.x,
+        z: this.hoveredCell.z,
+        rotation: object.rotation,
+        valid: validation.valid,
+      });
+      return;
+    }
+
+    if (this.tool !== 'object') {
+      this.objectView.setPreview(null);
+      return;
+    }
+
+    const validation = this.objectMap.validatePlacement({
+      definitionKey: this.selectedObjectKey,
+      x: this.hoveredCell.x,
+      z: this.hoveredCell.z,
+      rotation: this.objectRotation,
+    });
+    this.objectView.setPreview({
+      definitionKey: this.selectedObjectKey,
+      x: this.hoveredCell.x,
+      z: this.hoveredCell.z,
+      rotation: this.objectRotation,
+      valid: validation.valid,
+    });
+  }
+
+  setSelectedObject(objectId) {
+    const numericId = objectId === null || objectId === undefined ? null : Number(objectId);
+    this.selectedObjectId = numericId && this.objectMap.getById(numericId) ? numericId : null;
+    if (!this.selectedObjectId) {
+      this.movingObjectId = null;
+    }
+    this.objectView.setSelection(this.selectedObjectId);
+  }
+
+  refreshObjects() {
+    if (this.selectedObjectId && !this.objectMap.getById(this.selectedObjectId)) {
+      this.selectedObjectId = null;
+    }
+    this.objectView.refreshAll();
+    this.objectView.setSelection(this.selectedObjectId);
+    this.updatePreviews();
+    this.emitState();
   }
 
   emitState() {
@@ -329,8 +652,18 @@ export class EditorController {
   emitHover(cell) {
     const tileId = cell ? this.tileMap.get(cell.x, cell.z) : null;
     const tile = tileId === null ? null : TILE_BY_ID.get(tileId);
+    const object = cell ? this.objectMap.findAt(cell.x, cell.z) : null;
+    const objectDefinition = object
+      ? this.objectMap.getDefinition(object.definitionKey)
+      : null;
     for (const listener of this.hoverListeners) {
-      listener(cell ? { ...cell, tile } : null);
+      listener(cell ? { ...cell, tile, object, objectDefinition } : null);
+    }
+  }
+
+  emitNotice(message, isError = false) {
+    for (const listener of this.noticeListeners) {
+      listener({ message, isError });
     }
   }
 

@@ -3,6 +3,9 @@ import { loadEditorConfig } from './config/loadEditorConfig.js';
 import { EditorCamera } from './editor/EditorCamera.js';
 import { EditorController } from './editor/EditorController.js';
 import { EditorUi } from './editor/EditorUi.js';
+import { ObjectMap } from './editor/ObjectMap.js';
+import { ObjectView } from './editor/ObjectView.js';
+import { OBJECT_CATALOG } from './editor/objectCatalog.js';
 import { TerrainView } from './editor/TerrainView.js';
 import { TileMap } from './editor/TileMap.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
@@ -21,18 +24,27 @@ function startEditor() {
     tileSize: config.map.tileSize,
     defaultTileId: defaultTile.id,
   });
+  const objectMap = new ObjectMap({ tileMap, objectCatalog: OBJECT_CATALOG });
 
   const ui = new EditorUi({
     root,
     config,
     tileCatalog: TILE_CATALOG,
     tileMap,
+    objectCatalog: OBJECT_CATALOG,
+    objectMap,
   });
 
   const terrainView = new TerrainView({
     container: ui.viewport,
     tileMap,
     chunkSize: config.map.chunkSize,
+  });
+  const objectView = new ObjectView({
+    terrainView,
+    tileMap,
+    objectMap,
+    objectCatalog: OBJECT_CATALOG,
   });
 
   const editorCamera = new EditorCamera({
@@ -45,8 +57,11 @@ function startEditor() {
 
   const controller = new EditorController({
     tileMap,
+    objectMap,
     terrainView,
+    objectView,
     editorCamera,
+    objectCatalog: OBJECT_CATALOG,
     brushSizes: config.brush.sizes,
     defaultBrushSize: config.brush.defaultSize,
   });
@@ -76,6 +91,7 @@ function startEditor() {
     resizeObserver.disconnect();
     controller.dispose();
     editorCamera.dispose();
+    objectView.dispose();
     terrainView.dispose();
   }, { once: true });
 }

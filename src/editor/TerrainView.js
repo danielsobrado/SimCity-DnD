@@ -45,6 +45,8 @@ export class TerrainView {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.domElement.setAttribute('aria-label', 'SimCity DnD world editor viewport');
     container.append(this.renderer.domElement);
 
@@ -103,12 +105,14 @@ export class TerrainView {
       new THREE.Vector3(this.worldWidth / 2, 0.025, this.worldDepth / 2),
       new THREE.Vector3(-this.worldWidth / 2, 0.025, this.worldDepth / 2),
     ];
-    const borderGeometry = new THREE.BufferGeometry().setFromPoints(edgePoints);
-    const border = new THREE.LineLoop(
-      borderGeometry,
-      new THREE.LineBasicMaterial({ color: '#d4b65e', transparent: true, opacity: 0.75 }),
-    );
-    this.scene.add(border);
+    this.borderGeometry = new THREE.BufferGeometry().setFromPoints(edgePoints);
+    this.borderMaterial = new THREE.LineBasicMaterial({
+      color: '#d4b65e',
+      transparent: true,
+      opacity: 0.75,
+    });
+    this.border = new THREE.LineLoop(this.borderGeometry, this.borderMaterial);
+    this.scene.add(this.border);
 
     this.refreshAll();
   }
@@ -190,12 +194,23 @@ export class TerrainView {
     };
   }
 
+  boundsToWorld(bounds) {
+    const min = this.cellToWorld(bounds.minX, bounds.minZ);
+    const max = this.cellToWorld(bounds.maxX, bounds.maxZ);
+    return {
+      x: (min.x + max.x) / 2,
+      z: (min.z + max.z) / 2,
+    };
+  }
+
   dispose() {
     this.terrain.geometry.dispose();
     this.terrainMaterial.dispose();
     this.tileTexture.dispose();
     this.preview.geometry.dispose();
     this.preview.material.dispose();
+    this.borderGeometry.dispose();
+    this.borderMaterial.dispose();
     this.renderer.dispose();
   }
 }

@@ -1,0 +1,65 @@
+objects:
+  - key: cottage
+    label: Cottage
+    icon: "🏠"
+    category: building
+    color: "#b86b3f"
+    model: cottage
+    footprint: { width: 2, depth: 2 }
+    allowedTerrain: [plains, road, farm, desert, snow]
+  - key: farmstead
+    label: Farmstead
+    icon: "🌾"
+    category: building
+    color: "#c79432"
+    model: farmstead
+    footprint: { width: 3, depth: 3 }
+    allowedTerrain: [plains, farm]
+  - key: inn
+    label: Adventurer Inn
+    icon: "🍺"
+    category: building
+    color: "#8f4d34"
+    model: inn
+    footprint: { width: 3, depth: 2 }
+    allowedTerrain: [plains, road, desert, snow]
+  - key: wizard_tower
+    label: Wizard Tower
+    icon: "🧙"
+    category: building
+    color: "#6750a4"
+    model: tower
+    footprint: { width: 2, depth: 2 }
+    allowedTerrain: [plains, stone, desert, snow, corruption]
+  - key: keep
+    label: Stone Keep
+    icon: "🏰"
+    category: defense
+    color: "#8b9093"
+    model: keep
+    footprint: { width: 4, depth: 4 }
+    allowedTerrain: [plains, road, stone, desert, snow]
+  - key: wall
+    label: Wall Segment
+    icon: "🧱"
+    category: defense
+    color: "#787d80"
+    model: wall
+    footprint: { width: 1, depth: 1 }
+    allowedTerrain: [plains, road, farm, stone, desert, snow]
+  - key: pine_tree
+    label: Pine Tree
+    icon: "🌲"
+    category: nature
+    color: "#2f6b3d"
+    model: tree
+    footprint: { width: 1, depth: 1 }
+    allowedTerrain: [plains, forest, swamp, snow]
+  - key: boulder
+    label: Boulder
+    icon: "🪨"
+    category: nature
+    color: "#777d7d"
+    model: rock
+    footprint: { width: 1, depth: 1 }
+    allowedTerrain: [plains, forest, stone, desert, snow, corruption]

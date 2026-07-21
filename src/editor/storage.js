@@ -6,8 +6,8 @@ function parseDocument(serialized) {
   return document;
 }
 
-export function saveToBrowser(storageKey, tileMap) {
-  localStorage.setItem(storageKey, JSON.stringify(tileMap.toDocument()));
+export function saveToBrowser(storageKey, document) {
+  localStorage.setItem(storageKey, JSON.stringify(document));
 }
 
 export function loadFromBrowser(storageKey) {
@@ -15,10 +15,8 @@ export function loadFromBrowser(storageKey) {
   return serialized ? parseDocument(serialized) : null;
 }
 
-export function exportMap(tileMap) {
-  const blob = new Blob([JSON.stringify(tileMap.toDocument())], {
-    type: 'application/json',
-  });
+export function exportMap(worldDocument) {
+  const blob = new Blob([JSON.stringify(worldDocument)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;

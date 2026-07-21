@@ -1,0 +1,77 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { ObjectMap } from '../src/editor/ObjectMap.js';
+import { TileMap } from '../src/editor/TileMap.js';
+
+const catalog = Object.freeze([
+  Object.freeze({
+    key: 'house',
+    label: 'House',
+    footprint: Object.freeze({ width: 2, depth: 3 }),
+    allowedTileIds: Object.freeze([0]),
+  }),
+  Object.freeze({
+    key: 'tree',
+    label: 'Tree',
+    footprint: Object.freeze({ width: 1, depth: 1 }),
+    allowedTileIds: Object.freeze([0, 1]),
+  }),
+]);
+
+function createMaps() {
+  const tileMap = new TileMap({ width: 8, height: 8, tileSize: 2, defaultTileId: 0 });
+  return { tileMap, objectMap: new ObjectMap({ tileMap, objectCatalog: catalog }) };
+}
+
+test('rotating an object swaps a non-square footprint', () => {
+  const { objectMap } = createMaps();
+  assert.deepEqual(objectMap.getFootprint('house', 0), { width: 2, depth: 3 });
+  assert.deepEqual(objectMap.getFootprint('house', 1), { width: 3, depth: 2 });
+});
+
+test('placement rejects occupied and unsupported terrain cells', () => {
+  const { tileMap, objectMap } = createMaps();
+  const house = objectMap.place({ definitionKey: 'house', x: 3, z: 3, rotation: 0 });
+
+  assert.equal(objectMap.findAt(3, 3).id, house.id);
+  assert.equal(
+    objectMap.validatePlacement({ definitionKey: 'tree', x: 3, z: 3, rotation: 0 }).valid,
+    false,
+  );
+
+  tileMap.paintSquare(6, 6, 1, 2);
+  assert.match(
+    objectMap.validatePlacement({ definitionKey: 'tree', x: 6, z: 6, rotation: 0 }).reason,
+    /terrain/i,
+  );
+});
+
+test('object changes are reversible with stable ids', () => {
+  const { objectMap } = createMaps();
+  const after = objectMap.place({ definitionKey: 'tree', x: 2, z: 2, rotation: 0 });
+  const change = { before: null, after };
+
+  objectMap.applyChange(change, 'undo');
+  assert.equal(objectMap.size, 0);
+
+  objectMap.applyChange(change, 'redo');
+  assert.equal(objectMap.getById(after.id).definitionKey, 'tree');
+});
+
+test('terrain changes are rejected beneath incompatible objects', () => {
+  const { objectMap } = createMaps();
+  objectMap.place({ definitionKey: 'house', x: 3, z: 3, rotation: 0 });
+
+  assert.equal(objectMap.canSetTerrain(3, 3, 2), false);
+  assert.equal(objectMap.canSetTerrain(0, 0, 2), true);
+});
+
+test('object documents round-trip without overlaps', () => {
+  const { objectMap } = createMaps();
+  objectMap.place({ definitionKey: 'house', x: 3, z: 3, rotation: 0 });
+  objectMap.place({ definitionKey: 'tree', x: 7, z: 7, rotation: 0 });
+
+  const { objectMap: target } = createMaps();
+  target.loadDocument(objectMap.toDocument());
+  assert.deepEqual(target.toDocument(), objectMap.toDocument());
+});

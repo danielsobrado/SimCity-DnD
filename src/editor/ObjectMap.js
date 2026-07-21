@@ -1,0 +1,248 @@
+function normalizeRotation(rotation) {
+  return ((Number(rotation) % 4) + 4) % 4;
+}
+
+function cloneObject(object) {
+  return object ? { ...object } : null;
+}
+
+export class ObjectMap {
+  constructor({ tileMap, objectCatalog }) {
+    this.tileMap = tileMap;
+    this.catalog = objectCatalog;
+    this.definitionByKey = new Map(objectCatalog.map((definition) => [definition.key, definition]));
+    this.objectsById = new Map();
+    this.occupancy = new Int32Array(tileMap.tileCount);
+    this.occupancy.fill(-1);
+    this.nextId = 1;
+  }
+
+  get size() {
+    return this.objectsById.size;
+  }
+
+  list() {
+    return Array.from(this.objectsById.values(), cloneObject);
+  }
+
+  getById(id) {
+    return cloneObject(this.objectsById.get(Number(id)) ?? null);
+  }
+
+  findAt(x, z) {
+    if (!this.tileMap.inBounds(x, z)) {
+      return null;
+    }
+    const id = this.occupancy[this.tileMap.indexOf(x, z)];
+    return id === -1 ? null : this.getById(id);
+  }
+
+  getDefinition(definitionKey) {
+    const definition = this.definitionByKey.get(definitionKey);
+    if (!definition) {
+      throw new Error(`Unknown object definition: ${definitionKey}.`);
+    }
+    return definition;
+  }
+
+  getFootprint(definitionKey, rotation) {
+    const definition = this.getDefinition(definitionKey);
+    const normalized = normalizeRotation(rotation);
+    return normalized % 2 === 0
+      ? definition.footprint
+      : { width: definition.footprint.depth, depth: definition.footprint.width };
+  }
+
+  getBounds(x, z, definitionKey, rotation) {
+    const footprint = this.getFootprint(definitionKey, rotation);
+    const minX = x - Math.floor((footprint.width - 1) / 2);
+    const minZ = z - Math.floor((footprint.depth - 1) / 2);
+    return {
+      minX,
+      minZ,
+      maxX: minX + footprint.width - 1,
+      maxZ: minZ + footprint.depth - 1,
+      width: footprint.width,
+      depth: footprint.depth,
+    };
+  }
+
+  getCells(x, z, definitionKey, rotation) {
+    const bounds = this.getBounds(x, z, definitionKey, rotation);
+    const cells = [];
+    for (let cellZ = bounds.minZ; cellZ <= bounds.maxZ; cellZ += 1) {
+      for (let cellX = bounds.minX; cellX <= bounds.maxX; cellX += 1) {
+        cells.push({ x: cellX, z: cellZ });
+      }
+    }
+    return cells;
+  }
+
+  validatePlacement({ definitionKey, x, z, rotation = 0, ignoreObjectId = null }) {
+    const definition = this.getDefinition(definitionKey);
+    const cells = this.getCells(x, z, definitionKey, rotation);
+
+    for (const cell of cells) {
+      if (!this.tileMap.inBounds(cell.x, cell.z)) {
+        return { valid: false, reason: 'Footprint is outside the map.', cells };
+      }
+      const index = this.tileMap.indexOf(cell.x, cell.z);
+      const occupantId = this.occupancy[index];
+      if (occupantId !== -1 && occupantId !== ignoreObjectId) {
+        return { valid: false, reason: 'Footprint overlaps another object.', cells };
+      }
+      if (!definition.allowedTileIds.includes(this.tileMap.tiles[index])) {
+        return { valid: false, reason: 'The terrain does not support this object.', cells };
+      }
+    }
+
+    return { valid: true, reason: null, cells };
+  }
+
+  place({ definitionKey, x, z, rotation = 0 }) {
+    const normalizedRotation = normalizeRotation(rotation);
+    const validation = this.validatePlacement({ definitionKey, x, z, rotation: normalizedRotation });
+    if (!validation.valid) {
+      throw new Error(validation.reason);
+    }
+
+    const object = {
+      id: this.nextId,
+      definitionKey,
+      x,
+      z,
+      rotation: normalizedRotation,
+    };
+    this.nextId += 1;
+    this.objectsById.set(object.id, object);
+    this.writeOccupancy(object, object.id);
+    return cloneObject(object);
+  }
+
+  transform(id, { x, z, rotation }) {
+    const numericId = Number(id);
+    const current = this.objectsById.get(numericId);
+    if (!current) {
+      throw new Error(`Unknown object id: ${id}.`);
+    }
+
+    const next = {
+      ...current,
+      x: Number.isInteger(x) ? x : current.x,
+      z: Number.isInteger(z) ? z : current.z,
+      rotation: normalizeRotation(rotation ?? current.rotation),
+    };
+    const validation = this.validatePlacement({ ...next, ignoreObjectId: numericId });
+    if (!validation.valid) {
+      throw new Error(validation.reason);
+    }
+
+    this.writeOccupancy(current, -1);
+    this.objectsById.set(numericId, next);
+    this.writeOccupancy(next, numericId);
+    return cloneObject(next);
+  }
+
+  remove(id) {
+    const numericId = Number(id);
+    const object = this.objectsById.get(numericId);
+    if (!object) {
+      return null;
+    }
+    this.writeOccupancy(object, -1);
+    this.objectsById.delete(numericId);
+    return cloneObject(object);
+  }
+
+  restore(object) {
+    if (!object || !Number.isInteger(object.id) || object.id < 1) {
+      throw new Error('Object snapshot has an invalid id.');
+    }
+    if (this.objectsById.has(object.id)) {
+      throw new Error(`Object id ${object.id} already exists.`);
+    }
+    const snapshot = {
+      id: object.id,
+      definitionKey: object.definitionKey,
+      x: object.x,
+      z: object.z,
+      rotation: normalizeRotation(object.rotation),
+    };
+    const validation = this.validatePlacement(snapshot);
+    if (!validation.valid) {
+      throw new Error(validation.reason);
+    }
+    this.objectsById.set(snapshot.id, snapshot);
+    this.writeOccupancy(snapshot, snapshot.id);
+    this.nextId = Math.max(this.nextId, snapshot.id + 1);
+    return cloneObject(snapshot);
+  }
+
+  applyChange(change, direction) {
+    const target = direction === 'undo' ? change.before : change.after;
+    const source = direction === 'undo' ? change.after : change.before;
+
+    if (source) {
+      this.remove(source.id);
+    }
+    if (target) {
+      this.restore(target);
+    }
+  }
+
+  canSetTerrain(x, z, tileId) {
+    const object = this.findAt(x, z);
+    if (!object) {
+      return true;
+    }
+    return this.getDefinition(object.definitionKey).allowedTileIds.includes(tileId);
+  }
+
+  clear() {
+    const snapshots = this.list();
+    this.objectsById.clear();
+    this.occupancy.fill(-1);
+    return snapshots;
+  }
+
+  replaceAll(objects) {
+    if (!Array.isArray(objects)) {
+      throw new Error('Object payload must be an array.');
+    }
+
+    const previousObjects = this.objectsById;
+    const previousOccupancy = this.occupancy;
+    const previousNextId = this.nextId;
+    this.objectsById = new Map();
+    this.occupancy = new Int32Array(this.tileMap.tileCount);
+    this.occupancy.fill(-1);
+    this.nextId = 1;
+
+    try {
+      for (const object of objects) {
+        this.restore(object);
+      }
+    } catch (error) {
+      this.objectsById = previousObjects;
+      this.occupancy = previousOccupancy;
+      this.nextId = previousNextId;
+      throw error;
+    }
+  }
+
+  toDocument() {
+    return this.list();
+  }
+
+  loadDocument(objects) {
+    this.replaceAll(objects ?? []);
+  }
+
+  writeOccupancy(object, value) {
+    for (const cell of this.getCells(object.x, object.z, object.definitionKey, object.rotation)) {
+      if (this.tileMap.inBounds(cell.x, cell.z)) {
+        this.occupancy[this.tileMap.indexOf(cell.x, cell.z)] = value;
+      }
+    }
+  }
+}

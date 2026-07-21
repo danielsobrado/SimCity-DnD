@@ -3,11 +3,14 @@ import { exportMap, importMap, loadFromBrowser, saveToBrowser } from './storage.
 import { TILE_BY_ID, hexToRgbBytes } from './tileCatalog.js';
 
 export class EditorUi {
-  constructor({ root, config, tileCatalog, tileMap }) {
+  constructor({ root, config, tileCatalog, tileMap, objectCatalog, objectMap }) {
     this.root = root;
     this.config = config;
     this.tileCatalog = tileCatalog;
     this.tileMap = tileMap;
+    this.objectCatalog = objectCatalog;
+    this.objectMap = objectMap;
+    this.objectByKey = new Map(objectCatalog.map((definition) => [definition.key, definition]));
     this.controller = null;
     this.toastTimer = null;
     this.minimapQueued = false;
@@ -17,21 +20,46 @@ export class EditorUi {
         <aside class="sidebar" aria-label="World editor tools">
           <header class="sidebar-header">
             <h1>SimCity DnD</h1>
-            <p>Large-map terrain editor</p>
+            <p>Terrain and settlement editor</p>
           </header>
 
           <section class="panel">
-            <h2>Terrain tiles</h2>
-            <div class="tile-palette" data-role="tile-palette"></div>
+            <h2>Editor mode</h2>
+            <div class="tool-row" data-role="tool-row">
+              <button class="tool-button" type="button" data-tool="terrain">Terrain</button>
+              <button class="tool-button" type="button" data-tool="object">Objects</button>
+              <button class="tool-button" type="button" data-tool="select">Select</button>
+            </div>
           </section>
 
-          <section class="panel">
-            <h2>Brush size</h2>
+          <section class="panel tool-panel" data-panel="terrain">
+            <h2>Terrain tiles</h2>
+            <div class="tile-palette" data-role="tile-palette"></div>
+            <h2 class="panel-subheading">Brush size</h2>
             <div class="brush-row" data-role="brush-row"></div>
           </section>
 
+          <section class="panel tool-panel" data-panel="object" hidden>
+            <h2>Place objects</h2>
+            <div class="object-palette" data-role="object-palette"></div>
+            <button class="action-button action-button--wide" type="button" data-action="rotate-placement">
+              Rotate preview <kbd>R</kbd>
+            </button>
+            <p class="panel-note" data-role="placement-info">Rotation 0°</p>
+          </section>
+
+          <section class="panel tool-panel" data-panel="select" hidden>
+            <h2>Selected object</h2>
+            <div class="selection-card" data-role="selected-object">Click a placed object.</div>
+            <div class="action-grid">
+              <button class="action-button" type="button" data-action="move-selected">Move</button>
+              <button class="action-button" type="button" data-action="rotate-selected">Rotate</button>
+              <button class="action-button action-button--danger" type="button" data-action="delete-selected">Delete</button>
+            </div>
+          </section>
+
           <section class="panel">
-            <h2>Map actions</h2>
+            <h2>World actions</h2>
             <div class="action-grid">
               <button class="action-button" type="button" data-action="undo">Undo</button>
               <button class="action-button" type="button" data-action="redo">Redo</button>
@@ -39,7 +67,7 @@ export class EditorUi {
               <button class="action-button" type="button" data-action="load">Load</button>
               <button class="action-button" type="button" data-action="export">Export</button>
               <button class="action-button" type="button" data-action="import">Import</button>
-              <button class="action-button" type="button" data-action="new">Clear map</button>
+              <button class="action-button" type="button" data-action="new">Clear world</button>
               <button class="action-button" type="button" data-action="camera">Reset view</button>
             </div>
             <input data-role="file-input" type="file" accept="application/json,.json" hidden />
@@ -55,13 +83,15 @@ export class EditorUi {
           <section class="panel">
             <h2>Controls</h2>
             <ul class="help-list">
-              <li><kbd>Left drag</kbd> Paint tiles</li>
+              <li><kbd>T / O / V</kbd> Terrain, objects, select</li>
+              <li><kbd>Left drag</kbd> Paint terrain</li>
+              <li><kbd>Left click</kbd> Place or select object</li>
+              <li><kbd>R</kbd> Rotate preview or selection</li>
+              <li><kbd>Delete</kbd> Remove selected object</li>
               <li><kbd>Space drag</kbd> Pan map</li>
-              <li><kbd>Middle drag</kbd> Pan map</li>
               <li><kbd>Right drag</kbd> Rotate view</li>
               <li><kbd>Wheel</kbd> Zoom</li>
               <li><kbd>1–0</kbd> Select terrain</li>
-              <li><kbd>[ / ]</kbd> Change brush</li>
             </ul>
           </section>
         </aside>
@@ -70,39 +100,61 @@ export class EditorUi {
           <div class="topbar">
             <span>${tileMap.width} × ${tileMap.height} cells</span>
             <span>${config.map.chunkSize} × ${config.map.chunkSize} cell chunks</span>
-            <span>Gold lines mark chunk boundaries</span>
+            <span data-role="object-count">0 objects</span>
           </div>
           <div class="toast" data-role="toast" aria-live="polite"></div>
           <div class="statusbar">
             <span data-role="coordinates">Cell —</span>
             <span data-role="hover-tile">Tile —</span>
-            <span data-role="selection">Brush —</span>
+            <span data-role="hover-object">Object —</span>
+            <span data-role="selection">Terrain —</span>
           </div>
         </main>
       </div>
     `;
 
     this.viewport = root.querySelector('[data-role="viewport"]');
+    this.toolRow = root.querySelector('[data-role="tool-row"]');
     this.palette = root.querySelector('[data-role="tile-palette"]');
+    this.objectPalette = root.querySelector('[data-role="object-palette"]');
     this.brushRow = root.querySelector('[data-role="brush-row"]');
     this.minimap = root.querySelector('[data-role="minimap"]');
     this.toast = root.querySelector('[data-role="toast"]');
     this.coordinates = root.querySelector('[data-role="coordinates"]');
     this.hoverTile = root.querySelector('[data-role="hover-tile"]');
+    this.hoverObject = root.querySelector('[data-role="hover-object"]');
     this.selection = root.querySelector('[data-role="selection"]');
+    this.objectCount = root.querySelector('[data-role="object-count"]');
+    this.selectedObject = root.querySelector('[data-role="selected-object"]');
+    this.placementInfo = root.querySelector('[data-role="placement-info"]');
     this.fileInput = root.querySelector('[data-role="file-input"]');
 
     this.renderTileButtons();
+    this.renderObjectButtons();
     this.renderBrushButtons();
   }
 
   bind(controller) {
     this.controller = controller;
 
+    this.toolRow.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-tool]');
+      if (button) {
+        controller.selectTool(button.dataset.tool);
+      }
+    });
+
     this.palette.addEventListener('click', (event) => {
       const button = event.target.closest('[data-tile-id]');
       if (button) {
         controller.selectTile(Number(button.dataset.tileId));
+      }
+    });
+
+    this.objectPalette.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-object-key]');
+      if (button) {
+        controller.selectObjectDefinition(button.dataset.objectKey);
       }
     });
 
@@ -115,10 +167,9 @@ export class EditorUi {
 
     this.root.addEventListener('click', (event) => {
       const button = event.target.closest('[data-action]');
-      if (!button) {
-        return;
+      if (button) {
+        this.handleAction(button.dataset.action);
       }
-      this.handleAction(button.dataset.action);
     });
 
     this.fileInput.addEventListener('change', async () => {
@@ -130,7 +181,7 @@ export class EditorUi {
 
       try {
         controller.loadDocument(await importMap(file));
-        this.showToast('Map imported.');
+        this.showToast('World imported.');
       } catch (error) {
         this.showToast(error.message, true);
       }
@@ -148,6 +199,7 @@ export class EditorUi {
 
     controller.subscribe((state) => this.renderState(state));
     controller.subscribeHover((hover) => this.renderHover(hover));
+    controller.subscribeNotice(({ message, isError }) => this.showToast(message, isError));
     controller.subscribeMap(({ final }) => {
       if (final) {
         this.queueMinimapUpdate();
@@ -167,6 +219,16 @@ export class EditorUi {
     `).join('');
   }
 
+  renderObjectButtons() {
+    this.objectPalette.innerHTML = this.objectCatalog.map((definition) => `
+      <button class="object-button" type="button" data-object-key="${definition.key}" title="${definition.label}">
+        <span class="object-button__swatch" style="background:${definition.color}">${definition.icon}</span>
+        <span class="object-button__label">${definition.label}</span>
+        <span class="object-button__footprint">${definition.footprint.width}×${definition.footprint.depth}</span>
+      </button>
+    `).join('');
+  }
+
   renderBrushButtons() {
     this.brushRow.innerHTML = this.config.brush.sizes.map((size) => `
       <button class="brush-button" type="button" data-brush-size="${size}">${size}</button>
@@ -174,8 +236,17 @@ export class EditorUi {
   }
 
   renderState(state) {
+    for (const button of this.toolRow.querySelectorAll('[data-tool]')) {
+      button.classList.toggle('is-active', button.dataset.tool === state.tool);
+    }
+    for (const panel of this.root.querySelectorAll('[data-panel]')) {
+      panel.hidden = panel.dataset.panel !== state.tool;
+    }
     for (const button of this.palette.querySelectorAll('[data-tile-id]')) {
       button.classList.toggle('is-active', Number(button.dataset.tileId) === state.selectedTileId);
+    }
+    for (const button of this.objectPalette.querySelectorAll('[data-object-key]')) {
+      button.classList.toggle('is-active', button.dataset.objectKey === state.selectedObjectKey);
     }
     for (const button of this.brushRow.querySelectorAll('[data-brush-size]')) {
       button.classList.toggle('is-active', Number(button.dataset.brushSize) === state.brushSize);
@@ -183,19 +254,52 @@ export class EditorUi {
 
     this.root.querySelector('[data-action="undo"]').disabled = !state.canUndo;
     this.root.querySelector('[data-action="redo"]').disabled = !state.canRedo;
+    this.root.querySelector('[data-action="move-selected"]').disabled = !state.selectedObject;
+    this.root.querySelector('[data-action="rotate-selected"]').disabled = !state.selectedObject;
+    this.root.querySelector('[data-action="delete-selected"]').disabled = !state.selectedObject;
 
+    this.objectCount.textContent = `${state.objectCount} object${state.objectCount === 1 ? '' : 's'}`;
     const tile = TILE_BY_ID.get(state.selectedTileId);
-    this.selection.textContent = `${tile.label} · ${state.brushSize} × ${state.brushSize}`;
+    const objectDefinition = this.objectByKey.get(state.selectedObjectKey);
+    const rotatedFootprint = state.objectRotation % 2 === 0
+      ? objectDefinition.footprint
+      : { width: objectDefinition.footprint.depth, depth: objectDefinition.footprint.width };
+    this.placementInfo.textContent = `${objectDefinition.label} · ${state.objectRotation * 90}° · ${rotatedFootprint.width}×${rotatedFootprint.depth}`;
+
+    if (state.tool === 'terrain') {
+      this.selection.textContent = `${tile.label} · ${state.brushSize} × ${state.brushSize}`;
+    } else if (state.tool === 'object') {
+      this.selection.textContent = `${objectDefinition.label} · ${state.objectRotation * 90}°`;
+    } else {
+      this.selection.textContent = state.selectedObject
+        ? `${state.isMovingSelected ? 'Move' : 'Selected'} #${state.selectedObject.id}`
+        : 'Select an object';
+    }
+
+    if (!state.selectedObject) {
+      this.selectedObject.textContent = 'Click a placed object.';
+      return;
+    }
+    const selectedDefinition = this.objectByKey.get(state.selectedObject.definitionKey);
+    this.selectedObject.innerHTML = `
+      <strong>${selectedDefinition.icon} ${selectedDefinition.label}</strong>
+      <span>ID ${state.selectedObject.id}</span>
+      <span>Cell ${state.selectedObject.x}, ${state.selectedObject.z}</span>
+      <span>Rotation ${state.selectedObject.rotation * 90}°</span>
+      ${state.isMovingSelected ? '<span>Click a valid destination cell.</span>' : ''}
+    `;
   }
 
   renderHover(hover) {
     if (!hover) {
       this.coordinates.textContent = 'Cell —';
       this.hoverTile.textContent = 'Tile —';
+      this.hoverObject.textContent = 'Object —';
       return;
     }
     this.coordinates.textContent = `Cell ${hover.x}, ${hover.z}`;
     this.hoverTile.textContent = hover.tile?.label ?? 'Unknown';
+    this.hoverObject.textContent = hover.objectDefinition?.label ?? 'Object —';
   }
 
   async handleAction(action) {
@@ -207,31 +311,43 @@ export class EditorUi {
         case 'redo':
           this.controller.redo();
           break;
+        case 'rotate-placement':
+          this.controller.rotatePlacement();
+          break;
+        case 'move-selected':
+          this.controller.startMoveSelected();
+          break;
+        case 'rotate-selected':
+          this.controller.rotateSelected();
+          break;
+        case 'delete-selected':
+          this.controller.deleteSelected();
+          break;
         case 'save':
-          saveToBrowser(this.config.storage.key, this.tileMap);
-          this.showToast('Map saved in this browser.');
+          saveToBrowser(this.config.storage.key, this.controller.toDocument());
+          this.showToast('World saved in this browser.');
           break;
         case 'load': {
-          const document = loadFromBrowser(this.config.storage.key);
-          if (!document) {
+          const worldDocument = loadFromBrowser(this.config.storage.key);
+          if (!worldDocument) {
             this.showToast('No browser save exists yet.');
             return;
           }
-          this.controller.loadDocument(document);
+          this.controller.loadDocument(worldDocument);
           this.showToast('Browser save loaded.');
           break;
         }
         case 'export':
-          exportMap(this.tileMap);
-          this.showToast('Map exported as JSON.');
+          exportMap(this.controller.toDocument());
+          this.showToast('World exported as JSON.');
           break;
         case 'import':
           this.fileInput.click();
           break;
         case 'new':
-          if (window.confirm('Clear the complete map to plains?')) {
-            this.controller.fill(0);
-            this.showToast('Map cleared to plains.');
+          if (window.confirm('Clear all terrain edits and placed objects?')) {
+            this.controller.clearWorld();
+            this.showToast('World cleared.');
           }
           break;
         case 'camera':
@@ -270,7 +386,7 @@ export class EditorUi {
       image.data[offset + 3] = 255;
     }
 
-    const buffer = document.createElement('canvas');
+    const buffer = window.document.createElement('canvas');
     buffer.width = this.tileMap.width;
     buffer.height = this.tileMap.height;
     buffer.getContext('2d').putImageData(image, 0, 0);
@@ -278,6 +394,19 @@ export class EditorUi {
     context.imageSmoothingEnabled = false;
     context.clearRect(0, 0, this.minimap.width, this.minimap.height);
     context.drawImage(buffer, 0, 0, this.minimap.width, this.minimap.height);
+
+    const scaleX = this.minimap.width / this.tileMap.width;
+    const scaleZ = this.minimap.height / this.tileMap.height;
+    for (const object of this.objectMap.list()) {
+      const definition = this.objectByKey.get(object.definitionKey);
+      context.fillStyle = definition.color;
+      context.fillRect(
+        Math.floor(object.x * scaleX) - 1,
+        Math.floor(object.z * scaleZ) - 1,
+        Math.max(2, Math.ceil(definition.footprint.width * scaleX)),
+        Math.max(2, Math.ceil(definition.footprint.depth * scaleZ)),
+      );
+    }
   }
 
   showToast(message, isError = false) {
