@@ -12,7 +12,7 @@ import { TerrainView } from './editor/TerrainView.js';
 import { TileMap } from './editor/TileMap.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
 
-function startEditor() {
+async function startEditor() {
   const config = loadEditorConfig();
   const defaultTile = TILE_BY_KEY.get(config.map.defaultTile);
   if (!defaultTile) {
@@ -41,7 +41,16 @@ function startEditor() {
     container: ui.viewport,
     tileMap,
     chunkSize: config.map.chunkSize,
+    rendererConfig: config.renderer,
   });
+
+  try {
+    await terrainView.initialize();
+  } catch (error) {
+    terrainView.dispose();
+    throw error;
+  }
+
   const objectView = new ObjectView({
     terrainView,
     tileMap,
@@ -85,15 +94,13 @@ function startEditor() {
   resizeObserver.observe(ui.viewport);
 
   let active = true;
-  function render() {
+  terrainView.setAnimationLoop(() => {
     if (!active) {
       return;
     }
     editorCamera.update();
     terrainView.render(editorCamera.camera);
-    requestAnimationFrame(render);
-  }
-  render();
+  });
 
   window.addEventListener('pagehide', () => {
     active = false;
@@ -106,14 +113,14 @@ function startEditor() {
   }, { once: true });
 }
 
-try {
-  startEditor();
-} catch (error) {
+function showStartupError(error) {
   console.error('Failed to start the SimCity DnD editor.', error);
   document.querySelector('#app').innerHTML = `
     <main style="padding:24px;font-family:system-ui;color:#f4e6e6;background:#211414;min-height:100vh">
       <h1>Editor failed to start</h1>
-      <p>${error.message}</p>
+      <p>${error instanceof Error ? error.message : String(error)}</p>
     </main>
   `;
 }
+
+startEditor().catch(showStartupError);
