@@ -12,6 +12,12 @@ objects:
       rotationY: 0
       offset: [0, 0, 0]
     footprint: { width: 2, depth: 2 }
+    foundation:
+      mode: terrace
+      maxSlopeDegrees: 18
+      maxDepth: 3
+      alignToNormal: false
+      color: "#695442"
     allowedTerrain: [plains, road, farm, desert, snow]
   - key: farmstead
     label: Farmstead
@@ -26,6 +32,12 @@ objects:
       rotationY: 0
       offset: [0, 0, 0]
     footprint: { width: 3, depth: 3 }
+    foundation:
+      mode: terrace
+      maxSlopeDegrees: 10
+      maxDepth: 1.5
+      alignToNormal: false
+      color: "#705a3d"
     allowedTerrain: [plains, farm]
   - key: inn
     label: Adventurer Inn
@@ -40,6 +52,12 @@ objects:
       rotationY: 0
       offset: [0, 0, 0]
     footprint: { width: 3, depth: 2 }
+    foundation:
+      mode: terrace
+      maxSlopeDegrees: 14
+      maxDepth: 3
+      alignToNormal: false
+      color: "#65503e"
     allowedTerrain: [plains, road, desert, snow]
   - key: wizard_tower
     label: Wizard Tower
@@ -54,6 +72,12 @@ objects:
       rotationY: 0
       offset: [0, 0, 0]
     footprint: { width: 2, depth: 2 }
+    foundation:
+      mode: terrace
+      maxSlopeDegrees: 20
+      maxDepth: 4
+      alignToNormal: false
+      color: "#57505e"
     allowedTerrain: [plains, stone, desert, snow, corruption]
   - key: keep
     label: Stone Keep
@@ -68,6 +92,12 @@ objects:
       rotationY: 0
       offset: [0, 0, 0]
     footprint: { width: 4, depth: 4 }
+    foundation:
+      mode: terrace
+      maxSlopeDegrees: 10
+      maxDepth: 4
+      alignToNormal: false
+      color: "#636769"
     allowedTerrain: [plains, road, stone, desert, snow]
   - key: wall
     label: Wall Segment
@@ -82,6 +112,12 @@ objects:
       rotationY: 0
       offset: [0, 0, 0]
     footprint: { width: 1, depth: 1 }
+    foundation:
+      mode: terrace
+      maxSlopeDegrees: 24
+      maxDepth: 2
+      alignToNormal: false
+      color: "#5e6264"
     allowedTerrain: [plains, road, farm, stone, desert, snow]
   - key: pine_tree
     label: Pine Tree
@@ -96,6 +132,12 @@ objects:
       rotationY: 0
       offset: [0, 0, 0]
     footprint: { width: 1, depth: 1 }
+    foundation:
+      mode: conform
+      maxSlopeDegrees: 36
+      maxDepth: 0
+      alignToNormal: false
+      color: "#4e4231"
     allowedTerrain: [plains, forest, swamp, snow]
   - key: boulder
     label: Boulder
@@ -110,4 +152,10 @@ objects:
       rotationY: 0
       offset: [0, 0, 0]
     footprint: { width: 1, depth: 1 }
+    foundation:
+      mode: conform
+      maxSlopeDegrees: 52
+      maxDepth: 0
+      alignToNormal: true
+      color: "#575d5d"
     allowedTerrain: [plains, forest, stone, desert, snow, corruption]
