@@ -2,12 +2,27 @@ import { MINIMAP_SIZE } from './constants.js';
 import { exportMap, importMap, loadFromBrowser, saveToBrowser } from './storage.js';
 import { TILE_BY_ID, hexToRgbBytes } from './tileCatalog.js';
 
+const TERRAIN_MODE_LABELS = Object.freeze({
+  paint: 'Paint',
+  raise: 'Raise',
+  lower: 'Lower',
+  smooth: 'Smooth',
+});
+const MINIMAP_HEIGHT_SHADE = 0.025;
+const MINIMAP_MINIMUM_SHADE = 0.55;
+const MINIMAP_MAXIMUM_SHADE = 1.25;
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
 export class EditorUi {
-  constructor({ root, config, tileCatalog, tileMap, objectCatalog, objectMap }) {
+  constructor({ root, config, tileCatalog, tileMap, heightField, objectCatalog, objectMap }) {
     this.root = root;
     this.config = config;
     this.tileCatalog = tileCatalog;
     this.tileMap = tileMap;
+    this.heightField = heightField;
     this.objectCatalog = objectCatalog;
     this.objectMap = objectMap;
     this.objectByKey = new Map(objectCatalog.map((definition) => [definition.key, definition]));
@@ -33,10 +48,20 @@ export class EditorUi {
           </section>
 
           <section class="panel tool-panel" data-panel="terrain">
-            <h2>Terrain tiles</h2>
-            <div class="tile-palette" data-role="tile-palette"></div>
+            <h2>Terrain operation</h2>
+            <div class="terrain-mode-row" data-role="terrain-mode-row">
+              <button class="tool-button" type="button" data-terrain-mode="paint">Paint</button>
+              <button class="tool-button" type="button" data-terrain-mode="raise">Raise</button>
+              <button class="tool-button" type="button" data-terrain-mode="lower">Lower</button>
+              <button class="tool-button" type="button" data-terrain-mode="smooth">Smooth</button>
+            </div>
+            <div data-role="tile-tools">
+              <h2 class="panel-subheading">Terrain tiles</h2>
+              <div class="tile-palette" data-role="tile-palette"></div>
+            </div>
             <h2 class="panel-subheading">Brush size</h2>
             <div class="brush-row" data-role="brush-row"></div>
+            <p class="panel-note">Sculpt strength ${config.terrain.sculptStrength}</p>
           </section>
 
           <section class="panel tool-panel" data-panel="object" hidden>
@@ -84,14 +109,16 @@ export class EditorUi {
             <h2>Controls</h2>
             <ul class="help-list">
               <li><kbd>T / O / V</kbd> Terrain, objects, select</li>
-              <li><kbd>Left drag</kbd> Paint terrain</li>
+              <li><kbd>P / U</kbd> Paint or raise terrain</li>
+              <li><kbd>J / K</kbd> Lower or smooth terrain</li>
+              <li><kbd>Left drag</kbd> Apply terrain brush</li>
               <li><kbd>Left click</kbd> Place or select object</li>
               <li><kbd>R</kbd> Rotate preview or selection</li>
               <li><kbd>Delete</kbd> Remove selected object</li>
               <li><kbd>Space drag</kbd> Pan map</li>
               <li><kbd>Right drag</kbd> Rotate view</li>
               <li><kbd>Wheel</kbd> Zoom</li>
-              <li><kbd>1–0</kbd> Select terrain</li>
+              <li><kbd>1–0</kbd> Select terrain tile</li>
             </ul>
           </section>
         </aside>
@@ -105,6 +132,7 @@ export class EditorUi {
           <div class="toast" data-role="toast" aria-live="polite"></div>
           <div class="statusbar">
             <span data-role="coordinates">Cell —</span>
+            <span data-role="hover-height">Height —</span>
             <span data-role="hover-tile">Tile —</span>
             <span data-role="hover-object">Object —</span>
             <span data-role="selection">Terrain —</span>
@@ -115,12 +143,15 @@ export class EditorUi {
 
     this.viewport = root.querySelector('[data-role="viewport"]');
     this.toolRow = root.querySelector('[data-role="tool-row"]');
+    this.terrainModeRow = root.querySelector('[data-role="terrain-mode-row"]');
+    this.tileTools = root.querySelector('[data-role="tile-tools"]');
     this.palette = root.querySelector('[data-role="tile-palette"]');
     this.objectPalette = root.querySelector('[data-role="object-palette"]');
     this.brushRow = root.querySelector('[data-role="brush-row"]');
     this.minimap = root.querySelector('[data-role="minimap"]');
     this.toast = root.querySelector('[data-role="toast"]');
     this.coordinates = root.querySelector('[data-role="coordinates"]');
+    this.hoverHeight = root.querySelector('[data-role="hover-height"]');
     this.hoverTile = root.querySelector('[data-role="hover-tile"]');
     this.hoverObject = root.querySelector('[data-role="hover-object"]');
     this.selection = root.querySelector('[data-role="selection"]');
@@ -141,6 +172,13 @@ export class EditorUi {
       const button = event.target.closest('[data-tool]');
       if (button) {
         controller.selectTool(button.dataset.tool);
+      }
+    });
+
+    this.terrainModeRow.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-terrain-mode]');
+      if (button) {
+        controller.selectTerrainMode(button.dataset.terrainMode);
       }
     });
 
@@ -242,6 +280,10 @@ export class EditorUi {
     for (const panel of this.root.querySelectorAll('[data-panel]')) {
       panel.hidden = panel.dataset.panel !== state.tool;
     }
+    for (const button of this.terrainModeRow.querySelectorAll('[data-terrain-mode]')) {
+      button.classList.toggle('is-active', button.dataset.terrainMode === state.terrainMode);
+    }
+    this.tileTools.hidden = state.terrainMode !== 'paint';
     for (const button of this.palette.querySelectorAll('[data-tile-id]')) {
       button.classList.toggle('is-active', Number(button.dataset.tileId) === state.selectedTileId);
     }
@@ -267,7 +309,10 @@ export class EditorUi {
     this.placementInfo.textContent = `${objectDefinition.label} · ${state.objectRotation * 90}° · ${rotatedFootprint.width}×${rotatedFootprint.depth}`;
 
     if (state.tool === 'terrain') {
-      this.selection.textContent = `${tile.label} · ${state.brushSize} × ${state.brushSize}`;
+      const modeLabel = TERRAIN_MODE_LABELS[state.terrainMode];
+      this.selection.textContent = state.terrainMode === 'paint'
+        ? `${modeLabel} ${tile.label} · ${state.brushSize} × ${state.brushSize}`
+        : `${modeLabel} · ${state.brushSize} × ${state.brushSize}`;
     } else if (state.tool === 'object') {
       this.selection.textContent = `${objectDefinition.label} · ${state.objectRotation * 90}°`;
     } else {
@@ -293,11 +338,13 @@ export class EditorUi {
   renderHover(hover) {
     if (!hover) {
       this.coordinates.textContent = 'Cell —';
+      this.hoverHeight.textContent = 'Height —';
       this.hoverTile.textContent = 'Tile —';
       this.hoverObject.textContent = 'Object —';
       return;
     }
     this.coordinates.textContent = `Cell ${hover.x}, ${hover.z}`;
+    this.hoverHeight.textContent = `Height ${hover.height.toFixed(2)}`;
     this.hoverTile.textContent = hover.tile?.label ?? 'Unknown';
     this.hoverObject.textContent = hover.objectDefinition?.label ?? 'Object —';
   }
@@ -379,10 +426,17 @@ export class EditorUi {
     for (let index = 0; index < this.tileMap.tileCount; index += 1) {
       const tile = TILE_BY_ID.get(this.tileMap.tiles[index]);
       const [red, green, blue] = hexToRgbBytes(tile.color);
+      const { x, z } = this.tileMap.coordinatesOf(index);
+      const height = this.heightField.getCellHeight(x, z) ?? 0;
+      const shade = clamp(
+        1 + height * MINIMAP_HEIGHT_SHADE,
+        MINIMAP_MINIMUM_SHADE,
+        MINIMAP_MAXIMUM_SHADE,
+      );
       const offset = index * 4;
-      image.data[offset] = red;
-      image.data[offset + 1] = green;
-      image.data[offset + 2] = blue;
+      image.data[offset] = clamp(Math.round(red * shade), 0, 255);
+      image.data[offset + 1] = clamp(Math.round(green * shade), 0, 255);
+      image.data[offset + 2] = clamp(Math.round(blue * shade), 0, 255);
       image.data[offset + 3] = 255;
     }
 
