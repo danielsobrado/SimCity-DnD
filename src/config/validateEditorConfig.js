@@ -4,6 +4,12 @@ const REQUIRED_POSITIVE_PATHS = Object.freeze([
   Object.freeze(['map', 'tileSize']),
   Object.freeze(['map', 'chunkSize']),
   Object.freeze(['camera', 'viewSize']),
+  Object.freeze(['renderer', 'maxPixelRatio']),
+]);
+
+const REQUIRED_BOOLEAN_PATHS = Object.freeze([
+  Object.freeze(['renderer', 'antialias']),
+  Object.freeze(['renderer', 'forceWebGL']),
 ]);
 
 function readPath(value, path) {
@@ -17,6 +23,12 @@ function assertPositiveNumber(config, path) {
   }
 }
 
+function assertBoolean(config, path) {
+  if (typeof readPath(config, path) !== 'boolean') {
+    throw new Error(`Invalid editor configuration: ${path.join('.')} must be boolean.`);
+  }
+}
+
 export function validateEditorConfig(config) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error('Invalid editor configuration: expected a YAML object.');
@@ -24,6 +36,9 @@ export function validateEditorConfig(config) {
 
   for (const path of REQUIRED_POSITIVE_PATHS) {
     assertPositiveNumber(config, path);
+  }
+  for (const path of REQUIRED_BOOLEAN_PATHS) {
+    assertBoolean(config, path);
   }
 
   if (!Array.isArray(config.brush?.sizes) || config.brush.sizes.length === 0) {
