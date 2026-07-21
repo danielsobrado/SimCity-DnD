@@ -4,6 +4,7 @@ import { installObjectAssets } from './editor/assets/installObjectAssets.js';
 import { EditorCamera } from './editor/EditorCamera.js';
 import { EditorController } from './editor/EditorController.js';
 import { EditorUi } from './editor/EditorUi.js';
+import { HeightField } from './editor/HeightField.js';
 import { ObjectMap } from './editor/ObjectMap.js';
 import { ObjectView } from './editor/ObjectView.js';
 import { OBJECT_CATALOG } from './editor/objectCatalog.js';
@@ -26,6 +27,10 @@ async function startEditor() {
     tileSize: config.map.tileSize,
     defaultTileId: defaultTile.id,
   });
+  const heightField = new HeightField({
+    width: config.map.width,
+    height: config.map.height,
+  });
   const objectMap = new ObjectMap({ tileMap, objectCatalog: OBJECT_CATALOG });
 
   const ui = new EditorUi({
@@ -33,6 +38,7 @@ async function startEditor() {
     config,
     tileCatalog: TILE_CATALOG,
     tileMap,
+    heightField,
     objectCatalog: OBJECT_CATALOG,
     objectMap,
   });
@@ -40,6 +46,7 @@ async function startEditor() {
   const terrainView = new TerrainView({
     container: ui.viewport,
     tileMap,
+    heightField,
     chunkSize: config.map.chunkSize,
     rendererConfig: config.renderer,
   });
@@ -68,6 +75,7 @@ async function startEditor() {
 
   const controller = new EditorController({
     tileMap,
+    heightField,
     objectMap,
     terrainView,
     objectView,
@@ -75,6 +83,7 @@ async function startEditor() {
     objectCatalog: OBJECT_CATALOG,
     brushSizes: config.brush.sizes,
     defaultBrushSize: config.brush.defaultSize,
+    terrainConfig: config.terrain,
   });
 
   ui.bind(controller);

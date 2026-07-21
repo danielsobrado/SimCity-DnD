@@ -1,4 +1,4 @@
-import { LEGACY_MAP_FORMAT_VERSION, MAP_FORMAT_VERSION } from './constants.js';
+import { MAP_FORMAT_VERSION, SUPPORTED_MAP_FORMAT_VERSIONS } from './constants.js';
 
 export class TileMap {
   constructor({ width, height, tileSize, defaultTileId }) {
@@ -107,9 +107,7 @@ export class TileMap {
   }
 
   loadDocument(document) {
-    const supported = document?.version === MAP_FORMAT_VERSION
-      || document?.version === LEGACY_MAP_FORMAT_VERSION;
-    if (!supported) {
+    if (!SUPPORTED_MAP_FORMAT_VERSIONS.includes(document?.version)) {
       throw new Error(`Unsupported map version: ${document?.version ?? 'missing'}.`);
     }
     if (document.width !== this.width || document.height !== this.height) {

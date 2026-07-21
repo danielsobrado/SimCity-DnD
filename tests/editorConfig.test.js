@@ -18,6 +18,12 @@ function createValidConfig() {
       forceWebGL: false,
       maxPixelRatio: 2,
     },
+    terrain: {
+      minHeight: -16,
+      maxHeight: 48,
+      sculptStrength: 1.25,
+      smoothFactor: 0.45,
+    },
     brush: {
       sizes: [1, 3, 5],
       defaultSize: 3,
@@ -25,7 +31,7 @@ function createValidConfig() {
   };
 }
 
-test('accepts positive nested map, camera, and renderer values', () => {
+test('accepts positive nested map, camera, renderer, and terrain values', () => {
   const config = createValidConfig();
   assert.equal(validateEditorConfig(config), config);
 });
@@ -47,6 +53,26 @@ test('rejects invalid renderer configuration', () => {
   assert.throws(
     () => validateEditorConfig(config),
     /renderer\.forceWebGL must be boolean/,
+  );
+});
+
+test('rejects invalid terrain limits', () => {
+  const config = createValidConfig();
+  config.terrain.maxHeight = config.terrain.minHeight;
+
+  assert.throws(
+    () => validateEditorConfig(config),
+    /terrain\.maxHeight must exceed terrain\.minHeight/,
+  );
+});
+
+test('rejects invalid terrain smoothing', () => {
+  const config = createValidConfig();
+  config.terrain.smoothFactor = 1.5;
+
+  assert.throws(
+    () => validateEditorConfig(config),
+    /terrain\.smoothFactor must be within/,
   );
 });
 

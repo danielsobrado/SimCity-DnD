@@ -5,6 +5,7 @@ const REQUIRED_POSITIVE_PATHS = Object.freeze([
   Object.freeze(['map', 'chunkSize']),
   Object.freeze(['camera', 'viewSize']),
   Object.freeze(['renderer', 'maxPixelRatio']),
+  Object.freeze(['terrain', 'sculptStrength']),
 ]);
 
 const REQUIRED_BOOLEAN_PATHS = Object.freeze([
@@ -39,6 +40,18 @@ export function validateEditorConfig(config) {
   }
   for (const path of REQUIRED_BOOLEAN_PATHS) {
     assertBoolean(config, path);
+  }
+
+  if (!Number.isFinite(config.terrain?.minHeight) || !Number.isFinite(config.terrain?.maxHeight)) {
+    throw new Error('Invalid editor configuration: terrain height limits must be finite.');
+  }
+  if (config.terrain.maxHeight <= config.terrain.minHeight) {
+    throw new Error('Invalid editor configuration: terrain.maxHeight must exceed terrain.minHeight.');
+  }
+  if (!Number.isFinite(config.terrain.smoothFactor)
+      || config.terrain.smoothFactor <= 0
+      || config.terrain.smoothFactor > 1) {
+    throw new Error('Invalid editor configuration: terrain.smoothFactor must be within (0, 1].');
   }
 
   if (!Array.isArray(config.brush?.sizes) || config.brush.sizes.length === 0) {
