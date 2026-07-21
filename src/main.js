@@ -2,13 +2,13 @@ import './styles.css';
 import { loadEditorConfig } from './config/loadEditorConfig.js';
 import { installObjectAssets } from './editor/assets/installObjectAssets.js';
 import { EditorCamera } from './editor/EditorCamera.js';
-import { EditorController } from './editor/EditorController.js';
 import { EditorUi } from './editor/EditorUi.js';
 import { HeightField } from './editor/HeightField.js';
 import { ObjectMap } from './editor/ObjectMap.js';
 import { ObjectView } from './editor/ObjectView.js';
 import { OBJECT_CATALOG } from './editor/objectCatalog.js';
 import { OBJECT_RENDER_CATALOG } from './editor/objectRenderCatalog.js';
+import { TerrainAwareEditorController } from './editor/TerrainAwareEditorController.js';
 import { TerrainView } from './editor/TerrainView.js';
 import { TileMap } from './editor/TileMap.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
@@ -74,7 +74,7 @@ async function startEditor() {
     damping: config.camera.damping,
   });
 
-  const controller = new EditorController({
+  const controller = new TerrainAwareEditorController({
     tileMap,
     heightField,
     objectMap,
