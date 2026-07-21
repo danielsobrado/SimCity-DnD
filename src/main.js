@@ -12,6 +12,8 @@ import { TerrainAwareEditorController } from './editor/TerrainAwareEditorControl
 import { TerrainView } from './editor/TerrainView.js';
 import { TileMap } from './editor/TileMap.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
+import { GpuVoxelChunk } from './editor/voxel/GpuVoxelChunk.js';
+import { VoxelPrototypeUi } from './editor/voxel/VoxelPrototypeUi.js';
 
 async function startEditor() {
   const config = loadEditorConfig();
@@ -96,6 +98,18 @@ async function startEditor() {
     baseUrl: import.meta.env.BASE_URL,
   });
 
+  const voxelPrototype = new GpuVoxelChunk({
+    terrainView,
+    config: config.voxelPrototype,
+    mapConfig: config.map,
+  });
+  const voxelPrototypeUi = new VoxelPrototypeUi({ root, prototype: voxelPrototype });
+  const voxelStatus = await voxelPrototype.initialize();
+  voxelPrototypeUi.render();
+  if (voxelStatus.code === 'failed') {
+    console.error('GPU voxel prototype failed to initialize.', voxelStatus.error);
+  }
+
   const resizeObserver = new ResizeObserver(([entry]) => {
     const { width, height } = entry.contentRect;
     terrainView.resize(width, height);
@@ -109,12 +123,15 @@ async function startEditor() {
       return;
     }
     editorCamera.update();
+    voxelPrototype.update();
     terrainView.render(editorCamera.camera);
   });
 
   window.addEventListener('pagehide', () => {
     active = false;
     resizeObserver.disconnect();
+    voxelPrototypeUi.dispose();
+    voxelPrototype.dispose();
     assetPipeline.dispose();
     controller.dispose();
     editorCamera.dispose();
