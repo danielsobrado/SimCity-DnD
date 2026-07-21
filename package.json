@@ -1,7 +1,7 @@
 {
   "name": "simcity-dnd",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "js-yaml": "4.1.0",
-    "three": "0.184.0"
+    "three": "0.185.1"
   },
   "devDependencies": {
     "vite": "8.1.5"

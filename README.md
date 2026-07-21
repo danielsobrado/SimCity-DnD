@@ -17,6 +17,7 @@ The current `main` branch contains a large-map terrain and settlement-object edi
 - Undo and redo history across terrain and objects.
 - Browser save/load and JSON import/export.
 - A clickable minimap and visible 32 × 32 cell chunk boundaries.
+- WebGPURenderer by default, with its built-in WebGL 2 fallback.
 
 Run it with:
 
@@ -27,7 +28,11 @@ npm run verify
 npm run dev
 ```
 
-Three.js is pinned to r184. Editor dimensions and brush settings are kept in `editor.config.yaml`. Object placement and asset metadata are kept in `config/objects.yaml`.
+Three.js is pinned to r185.1. Renderer, editor dimensions, and brush settings are kept in `editor.config.yaml`. Object placement and asset metadata are kept in `config/objects.yaml`.
+
+## Renderer
+
+The editor uses `WebGPURenderer` and a TSL terrain material. WebGPU is selected when supported; Three.js falls back to its WebGL 2 backend otherwise. Set `renderer.forceWebGL` in `editor.config.yaml` only for compatibility testing.
 
 ## GLB assets
 
