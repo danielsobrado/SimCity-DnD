@@ -44,8 +44,6 @@ export function createVoxelChunkLayout(config, mapConfig) {
   assertPositive(config.baseHeight, 'baseHeight');
   assertPositive(config.surfaceAmplitude, 'surfaceAmplitude');
   assertPositive(config.surfaceFrequency, 'surfaceFrequency');
-  assertPositive(config.caveFrequency, 'caveFrequency');
-  assertFinite(config.caveThreshold, 'caveThreshold');
   if (!Number.isInteger(config.seed)) {
     throw new Error('Voxel prototype seed must be an integer.');
   }
@@ -85,8 +83,6 @@ export function createVoxelChunkLayout(config, mapConfig) {
     baseHeight: config.baseHeight,
     surfaceAmplitude: config.surfaceAmplitude,
     surfaceFrequency: config.surfaceFrequency,
-    caveFrequency: config.caveFrequency,
-    caveThreshold: config.caveThreshold,
     seed: config.seed,
     maxInstances,
     worldWidth: cellsX * config.voxelSize,
