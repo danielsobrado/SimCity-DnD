@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createVoxelChunkLayout } from '../src/editor/voxel/VoxelChunkLayout.js';
+
+const MAP_CONFIG = Object.freeze({ width: 512, height: 512 });
+
+function createConfig() {
+  return {
+    enabled: true,
+    visible: true,
+    cells: [24, 16, 24],
+    voxelSize: 1.5,
+    originCell: [280, 240],
+    verticalOffset: 0.2,
+    baseHeight: 7,
+    surfaceAmplitude: 3,
+    surfaceFrequency: 0.28,
+    seed: 17,
+  };
+}
+
+test('derives bounded GPU voxel chunk dimensions', () => {
+  const layout = createVoxelChunkLayout(createConfig(), MAP_CONFIG);
+
+  assert.equal(layout.maxInstances, 9216);
+  assert.equal(layout.worldWidth, 36);
+  assert.equal(layout.worldHeight, 24);
+  assert.equal(layout.worldDepth, 36);
+  assert.deepEqual([layout.originX, layout.originZ], [280, 240]);
+  assert.ok(Object.isFrozen(layout));
+});
+
+test('rejects voxel axes outside the bounded prototype range', () => {
+  const config = createConfig();
+  config.cells = [65, 16, 24];
+
+  assert.throws(
+    () => createVoxelChunkLayout(config, MAP_CONFIG),
+    /x cells must be within 1–64/,
+  );
+});
+
+test('rejects a voxel origin outside the logical map', () => {
+  const config = createConfig();
+  config.originCell = [512, 0];
+
+  assert.throws(
+    () => createVoxelChunkLayout(config, MAP_CONFIG),
+    /originCell must be inside the map/,
+  );
+});
+
+test('requires deterministic integer seeds', () => {
+  const config = createConfig();
+  config.seed = 1.5;
+
+  assert.throws(
+    () => createVoxelChunkLayout(config, MAP_CONFIG),
+    /seed must be an integer/,
+  );
+});
