@@ -5,6 +5,12 @@ objects:
     category: building
     color: "#b86b3f"
     model: cottage
+    asset:
+      path: "assets/models/settlement-core.glb"
+      node: "cottage"
+      scale: 1
+      rotationY: 0
+      offset: [0, 0, 0]
     footprint: { width: 2, depth: 2 }
     allowedTerrain: [plains, road, farm, desert, snow]
   - key: farmstead
@@ -13,6 +19,12 @@ objects:
     category: building
     color: "#c79432"
     model: farmstead
+    asset:
+      path: "assets/models/settlement-core.glb"
+      node: "farmstead"
+      scale: 1
+      rotationY: 0
+      offset: [0, 0, 0]
     footprint: { width: 3, depth: 3 }
     allowedTerrain: [plains, farm]
   - key: inn
@@ -21,6 +33,12 @@ objects:
     category: building
     color: "#8f4d34"
     model: inn
+    asset:
+      path: "assets/models/settlement-core.glb"
+      node: "inn"
+      scale: 1
+      rotationY: 0
+      offset: [0, 0, 0]
     footprint: { width: 3, depth: 2 }
     allowedTerrain: [plains, road, desert, snow]
   - key: wizard_tower
@@ -29,6 +47,12 @@ objects:
     category: building
     color: "#6750a4"
     model: tower
+    asset:
+      path: "assets/models/settlement-core.glb"
+      node: "wizard_tower"
+      scale: 1
+      rotationY: 0
+      offset: [0, 0, 0]
     footprint: { width: 2, depth: 2 }
     allowedTerrain: [plains, stone, desert, snow, corruption]
   - key: keep
@@ -37,6 +61,12 @@ objects:
     category: defense
     color: "#8b9093"
     model: keep
+    asset:
+      path: "assets/models/settlement-core.glb"
+      node: "keep"
+      scale: 1
+      rotationY: 0
+      offset: [0, 0, 0]
     footprint: { width: 4, depth: 4 }
     allowedTerrain: [plains, road, stone, desert, snow]
   - key: wall
@@ -45,6 +75,12 @@ objects:
     category: defense
     color: "#787d80"
     model: wall
+    asset:
+      path: "assets/models/settlement-core.glb"
+      node: "wall"
+      scale: 1
+      rotationY: 0
+      offset: [0, 0, 0]
     footprint: { width: 1, depth: 1 }
     allowedTerrain: [plains, road, farm, stone, desert, snow]
   - key: pine_tree
@@ -53,6 +89,12 @@ objects:
     category: nature
     color: "#2f6b3d"
     model: tree
+    asset:
+      path: "assets/models/settlement-core.glb"
+      node: "pine_tree"
+      scale: 1
+      rotationY: 0
+      offset: [0, 0, 0]
     footprint: { width: 1, depth: 1 }
     allowedTerrain: [plains, forest, swamp, snow]
   - key: boulder
@@ -61,5 +103,11 @@ objects:
     category: nature
     color: "#777d7d"
     model: rock
+    asset:
+      path: "assets/models/settlement-core.glb"
+      node: "boulder"
+      scale: 1
+      rotationY: 0
+      offset: [0, 0, 0]
     footprint: { width: 1, depth: 1 }
     allowedTerrain: [plains, forest, stone, desert, snow, corruption]
