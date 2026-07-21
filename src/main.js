@@ -1,11 +1,13 @@
 import './styles.css';
 import { loadEditorConfig } from './config/loadEditorConfig.js';
+import { installObjectAssets } from './editor/assets/installObjectAssets.js';
 import { EditorCamera } from './editor/EditorCamera.js';
 import { EditorController } from './editor/EditorController.js';
 import { EditorUi } from './editor/EditorUi.js';
 import { ObjectMap } from './editor/ObjectMap.js';
 import { ObjectView } from './editor/ObjectView.js';
 import { OBJECT_CATALOG } from './editor/objectCatalog.js';
+import { OBJECT_RENDER_CATALOG } from './editor/objectRenderCatalog.js';
 import { TerrainView } from './editor/TerrainView.js';
 import { TileMap } from './editor/TileMap.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
@@ -67,6 +69,13 @@ function startEditor() {
   });
 
   ui.bind(controller);
+  const assetPipeline = installObjectAssets({
+    objectView,
+    catalog: OBJECT_RENDER_CATALOG,
+    tileSize: tileMap.tileSize,
+    ui,
+    baseUrl: import.meta.env.BASE_URL,
+  });
 
   const resizeObserver = new ResizeObserver(([entry]) => {
     const { width, height } = entry.contentRect;
@@ -89,6 +98,7 @@ function startEditor() {
   window.addEventListener('pagehide', () => {
     active = false;
     resizeObserver.disconnect();
+    assetPipeline.dispose();
     controller.dispose();
     editorCamera.dispose();
     objectView.dispose();
