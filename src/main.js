@@ -61,6 +61,7 @@ async function startEditor() {
   const objectView = new ObjectView({
     terrainView,
     tileMap,
+    heightField,
     objectMap,
     objectCatalog: OBJECT_CATALOG,
   });
