@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - config/objects.yaml
-      - requirements-assets.txt
       - scripts/generate-placeholder-models.py
       - .github/workflows/build-assets.yml
   workflow_dispatch:
@@ -21,9 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: requirements-assets.txt
-      - run: python -m pip install -r requirements-assets.txt
+      - run: python -m py_compile scripts/generate-placeholder-models.py
       - run: python scripts/generate-placeholder-models.py
       - name: Commit generated GLB pack
         run: |
