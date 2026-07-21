@@ -43,8 +43,9 @@ button, input { font: inherit; }
 .panel-subheading { margin-top: 14px; }
 .panel-note { margin: 9px 0 0; color: #9eaea2; font-size: 12px; }
 
-.tool-row, .brush-row, .action-grid { display: grid; gap: 8px; }
+.tool-row, .terrain-mode-row, .brush-row, .action-grid { display: grid; gap: 8px; }
 .tool-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.terrain-mode-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .brush-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .tile-palette { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
