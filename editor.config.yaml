@@ -1,0 +1,16 @@
+map:
+  width: 512
+  height: 512
+  tileSize: 2
+  defaultTile: plains
+  chunkSize: 32
+camera:
+  viewSize: 180
+  minZoom: 0.3
+  maxZoom: 6
+  damping: 0.1
+brush:
+  sizes: [1, 3, 5, 9, 15]
+  defaultSize: 3
+storage:
+  key: simcity-dnd.world-editor.v1
