@@ -13,6 +13,7 @@ The current `main` branch contains a large-map terrain and settlement-object edi
 - Plains, forest, water, road, farm, stone, desert, swamp, snow, and corruption terrain.
 - Brush sizes from 1 × 1 to 15 × 15.
 - Cottage, farmstead, inn, wizard tower, keep, wall, tree, and boulder placement.
+- Slope-aware elevated placement with conforming props and terrace foundations.
 - Rotated footprints, overlap checks, terrain restrictions, selection, movement, and deletion.
 - Instanced GLB rendering with procedural fallback models.
 - Orthographic pan, zoom, and rotation controls.
@@ -30,13 +31,20 @@ npm run verify
 npm run dev
 ```
 
-Three.js is pinned to r185.1. Renderer, terrain limits, editor dimensions, and brush settings are kept in `editor.config.yaml`. Object placement and asset metadata are kept in `config/objects.yaml`.
+Three.js is pinned to r185.1. Renderer, terrain limits, editor dimensions, and brush settings are kept in `editor.config.yaml`. Object placement, foundation, and asset metadata are kept in `config/objects.yaml`.
 
 ## Terrain elevation
 
 The editor stores one height at every logical cell corner, so neighboring cells use the same vertices and cannot split apart. JavaScript keeps the authoritative editable heightfield for saves and undo. Rendering samples that array as a GPU float texture from a TSL `positionNode`; normal editing does not read terrain geometry back from the GPU.
 
-Existing objects protect the shared vertices below their footprints. Placing new objects on elevated terrain is temporarily rejected until the next phase adds slope-aware grounding and foundations.
+Object placement samples every shared vertex under the footprint:
+
+- Buildings stay upright at the highest supported footprint elevation.
+- Uneven building sites receive instanced retaining foundations.
+- Trees and rocks use the sampled center height.
+- Configured props can align to the terrain normal.
+- Placement is rejected when slope or foundation depth exceeds the object limits.
+- Existing objects protect the shared vertices below their footprints from sculpting.
 
 Terrain shortcuts:
 

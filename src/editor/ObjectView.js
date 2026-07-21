@@ -1,10 +1,15 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { QUARTER_TURN_RADIANS } from './constants.js';
 import { createObjectModelParts } from './ObjectModelLibrary.js';
+import { evaluateObjectSurface } from './TerrainPlacement.js';
 
 const PREVIEW_VALID_COLOR = '#79d47d';
 const PREVIEW_INVALID_COLOR = '#db6868';
 const SELECTION_COLOR = '#f0cf68';
+const FOUNDATION_EPSILON = 0.03;
+const FOUNDATION_OVERLAP = 0.04;
+const OVERLAY_HEIGHT_OFFSET = 0.09;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 function nextCapacity(required) {
   let capacity = 8;
@@ -15,9 +20,10 @@ function nextCapacity(required) {
 }
 
 export class ObjectView {
-  constructor({ terrainView, tileMap, objectMap, objectCatalog }) {
+  constructor({ terrainView, tileMap, heightField, objectMap, objectCatalog }) {
     this.terrainView = terrainView;
     this.tileMap = tileMap;
+    this.heightField = heightField;
     this.objectMap = objectMap;
     this.objectCatalog = objectCatalog;
     this.definitionByKey = new Map(objectCatalog.map((definition) => [definition.key, definition]));
@@ -34,6 +40,18 @@ export class ObjectView {
     terrainView.scene.add(this.previewGroup);
     this.previewDefinitionKey = null;
 
+    this.previewFoundation = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial({
+        color: PREVIEW_VALID_COLOR,
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+      }),
+    );
+    this.previewFoundation.visible = false;
+    terrainView.scene.add(this.previewFoundation);
+
     this.footprintPreview = this.createOverlay(PREVIEW_VALID_COLOR, 0.26);
     this.selectionOverlay = this.createOverlay(SELECTION_COLOR, 0.24);
     terrainView.scene.add(this.footprintPreview, this.selectionOverlay);
@@ -45,7 +63,23 @@ export class ObjectView {
 
     for (const definition of objectCatalog) {
       const parts = createObjectModelParts(definition, tileMap.tileSize);
-      this.renderers.set(definition.key, { definition, parts, meshes: [], capacity: 0 });
+      const hasFoundation = definition.foundation.mode === 'terrace';
+      this.renderers.set(definition.key, {
+        definition,
+        parts,
+        meshes: [],
+        capacity: 0,
+        foundationGeometry: hasFoundation ? new THREE.BoxGeometry(1, 1, 1) : null,
+        foundationMaterial: hasFoundation
+          ? new THREE.MeshStandardMaterial({
+            color: definition.foundation.color,
+            roughness: 0.96,
+            metalness: 0,
+          })
+          : null,
+        foundationMesh: null,
+        foundationCapacity: 0,
+      });
     }
 
     this.refreshAll();
@@ -63,9 +97,28 @@ export class ObjectView {
       }),
     );
     overlay.rotation.x = -Math.PI / 2;
-    overlay.position.y = 0.075;
     overlay.visible = false;
     return overlay;
+  }
+
+  resolvePlacement(object) {
+    const definition = this.definitionByKey.get(object.definitionKey);
+    if (!definition) {
+      throw new Error(`Unknown object definition: ${object.definitionKey}.`);
+    }
+    const bounds = this.objectMap.getBounds(
+      object.x,
+      object.z,
+      object.definitionKey,
+      object.rotation,
+    );
+    const evaluation = evaluateObjectSurface({
+      definition,
+      heightField: this.heightField,
+      bounds,
+      tileSize: this.tileMap.tileSize,
+    });
+    return { definition, bounds, ...evaluation };
   }
 
   refreshAll() {
@@ -77,6 +130,7 @@ export class ObjectView {
     this.pickMeshes = [];
     for (const [definitionKey, renderer] of this.renderers.entries()) {
       const objects = grouped.get(definitionKey) ?? [];
+      const placements = objects.map((object) => ({ object, placement: this.resolvePlacement(object) }));
       this.ensureCapacity(renderer, objects.length);
       const objectIds = objects.map((object) => object.id);
 
@@ -86,8 +140,9 @@ export class ObjectView {
         this.pickMeshes.push(mesh);
       }
 
-      for (let index = 0; index < objects.length; index += 1) {
-        const rootMatrix = this.createObjectMatrix(objects[index]);
+      for (let index = 0; index < placements.length; index += 1) {
+        const { object, placement } = placements[index];
+        const rootMatrix = this.createObjectMatrix(object, placement.surface);
         for (let partIndex = 0; partIndex < renderer.parts.length; partIndex += 1) {
           const matrix = new THREE.Matrix4().multiplyMatrices(rootMatrix, renderer.parts[partIndex].matrix);
           renderer.meshes[partIndex].setMatrixAt(index, matrix);
@@ -98,6 +153,11 @@ export class ObjectView {
         mesh.instanceMatrix.needsUpdate = true;
         mesh.computeBoundingSphere();
       }
+
+      const foundationPlacements = placements.filter(
+        ({ placement }) => placement.surface.foundationDepth > FOUNDATION_EPSILON,
+      );
+      this.refreshFoundations(renderer, foundationPlacements);
     }
   }
 
@@ -109,6 +169,7 @@ export class ObjectView {
     const capacity = nextCapacity(required);
     for (const mesh of renderer.meshes) {
       this.root.remove(mesh);
+      mesh.dispose?.();
     }
 
     renderer.meshes = renderer.parts.map((part) => {
@@ -123,22 +184,101 @@ export class ObjectView {
     renderer.capacity = capacity;
   }
 
-  createObjectMatrix(object) {
-    const bounds = this.objectMap.getBounds(
-      object.x,
-      object.z,
-      object.definitionKey,
-      object.rotation,
+  ensureFoundationCapacity(renderer, required) {
+    if (!renderer.foundationGeometry || required === 0) {
+      return;
+    }
+    if (renderer.foundationMesh && renderer.foundationCapacity >= required) {
+      return;
+    }
+
+    if (renderer.foundationMesh) {
+      this.root.remove(renderer.foundationMesh);
+      renderer.foundationMesh.dispose?.();
+    }
+
+    renderer.foundationCapacity = nextCapacity(required);
+    renderer.foundationMesh = new THREE.InstancedMesh(
+      renderer.foundationGeometry,
+      renderer.foundationMaterial,
+      renderer.foundationCapacity,
     );
-    const center = this.terrainView.boundsToWorld(bounds);
-    const quaternion = new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(0, 1, 0),
+    renderer.foundationMesh.count = 0;
+    renderer.foundationMesh.castShadow = true;
+    renderer.foundationMesh.receiveShadow = true;
+    renderer.foundationMesh.userData.objectIds = [];
+    this.root.add(renderer.foundationMesh);
+  }
+
+  refreshFoundations(renderer, placements) {
+    this.ensureFoundationCapacity(renderer, placements.length);
+    if (!renderer.foundationMesh) {
+      return;
+    }
+
+    renderer.foundationMesh.count = placements.length;
+    renderer.foundationMesh.userData.objectIds = placements.map(({ object }) => object.id);
+    for (let index = 0; index < placements.length; index += 1) {
+      const { placement } = placements[index];
+      renderer.foundationMesh.setMatrixAt(
+        index,
+        this.createFoundationMatrix(placement.bounds, placement.surface),
+      );
+    }
+    renderer.foundationMesh.instanceMatrix.needsUpdate = true;
+    renderer.foundationMesh.computeBoundingSphere();
+    if (placements.length > 0) {
+      this.pickMeshes.push(renderer.foundationMesh);
+    }
+  }
+
+  createObjectMatrix(object, surfaceOverride = null) {
+    const placement = surfaceOverride
+      ? {
+        bounds: this.objectMap.getBounds(object.x, object.z, object.definitionKey, object.rotation),
+        definition: this.definitionByKey.get(object.definitionKey),
+        surface: surfaceOverride,
+      }
+      : this.resolvePlacement(object);
+    const center = this.terrainView.boundsToWorld(placement.bounds);
+    const yaw = new THREE.Quaternion().setFromAxisAngle(
+      WORLD_UP,
       -object.rotation * QUARTER_TURN_RADIANS,
     );
+    let quaternion = yaw;
+
+    if (placement.definition.foundation.alignToNormal) {
+      const normal = new THREE.Vector3(
+        placement.surface.normal.x,
+        placement.surface.normal.y,
+        placement.surface.normal.z,
+      );
+      const alignment = new THREE.Quaternion().setFromUnitVectors(WORLD_UP, normal);
+      quaternion = alignment.multiply(yaw);
+    }
+
     return new THREE.Matrix4().compose(
-      new THREE.Vector3(center.x, 0, center.z),
+      new THREE.Vector3(center.x, placement.surface.baseHeight, center.z),
       quaternion,
       new THREE.Vector3(1, 1, 1),
+    );
+  }
+
+  createFoundationMatrix(bounds, surface) {
+    const center = this.terrainView.boundsToWorld(bounds);
+    const depth = surface.foundationDepth + FOUNDATION_OVERLAP;
+    return new THREE.Matrix4().compose(
+      new THREE.Vector3(
+        center.x,
+        surface.baseHeight - depth / 2,
+        center.z,
+      ),
+      new THREE.Quaternion(),
+      new THREE.Vector3(
+        bounds.width * this.tileMap.tileSize * 0.96,
+        depth,
+        bounds.depth * this.tileMap.tileSize * 0.96,
+      ),
     );
   }
 
@@ -161,6 +301,7 @@ export class ObjectView {
   setPreview(preview) {
     if (!preview) {
       this.previewGroup.visible = false;
+      this.previewFoundation.visible = false;
       this.footprintPreview.visible = false;
       return;
     }
@@ -175,7 +316,14 @@ export class ObjectView {
       z: preview.z,
       rotation: preview.rotation,
     };
-    const matrix = this.createObjectMatrix(object);
+    const placement = preview.surface
+      ? {
+        definition: this.definitionByKey.get(preview.definitionKey),
+        bounds: this.objectMap.getBounds(preview.x, preview.z, preview.definitionKey, preview.rotation),
+        surface: preview.surface,
+      }
+      : this.resolvePlacement(object);
+    const matrix = this.createObjectMatrix(object, placement.surface);
     matrix.decompose(this.previewGroup.position, this.previewGroup.quaternion, this.previewGroup.scale);
     const color = preview.valid ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
     for (const mesh of this.previewGroup.children) {
@@ -183,8 +331,24 @@ export class ObjectView {
     }
     this.previewGroup.visible = true;
 
-    const bounds = this.objectMap.getBounds(preview.x, preview.z, preview.definitionKey, preview.rotation);
-    this.positionOverlay(this.footprintPreview, bounds, color);
+    if (placement.surface.foundationDepth > FOUNDATION_EPSILON) {
+      this.createFoundationMatrix(placement.bounds, placement.surface).decompose(
+        this.previewFoundation.position,
+        this.previewFoundation.quaternion,
+        this.previewFoundation.scale,
+      );
+      this.previewFoundation.material.color.set(color);
+      this.previewFoundation.visible = true;
+    } else {
+      this.previewFoundation.visible = false;
+    }
+
+    this.positionOverlay(
+      this.footprintPreview,
+      placement.bounds,
+      color,
+      placement.surface.baseHeight,
+    );
   }
 
   rebuildPreview(definitionKey) {
@@ -219,14 +383,18 @@ export class ObjectView {
       this.selectionOverlay.visible = false;
       return;
     }
-    const bounds = this.objectMap.getBounds(object.x, object.z, object.definitionKey, object.rotation);
-    this.positionOverlay(this.selectionOverlay, bounds, SELECTION_COLOR);
+    const placement = this.resolvePlacement(object);
+    this.positionOverlay(
+      this.selectionOverlay,
+      placement.bounds,
+      SELECTION_COLOR,
+      placement.surface.baseHeight,
+    );
   }
 
-  positionOverlay(overlay, bounds, color) {
+  positionOverlay(overlay, bounds, color, height) {
     const center = this.terrainView.boundsToWorld(bounds);
-    overlay.position.x = center.x;
-    overlay.position.z = center.z;
+    overlay.position.set(center.x, height + OVERLAY_HEIGHT_OFFSET, center.z);
     overlay.scale.set(
       bounds.width * this.tileMap.tileSize,
       bounds.depth * this.tileMap.tileSize,
@@ -240,7 +408,14 @@ export class ObjectView {
     for (const renderer of this.renderers.values()) {
       for (const mesh of renderer.meshes) {
         this.root.remove(mesh);
+        mesh.dispose?.();
       }
+      if (renderer.foundationMesh) {
+        this.root.remove(renderer.foundationMesh);
+        renderer.foundationMesh.dispose?.();
+      }
+      renderer.foundationGeometry?.dispose();
+      renderer.foundationMaterial?.dispose();
       for (const part of renderer.parts) {
         part.geometry.dispose();
         part.material.dispose();
@@ -249,10 +424,18 @@ export class ObjectView {
     for (const child of this.previewGroup.children) {
       child.material.dispose();
     }
+    this.previewFoundation.geometry.dispose();
+    this.previewFoundation.material.dispose();
     this.footprintPreview.geometry.dispose();
     this.footprintPreview.material.dispose();
     this.selectionOverlay.geometry.dispose();
     this.selectionOverlay.material.dispose();
-    this.terrainView.scene.remove(this.root, this.previewGroup, this.footprintPreview, this.selectionOverlay);
+    this.terrainView.scene.remove(
+      this.root,
+      this.previewGroup,
+      this.previewFoundation,
+      this.footprintPreview,
+      this.selectionOverlay,
+    );
   }
 }
