@@ -2,15 +2,21 @@ import * as THREE from 'three/webgpu';
 import { createTerrainMaterial } from './terrainMaterial.js';
 import { TILE_BY_ID, hexToRgbBytes } from './tileCatalog.js';
 
+const PICK_ITERATIONS = 5;
+const PREVIEW_HEIGHT_OFFSET = 0.08;
+
 export class TerrainView {
-  constructor({ container, tileMap, chunkSize, rendererConfig }) {
+  constructor({ container, tileMap, heightField, chunkSize, rendererConfig }) {
     this.container = container;
     this.tileMap = tileMap;
+    this.heightField = heightField;
     this.chunkSize = chunkSize;
     this.worldWidth = tileMap.width * tileMap.tileSize;
     this.worldDepth = tileMap.height * tileMap.tileSize;
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
+    this.pickPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    this.pickPoint = new THREE.Vector3();
 
     this.renderer = new THREE.WebGPURenderer({
       antialias: rendererConfig.antialias,
@@ -38,15 +44,33 @@ export class TerrainView {
     this.tileTexture.generateMipmaps = false;
     this.tileTexture.colorSpace = THREE.SRGBColorSpace;
 
+    this.heightTexture = new THREE.DataTexture(
+      heightField.heights,
+      heightField.vertexWidth,
+      heightField.vertexHeight,
+      THREE.RedFormat,
+      THREE.FloatType,
+    );
+    this.heightTexture.magFilter = THREE.NearestFilter;
+    this.heightTexture.minFilter = THREE.NearestFilter;
+    this.heightTexture.generateMipmaps = false;
+    this.heightTexture.unpackAlignment = 1;
+
     this.terrainMaterial = createTerrainMaterial({
       tileTexture: this.tileTexture,
+      heightTexture: this.heightTexture,
       width: tileMap.width,
       height: tileMap.height,
       chunkSize,
     });
 
     this.terrain = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.worldWidth, this.worldDepth),
+      new THREE.PlaneGeometry(
+        this.worldWidth,
+        this.worldDepth,
+        tileMap.width,
+        tileMap.height,
+      ),
       this.terrainMaterial,
     );
     this.terrain.rotation.x = -Math.PI / 2;
@@ -64,7 +88,6 @@ export class TerrainView {
       }),
     );
     this.preview.rotation.x = -Math.PI / 2;
-    this.preview.position.y = 0.05;
     this.preview.visible = false;
     this.scene.add(this.preview);
 
@@ -107,6 +130,7 @@ export class TerrainView {
       this.writePixel(index, this.tileMap.tiles[index]);
     }
     this.tileTexture.needsUpdate = true;
+    this.heightTexture.needsUpdate = true;
   }
 
   updatePatch(patch) {
@@ -114,6 +138,13 @@ export class TerrainView {
       this.writePixel(index, this.tileMap.tiles[index]);
     }
     this.tileTexture.needsUpdate = true;
+  }
+
+  updateHeightPatch() {
+    this.heightTexture.needsUpdate = true;
+    if (this.preview.visible && this.preview.userData.cell) {
+      this.positionPreview(this.preview.userData.cell);
+    }
   }
 
   writePixel(index, tileId) {
@@ -139,34 +170,54 @@ export class TerrainView {
     this.pointer.x = ((clientX - bounds.left) / bounds.width) * 2 - 1;
     this.pointer.y = -((clientY - bounds.top) / bounds.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, camera);
+    this.pickPlane.constant = 0;
 
-    const hit = this.raycaster.intersectObject(this.terrain, false)[0];
-    if (!hit?.uv) {
+    if (!this.raycaster.ray.intersectPlane(this.pickPlane, this.pickPoint)) {
       return null;
     }
 
-    const x = Math.min(this.tileMap.width - 1, Math.floor(hit.uv.x * this.tileMap.width));
-    const z = Math.min(this.tileMap.height - 1, Math.floor(hit.uv.y * this.tileMap.height));
-    return { x, z };
+    for (let iteration = 0; iteration < PICK_ITERATIONS; iteration += 1) {
+      const height = this.getWorldHeight(this.pickPoint.x, this.pickPoint.z);
+      this.pickPlane.constant = -height;
+      if (!this.raycaster.ray.intersectPlane(this.pickPlane, this.pickPoint)) {
+        return null;
+      }
+    }
+
+    const x = Math.floor((this.pickPoint.x + this.worldWidth / 2) / this.tileMap.tileSize);
+    const z = Math.floor((this.worldDepth / 2 - this.pickPoint.z) / this.tileMap.tileSize);
+    return this.tileMap.inBounds(x, z) ? { x, z } : null;
+  }
+
+  getWorldHeight(worldX, worldZ) {
+    const cellX = (worldX + this.worldWidth / 2) / this.tileMap.tileSize;
+    const cellZ = (this.worldDepth / 2 - worldZ) / this.tileMap.tileSize;
+    return this.heightField.sample(cellX, cellZ);
   }
 
   setPreview(cell, brushSize, color) {
     if (!cell) {
       this.preview.visible = false;
+      this.preview.userData.cell = null;
       return;
     }
 
-    const world = this.cellToWorld(cell.x, cell.z);
-    this.preview.position.x = world.x;
-    this.preview.position.z = world.z;
+    this.preview.userData.cell = cell;
+    this.positionPreview(cell);
     this.preview.scale.set(brushSize, brushSize, 1);
     this.preview.material.color.set(color);
     this.preview.visible = true;
   }
 
+  positionPreview(cell) {
+    const world = this.cellToWorld(cell.x, cell.z);
+    this.preview.position.set(world.x, world.y + PREVIEW_HEIGHT_OFFSET, world.z);
+  }
+
   cellToWorld(x, z) {
     return {
       x: (x + 0.5) * this.tileMap.tileSize - this.worldWidth / 2,
+      y: this.heightField.getCellHeight(x, z) ?? 0,
       z: this.worldDepth / 2 - (z + 0.5) * this.tileMap.tileSize,
     };
   }
@@ -176,6 +227,7 @@ export class TerrainView {
     const max = this.cellToWorld(bounds.maxX, bounds.maxZ);
     return {
       x: (min.x + max.x) / 2,
+      y: (min.y + max.y) / 2,
       z: (min.z + max.z) / 2,
     };
   }
@@ -185,6 +237,7 @@ export class TerrainView {
     this.terrain.geometry.dispose();
     this.terrainMaterial.dispose();
     this.tileTexture.dispose();
+    this.heightTexture.dispose();
     this.preview.geometry.dispose();
     this.preview.material.dispose();
     this.borderGeometry.dispose();
