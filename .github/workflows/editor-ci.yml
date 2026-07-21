@@ -17,6 +17,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: requirements-assets.txt
       - run: python -m pip install -r requirements-assets.txt
       - run: python scripts/generate-placeholder-models.py
       - uses: actions/setup-node@v4
