@@ -22,6 +22,7 @@ Run it with:
 
 ```bash
 npm install
+npm run generate:assets
 npm run verify
 npm run dev
 ```
@@ -35,7 +36,6 @@ Production visuals are loaded from the shared `public/assets/models/settlement-c
 Regenerate the complete model catalog with:
 
 ```bash
-python -m pip install -r requirements-assets.txt
 npm run generate:assets
 ```
 
@@ -45,7 +45,7 @@ Then validate it with:
 npm run validate:assets
 ```
 
-See `docs/asset-pipeline.md` for the authoring contract and failure behavior.
+The asset generator uses only Python's standard library. See `docs/asset-pipeline.md` for the authoring contract and failure behavior.
 
 ## Starter pack
 
