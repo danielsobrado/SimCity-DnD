@@ -1,8 +1,12 @@
 import {
+  ELEVATED_PLACEMENT_TOLERANCE,
   MAX_HISTORY_ENTRIES,
   PAINT_INTERVAL_MS,
   PRIMARY_POINTER_BUTTON,
+  TERRAIN_MODE_BY_SHORTCUT,
+  TERRAIN_PREVIEW_COLORS,
   VALID_EDITOR_TOOLS,
+  VALID_TERRAIN_MODES,
 } from './constants.js';
 import { createWorldDocument, loadWorldDocument } from './WorldDocument.js';
 import { TILE_BY_ID, TILE_BY_SHORTCUT } from './tileCatalog.js';
@@ -10,6 +14,7 @@ import { TILE_BY_ID, TILE_BY_SHORTCUT } from './tileCatalog.js';
 export class EditorController {
   constructor({
     tileMap,
+    heightField,
     objectMap,
     terrainView,
     objectView,
@@ -17,15 +22,19 @@ export class EditorController {
     objectCatalog,
     brushSizes,
     defaultBrushSize,
+    terrainConfig,
   }) {
     this.tileMap = tileMap;
+    this.heightField = heightField;
     this.objectMap = objectMap;
     this.terrainView = terrainView;
     this.objectView = objectView;
     this.editorCamera = editorCamera;
     this.objectCatalog = objectCatalog;
     this.brushSizes = brushSizes;
+    this.terrainConfig = terrainConfig;
     this.tool = 'terrain';
+    this.terrainMode = 'paint';
     this.selectedTileId = 0;
     this.selectedObjectKey = objectCatalog[0].key;
     this.objectRotation = 0;
@@ -35,6 +44,7 @@ export class EditorController {
     this.undoStack = [];
     this.redoStack = [];
     this.stroke = null;
+    this.strokeKind = null;
     this.painting = false;
     this.spacePressed = false;
     this.hoveredCell = null;
@@ -93,6 +103,7 @@ export class EditorController {
       : null;
     return {
       tool: this.tool,
+      terrainMode: this.terrainMode,
       selectedTileId: this.selectedTileId,
       selectedObjectKey: this.selectedObjectKey,
       objectRotation: this.objectRotation,
@@ -117,11 +128,23 @@ export class EditorController {
     this.emitState();
   }
 
+  selectTerrainMode(mode) {
+    if (!VALID_TERRAIN_MODES.includes(mode)) {
+      return;
+    }
+    this.terrainMode = mode;
+    this.tool = 'terrain';
+    this.setSelectedObject(null);
+    this.updatePreviews();
+    this.emitState();
+  }
+
   selectTile(tileId) {
     if (!TILE_BY_ID.has(tileId)) {
       return;
     }
     this.selectedTileId = tileId;
+    this.terrainMode = 'paint';
     this.tool = 'terrain';
     this.setSelectedObject(null);
     this.updatePreviews();
@@ -229,6 +252,12 @@ export class EditorController {
       return;
     }
 
+    if (entry.kind === 'height') {
+      this.heightField.applyPatch(entry.patch, direction);
+      this.terrainView.updateHeightPatch(entry.patch);
+      return;
+    }
+
     if (entry.kind === 'object') {
       this.objectMap.applyChange(entry, direction);
       this.refreshObjects();
@@ -237,7 +266,9 @@ export class EditorController {
 
     if (entry.kind === 'world') {
       this.tileMap.applyPatch(entry.terrainPatch, direction);
+      this.heightField.applyPatch(entry.heightPatch, direction);
       this.terrainView.updatePatch(entry.terrainPatch);
+      this.terrainView.updateHeightPatch(entry.heightPatch);
       this.objectMap.replaceAll(direction === 'undo' ? entry.beforeObjects : entry.afterObjects);
       this.setSelectedObject(null);
       this.refreshObjects();
@@ -247,28 +278,33 @@ export class EditorController {
   clearWorld() {
     const beforeObjects = this.objectMap.clear();
     const terrainPatch = this.tileMap.fill(0);
-    if (beforeObjects.length === 0 && terrainPatch.indices.length === 0) {
+    const heightPatch = this.heightField.fill(0);
+    if (beforeObjects.length === 0
+        && terrainPatch.indices.length === 0
+        && heightPatch.indices.length === 0) {
       return;
     }
 
     this.commitHistory({
       kind: 'world',
       terrainPatch,
+      heightPatch,
       beforeObjects,
       afterObjects: [],
     });
     this.setSelectedObject(null);
     this.terrainView.updatePatch(terrainPatch);
+    this.terrainView.updateHeightPatch(heightPatch);
     this.refreshObjects();
     this.emitMap();
   }
 
   toDocument() {
-    return createWorldDocument(this.tileMap, this.objectMap);
+    return createWorldDocument(this.tileMap, this.heightField, this.objectMap);
   }
 
   loadDocument(document) {
-    loadWorldDocument(document, this.tileMap, this.objectMap);
+    loadWorldDocument(document, this.tileMap, this.heightField, this.objectMap);
     this.terrainView.refreshAll();
     this.refreshObjects();
     this.undoStack = [];
@@ -297,8 +333,9 @@ export class EditorController {
       this.canvas.setPointerCapture(event.pointerId);
       this.painting = true;
       this.stroke = new Map();
+      this.strokeKind = this.terrainMode === 'paint' ? 'terrain' : 'height';
       this.lastPaintKey = null;
-      this.paintFromPointer(event, true);
+      this.editTerrainFromPointer(event, true);
       return;
     }
 
@@ -334,7 +371,7 @@ export class EditorController {
     this.emitHover(cell);
 
     if (this.painting && !this.spacePressed) {
-      this.paintFromPointer(event, false);
+      this.editTerrainFromPointer(event, false);
     }
   }
 
@@ -360,7 +397,7 @@ export class EditorController {
     this.emitHover(null);
   }
 
-  paintFromPointer(event, force) {
+  editTerrainFromPointer(event, force) {
     const now = performance.now();
     if (!force && now - this.lastPaintAt < PAINT_INTERVAL_MS) {
       return;
@@ -376,13 +413,9 @@ export class EditorController {
       return;
     }
 
-    const patch = this.tileMap.paintSquare(
-      cell.x,
-      cell.z,
-      this.brushSize,
-      this.selectedTileId,
-      (x, z) => this.objectMap.canSetTerrain(x, z, this.selectedTileId),
-    );
+    const patch = this.terrainMode === 'paint'
+      ? this.paintTiles(cell)
+      : this.sculptHeight(cell);
     this.lastPaintKey = key;
     this.lastPaintAt = now;
 
@@ -391,8 +424,48 @@ export class EditorController {
     }
 
     this.mergeStroke(patch);
-    this.terrainView.updatePatch(patch);
+    if (this.terrainMode === 'paint') {
+      this.terrainView.updatePatch(patch);
+    } else {
+      this.terrainView.updateHeightPatch(patch);
+      this.emitHover(cell);
+    }
     this.emitMap(false);
+  }
+
+  paintTiles(cell) {
+    return this.tileMap.paintSquare(
+      cell.x,
+      cell.z,
+      this.brushSize,
+      this.selectedTileId,
+      (x, z) => this.objectMap.canSetTerrain(x, z, this.selectedTileId),
+    );
+  }
+
+  sculptHeight(cell) {
+    return this.heightField.sculpt({
+      centerX: cell.x,
+      centerZ: cell.z,
+      brushSize: this.brushSize,
+      operation: this.terrainMode,
+      strength: this.terrainConfig.sculptStrength,
+      smoothFactor: this.terrainConfig.smoothFactor,
+      minHeight: this.terrainConfig.minHeight,
+      maxHeight: this.terrainConfig.maxHeight,
+      canEdit: (vertexX, vertexZ) => this.canSculptVertex(vertexX, vertexZ),
+    });
+  }
+
+  canSculptVertex(vertexX, vertexZ) {
+    for (let z = vertexZ - 1; z <= vertexZ; z += 1) {
+      for (let x = vertexX - 1; x <= vertexX; x += 1) {
+        if (this.tileMap.inBounds(x, z) && this.objectMap.findAt(x, z)) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   mergeStroke(patch) {
@@ -413,6 +486,7 @@ export class EditorController {
   finishStroke() {
     if (!this.stroke || this.stroke.size === 0) {
       this.stroke = null;
+      this.strokeKind = null;
       return;
     }
 
@@ -423,13 +497,43 @@ export class EditorController {
       patch.after.push(change.after);
     }
 
+    const kind = this.strokeKind;
     this.stroke = null;
-    this.commitHistory({ kind: 'terrain', patch });
+    this.strokeKind = null;
+    this.commitHistory({ kind, patch });
     this.emitMap();
   }
 
-  placeObject(cell) {
+  validateObjectPlacement({ definitionKey, x, z, rotation, ignoreObjectId = null }) {
     const validation = this.objectMap.validatePlacement({
+      definitionKey,
+      x,
+      z,
+      rotation,
+      ignoreObjectId,
+    });
+    if (!validation.valid) {
+      return validation;
+    }
+
+    const bounds = this.objectMap.getBounds(x, z, definitionKey, rotation);
+    for (let vertexZ = bounds.minZ; vertexZ <= bounds.maxZ + 1; vertexZ += 1) {
+      for (let vertexX = bounds.minX; vertexX <= bounds.maxX + 1; vertexX += 1) {
+        const height = this.heightField.getVertex(vertexX, vertexZ) ?? 0;
+        if (Math.abs(height) > ELEVATED_PLACEMENT_TOLERANCE) {
+          return {
+            valid: false,
+            reason: 'Elevated object placement will be enabled in the next terrain phase.',
+          };
+        }
+      }
+    }
+
+    return validation;
+  }
+
+  placeObject(cell) {
+    const validation = this.validateObjectPlacement({
       definitionKey: this.selectedObjectKey,
       x: cell.x,
       z: cell.z,
@@ -457,6 +561,18 @@ export class EditorController {
       : null;
     if (!before) {
       this.movingObjectId = null;
+      return;
+    }
+
+    const validation = this.validateObjectPlacement({
+      definitionKey: before.definitionKey,
+      x: cell.x,
+      z: cell.z,
+      rotation: before.rotation,
+      ignoreObjectId: before.id,
+    });
+    if (!validation.valid) {
+      this.emitNotice(validation.reason, true);
       return;
     }
 
@@ -514,6 +630,12 @@ export class EditorController {
       return;
     }
 
+    const terrainMode = TERRAIN_MODE_BY_SHORTCUT[event.key.toLowerCase()];
+    if (terrainMode) {
+      this.selectTerrainMode(terrainMode);
+      return;
+    }
+
     switch (event.key.toLowerCase()) {
       case 't':
         this.selectTool('terrain');
@@ -566,8 +688,10 @@ export class EditorController {
 
   updatePreviews() {
     if (this.tool === 'terrain') {
-      const tile = TILE_BY_ID.get(this.selectedTileId);
-      this.terrainView.setPreview(this.hoveredCell, this.brushSize, tile.color);
+      const color = this.terrainMode === 'paint'
+        ? TILE_BY_ID.get(this.selectedTileId).color
+        : TERRAIN_PREVIEW_COLORS[this.terrainMode];
+      this.terrainView.setPreview(this.hoveredCell, this.brushSize, color);
       this.objectView.setPreview(null);
       return;
     }
@@ -580,7 +704,7 @@ export class EditorController {
 
     if (this.tool === 'select' && this.movingObjectId) {
       const object = this.objectMap.getById(this.movingObjectId);
-      const validation = this.objectMap.validatePlacement({
+      const validation = this.validateObjectPlacement({
         definitionKey: object.definitionKey,
         x: this.hoveredCell.x,
         z: this.hoveredCell.z,
@@ -602,7 +726,7 @@ export class EditorController {
       return;
     }
 
-    const validation = this.objectMap.validatePlacement({
+    const validation = this.validateObjectPlacement({
       definitionKey: this.selectedObjectKey,
       x: this.hoveredCell.x,
       z: this.hoveredCell.z,
@@ -656,8 +780,9 @@ export class EditorController {
     const objectDefinition = object
       ? this.objectMap.getDefinition(object.definitionKey)
       : null;
+    const height = cell ? this.heightField.getCellHeight(cell.x, cell.z) : null;
     for (const listener of this.hoverListeners) {
-      listener(cell ? { ...cell, tile, object, objectDefinition } : null);
+      listener(cell ? { ...cell, height, tile, object, objectDefinition } : null);
     }
   }
 
