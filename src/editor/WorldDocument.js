@@ -14,7 +14,13 @@ export function createWorldDocument(tileMap, heightFieldOrObjectMap, objectMap =
   };
 }
 
-export function loadWorldDocument(document, tileMap, heightFieldOrObjectMap, objectMap = null) {
+export function loadWorldDocument(
+  document,
+  tileMap,
+  heightFieldOrObjectMap,
+  objectMap = null,
+  validate = null,
+) {
   const models = resolveWorldModels(heightFieldOrObjectMap, objectMap);
   const previousTiles = new Uint8Array(tileMap.tiles);
   const previousHeights = models.heightField ? new Float32Array(models.heightField.heights) : null;
@@ -24,6 +30,7 @@ export function loadWorldDocument(document, tileMap, heightFieldOrObjectMap, obj
     tileMap.loadDocument(document);
     models.heightField?.loadDocument(document.heightfield);
     models.objectMap.loadDocument(document.objects ?? []);
+    validate?.();
   } catch (error) {
     tileMap.replaceTiles(previousTiles);
     if (models.heightField && previousHeights) {
