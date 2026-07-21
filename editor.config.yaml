@@ -13,6 +13,11 @@ renderer:
   antialias: true
   forceWebGL: false
   maxPixelRatio: 2
+terrain:
+  minHeight: -16
+  maxHeight: 48
+  sculptStrength: 1.25
+  smoothFactor: 0.45
 brush:
   sizes: [1, 3, 5, 9, 15]
   defaultSize: 3
