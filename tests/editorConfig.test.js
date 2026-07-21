@@ -13,6 +13,11 @@ function createValidConfig() {
     camera: {
       viewSize: 180,
     },
+    renderer: {
+      antialias: true,
+      forceWebGL: false,
+      maxPixelRatio: 2,
+    },
     brush: {
       sizes: [1, 3, 5],
       defaultSize: 3,
@@ -20,7 +25,7 @@ function createValidConfig() {
   };
 }
 
-test('accepts positive nested map and camera values', () => {
+test('accepts positive nested map, camera, and renderer values', () => {
   const config = createValidConfig();
   assert.equal(validateEditorConfig(config), config);
 });
@@ -32,6 +37,16 @@ test('reads map.width through nested object paths', () => {
   assert.throws(
     () => validateEditorConfig(config),
     /map\.width must be positive/,
+  );
+});
+
+test('rejects invalid renderer configuration', () => {
+  const config = createValidConfig();
+  config.renderer.forceWebGL = 'false';
+
+  assert.throws(
+    () => validateEditorConfig(config),
+    /renderer\.forceWebGL must be boolean/,
   );
 });
 
