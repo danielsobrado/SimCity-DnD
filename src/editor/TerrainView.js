@@ -1,39 +1,9 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { createTerrainMaterial } from './terrainMaterial.js';
 import { TILE_BY_ID, hexToRgbBytes } from './tileCatalog.js';
 
-const TERRAIN_VERTEX_SHADER = `
-  varying vec2 vUv;
-
-  void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const TERRAIN_FRAGMENT_SHADER = `
-  uniform sampler2D tileTexture;
-  uniform vec2 mapSize;
-  uniform float chunkSize;
-  varying vec2 vUv;
-
-  float gridLine(vec2 coordinate, float width) {
-    vec2 edge = min(fract(coordinate), 1.0 - fract(coordinate));
-    return 1.0 - smoothstep(0.0, width, min(edge.x, edge.y));
-  }
-
-  void main() {
-    vec4 tileColor = texture2D(tileTexture, vUv);
-    float cellGrid = gridLine(vUv * mapSize, 0.045);
-    float chunkGrid = gridLine(vUv * (mapSize / chunkSize), 0.018);
-
-    vec3 color = mix(tileColor.rgb, vec3(0.035, 0.045, 0.038), cellGrid * 0.22);
-    color = mix(color, vec3(0.84, 0.71, 0.36), chunkGrid * 0.38);
-    gl_FragColor = vec4(color, 1.0);
-  }
-`;
-
 export class TerrainView {
-  constructor({ container, tileMap, chunkSize }) {
+  constructor({ container, tileMap, chunkSize, rendererConfig }) {
     this.container = container;
     this.tileMap = tileMap;
     this.chunkSize = chunkSize;
@@ -42,11 +12,13 @@ export class TerrainView {
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer = new THREE.WebGPURenderer({
+      antialias: rendererConfig.antialias,
+      forceWebGL: rendererConfig.forceWebGL,
+    });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, rendererConfig.maxPixelRatio));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.domElement.setAttribute('aria-label', 'SimCity DnD world editor viewport');
     container.append(this.renderer.domElement);
 
@@ -66,14 +38,11 @@ export class TerrainView {
     this.tileTexture.generateMipmaps = false;
     this.tileTexture.colorSpace = THREE.SRGBColorSpace;
 
-    this.terrainMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        tileTexture: { value: this.tileTexture },
-        mapSize: { value: new THREE.Vector2(tileMap.width, tileMap.height) },
-        chunkSize: { value: chunkSize },
-      },
-      vertexShader: TERRAIN_VERTEX_SHADER,
-      fragmentShader: TERRAIN_FRAGMENT_SHADER,
+    this.terrainMaterial = createTerrainMaterial({
+      tileTexture: this.tileTexture,
+      width: tileMap.width,
+      height: tileMap.height,
+      chunkSize,
     });
 
     this.terrain = new THREE.Mesh(
@@ -115,6 +84,14 @@ export class TerrainView {
     this.scene.add(this.border);
 
     this.refreshAll();
+  }
+
+  async initialize() {
+    await this.renderer.init();
+  }
+
+  setAnimationLoop(callback) {
+    this.renderer.setAnimationLoop(callback);
   }
 
   resize(width, height) {
@@ -204,6 +181,7 @@ export class TerrainView {
   }
 
   dispose() {
+    this.setAnimationLoop(null);
     this.terrain.geometry.dispose();
     this.terrainMaterial.dispose();
     this.tileTexture.dispose();
