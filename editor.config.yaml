@@ -18,6 +18,17 @@ terrain:
   maxHeight: 48
   sculptStrength: 1.25
   smoothFactor: 0.45
+voxelPrototype:
+  enabled: true
+  visible: true
+  cells: [24, 16, 24]
+  voxelSize: 1.5
+  originCell: [280, 240]
+  verticalOffset: 0.2
+  baseHeight: 7
+  surfaceAmplitude: 3
+  surfaceFrequency: 0.28
+  seed: 17
 brush:
   sizes: [1, 3, 5, 9, 15]
   defaultSize: 3
