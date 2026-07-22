@@ -1,6 +1,7 @@
 import { EditorController } from './EditorController.js';
 import { evaluateObjectSurface } from './TerrainPlacement.js';
 import { createWorldDocument, loadWorldDocument } from './WorldDocument.js';
+import { worldToCell } from './world/WorldCoordinates.js';
 
 export class TerrainAwareEditorController extends EditorController {
   constructor(options) {
@@ -15,6 +16,14 @@ export class TerrainAwareEditorController extends EditorController {
       voxelStampCount: this.voxelStampStore?.size ?? 0,
       worldStats: this.worldStore?.getStats() ?? null,
     };
+  }
+
+  getFocusCell() {
+    const renderFocus = this.editorCamera.getFocusWorld();
+    const canonical = this.terrainView.floatingOrigin
+      ? this.terrainView.floatingOrigin.toCanonical(renderFocus.x, renderFocus.z)
+      : renderFocus;
+    return worldToCell(canonical.x, canonical.z, this.tileMap.tileSize);
   }
 
   validateObjectPlacement({ definitionKey, x, z, rotation, ignoreObjectId = null }) {
