@@ -39,8 +39,8 @@ voxelPrototype:
   surfaceAmplitude: 3
   surfaceFrequency: 0.28
   seed: 17
-  maxStamps: 256
-  maxStampsPerChunk: 32
+  maxStamps: 64
+  maxStampsPerChunk: 64
   defaultRadius: 2.5
   defaultStrength: 0.75
   defaultSmoothness: 0.65
