@@ -50,6 +50,7 @@ export class StylizedSurfaceView {
         config,
       }))
       : [];
+    for (const slot of this.slots) slot.mesh.receiveShadow = true;
     this.lastObjectSignature = '';
     this.lastObjectCheckAt = 0;
   }
