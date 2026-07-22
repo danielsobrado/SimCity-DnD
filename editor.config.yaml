@@ -29,6 +29,10 @@ voxelPrototype:
   surfaceAmplitude: 3
   surfaceFrequency: 0.28
   seed: 17
+  maxStamps: 32
+  defaultRadius: 2.5
+  defaultStrength: 0.75
+  defaultSmoothness: 0.65
 brush:
   sizes: [1, 3, 5, 9, 15]
   defaultSize: 3
