@@ -10,7 +10,7 @@ The current `main` branch contains a large-map terrain and settlement-object edi
 - A continuous shared-vertex heightfield without mesh cracks between cells.
 - Raise, lower, smooth, and terrain-paint brushes.
 - GPU texture-driven terrain displacement through TSL with no geometry readbacks.
-- A bounded GPU-resident voxel-density prototype using compute storage and indirect drawing.
+- A bounded GPU marching-cubes chunk using compute storage and indirect drawing.
 - Plains, forest, water, road, farm, stone, desert, swamp, snow, and corruption terrain.
 - Brush sizes from 1 × 1 to 15 × 15.
 - Cottage, farmstead, inn, wizard tower, keep, wall, tree, and boulder placement.
@@ -55,22 +55,24 @@ Terrain shortcuts:
 - `K`: smooth terrain.
 - `[` and `]`: change brush size.
 
-## GPU voxel prototype
+## GPU marching cubes
 
-The editor includes one bounded voxel chunk beside the heightfield. A WebGPU compute pass evaluates a deterministic procedural density function for every cell. Solid cells are compacted into a GPU storage buffer with an atomic counter. The same counter becomes the instance count in an indexed indirect draw command.
-
-The normal path is:
+The editor includes one bounded marching-cubes chunk beside the heightfield. Its surface remains GPU-resident:
 
 ```text
-procedural density compute
-  → compacted GPU position storage
-  → GPU-written indirect instance count
-  → one indirect instanced cube draw
+procedural scalar field
+  → classify every cell and count its triangles
+  → atomically allocate output vertex ranges
+  → interpolate smooth vertices and analytic normals
+  → GPU-written indirect vertex count
+  → one indirect surface draw
 ```
 
-No generated voxel positions, geometry, or counts are read back to JavaScript. The sidebar toggle can show or hide the chunk. When Three.js is using its WebGL fallback, the prototype is disabled and the existing heightfield editor continues to work.
+The classic 256-case lookup table is stored in GPU buffers. The classify pass writes each cell's case and triangle count. The emit pass uses one atomic allocation per active cell, writes position and normal storage attributes, and updates the non-indexed indirect draw count. No generated positions, normals, triangle counts, or geometry are read back to JavaScript.
 
-This phase is not marching cubes. It proves GPU residency, density evaluation, compaction, and indirect rendering first. Marching-cubes surface extraction, editable voxel stamps, multiple resident chunks, and heightfield-to-voxel transition stitching remain separate phases.
+The sidebar toggle can show or hide the surface. When Three.js uses its WebGL fallback, marching cubes is disabled while the heightfield editor continues to work.
+
+This remains one procedural proof chunk. Editable voxel stamps, multiple resident chunks, chunk-border ownership, LOD transitions, and heightfield-to-voxel stitching remain separate phases.
 
 ## Renderer
 
