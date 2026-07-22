@@ -120,6 +120,7 @@ export class GpuVoxelWorld {
     this.updateAssignments(focusWorld, false);
     for (const slot of this.slots) {
       await slot.chunk.initialize();
+      this.positionSlot(slot);
       slot.chunk.setVisible(this.visible && Boolean(slot.key));
     }
     this.initialized = true;
@@ -172,7 +173,7 @@ export class GpuVoxelWorld {
     );
     slot.signature = signatureFor(stamps);
     slot.chunk.stamps = stamps;
-    slot.chunk.update();
+    this.positionSlot(slot);
 
     if (!regenerate) {
       return;
@@ -181,9 +182,24 @@ export class GpuVoxelWorld {
     slot.chunk.setVisible(false);
     slot.chunk.setStamps(stamps).finally(() => {
       if (!this.disposed && slot.key === descriptor.key) {
+        this.positionSlot(slot);
         slot.chunk.setVisible(this.visible);
       }
     });
+  }
+
+  positionSlot(slot) {
+    const group = slot.chunk.group;
+    const descriptor = slot.descriptor;
+    if (!group || !descriptor) {
+      return;
+    }
+    group.position.set(
+      descriptor.centerWorldX,
+      this.terrainView.getWorldHeight(descriptor.centerWorldX, descriptor.centerWorldZ)
+        + this.layout.verticalOffset,
+      descriptor.centerWorldZ,
+    );
   }
 
   applyStampSnapshot(stamps) {
@@ -236,7 +252,7 @@ export class GpuVoxelWorld {
     }
 
     for (const slot of this.slots) {
-      slot.chunk.update();
+      this.positionSlot(slot);
     }
   }
 
