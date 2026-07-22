@@ -1,5 +1,9 @@
 import { cellToChunk, chunkKey, worldToCell } from './WorldCoordinates.js';
 
+function normalizeZero(value) {
+  return Object.is(value, -0) ? 0 : value;
+}
+
 function distanceSquared(left, right) {
   const deltaX = left.chunkX - right.chunkX;
   const deltaZ = left.chunkZ - right.chunkZ;
@@ -9,16 +13,21 @@ function distanceSquared(left, right) {
 export function worldToTerrainChunk(worldX, worldZ, tileSize, chunkSize) {
   const cell = worldToCell(worldX, worldZ, tileSize);
   const chunk = cellToChunk(cell.x, cell.z, chunkSize);
-  return Object.freeze({ chunkX: chunk.chunkX, chunkZ: chunk.chunkZ });
+  return Object.freeze({
+    chunkX: normalizeZero(chunk.chunkX),
+    chunkZ: normalizeZero(chunk.chunkZ),
+  });
 }
 
 export function createTerrainChunkDescriptor({ chunkX, chunkZ, chunkSize, tileSize }) {
-  const originCellX = chunkX * chunkSize;
-  const originCellZ = chunkZ * chunkSize;
+  const normalizedChunkX = normalizeZero(chunkX);
+  const normalizedChunkZ = normalizeZero(chunkZ);
+  const originCellX = normalizedChunkX * chunkSize;
+  const originCellZ = normalizedChunkZ * chunkSize;
   return Object.freeze({
-    key: chunkKey(chunkX, chunkZ),
-    chunkX,
-    chunkZ,
+    key: chunkKey(normalizedChunkX, normalizedChunkZ),
+    chunkX: normalizedChunkX,
+    chunkZ: normalizedChunkZ,
     originCellX,
     originCellZ,
     centerWorldX: (originCellX + chunkSize * 0.5) * tileSize,
