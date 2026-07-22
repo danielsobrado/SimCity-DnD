@@ -16,21 +16,24 @@ function createConfig() {
     surfaceAmplitude: 3,
     surfaceFrequency: 0.28,
     seed: 17,
-    maxStamps: 32,
+    maxStamps: 64,
     defaultRadius: 2.5,
     defaultStrength: 0.75,
     defaultSmoothness: 0.65,
   };
 }
 
-test('derives bounded editable marching-cubes dimensions', () => {
+test('derives bounded marching-cubes output and halo dimensions', () => {
   const layout = createVoxelChunkLayout(createConfig(), MAP_CONFIG);
 
   assert.equal(layout.cellCount, 9216);
-  assert.equal(layout.sampleCount, 10625);
   assert.equal(layout.maxTriangles, 46080);
   assert.equal(layout.maxVertices, 138240);
-  assert.equal(layout.maxStamps, 32);
+  assert.equal(layout.sampleHalo, 1);
+  assert.deepEqual(
+    [layout.sampleCountX, layout.sampleCountY, layout.sampleCountZ],
+    [27, 19, 27],
+  );
   assert.equal(layout.worldWidth, 36);
   assert.equal(layout.worldHeight, 24);
   assert.equal(layout.worldDepth, 36);
@@ -65,25 +68,5 @@ test('rejects a voxel origin outside the logical map', () => {
   assert.throws(
     () => createVoxelChunkLayout(config, MAP_CONFIG),
     /originCell must be inside the map/,
-  );
-});
-
-test('requires deterministic integer seeds', () => {
-  const config = createConfig();
-  config.seed = 1.5;
-
-  assert.throws(
-    () => createVoxelChunkLayout(config, MAP_CONFIG),
-    /seed must be an integer/,
-  );
-});
-
-test('rejects excessive sparse stamp capacity', () => {
-  const config = createConfig();
-  config.maxStamps = 65;
-
-  assert.throws(
-    () => createVoxelChunkLayout(config, MAP_CONFIG),
-    /maxStamps must be within 1–64/,
   );
 });

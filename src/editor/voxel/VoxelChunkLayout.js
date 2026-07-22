@@ -6,6 +6,8 @@ import {
   VOXEL_MAX_TOTAL_CELLS,
 } from './voxelConstants.js';
 
+export const VOXEL_SAMPLE_HALO = 1;
+
 function assertBoolean(value, fieldName) {
   if (typeof value !== 'boolean') {
     throw new Error(`Voxel prototype ${fieldName} must be boolean.`);
@@ -96,9 +98,9 @@ export function createVoxelChunkLayout(config, mapConfig) {
     throw new Error('Voxel prototype originCell must be inside the map.');
   }
 
-  const sampleCountX = cellsX + 1;
-  const sampleCountY = cellsY + 1;
-  const sampleCountZ = cellsZ + 1;
+  const sampleCountX = cellsX + 1 + VOXEL_SAMPLE_HALO * 2;
+  const sampleCountY = cellsY + 1 + VOXEL_SAMPLE_HALO * 2;
+  const sampleCountZ = cellsZ + 1 + VOXEL_SAMPLE_HALO * 2;
 
   return Object.freeze({
     enabled: config.enabled,
@@ -120,6 +122,7 @@ export function createVoxelChunkLayout(config, mapConfig) {
     defaultStrength: config.defaultStrength,
     defaultSmoothness: config.defaultSmoothness,
     cellCount,
+    sampleHalo: VOXEL_SAMPLE_HALO,
     sampleCountX,
     sampleCountY,
     sampleCountZ,

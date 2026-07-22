@@ -1,6 +1,6 @@
 const STATUS_LABELS = Object.freeze({
   disabled: 'Disabled in editor.config.yaml.',
-  pending: 'Preparing editable GPU marching-cubes buffers…',
+  pending: 'Preparing multi-chunk GPU marching-cubes buffers…',
   unsupported: 'Unavailable: the active renderer is not using WebGPU.',
   failed: 'GPU marching-cubes initialization failed.',
 });
@@ -22,9 +22,9 @@ export class VoxelPrototypeUi {
     this.panel = document.createElement('section');
     this.panel.className = 'panel';
     this.panel.innerHTML = `
-      <h2>GPU voxel sculpting</h2>
+      <h2>GPU voxel world</h2>
       <button class="action-button action-button--wide" type="button" data-role="voxel-toggle">
-        Marching-cubes chunk
+        Marching-cubes chunks
       </button>
       <div class="terrain-mode-row" data-role="voxel-operation-row">
         <button class="tool-button" type="button" data-voxel-operation="add">Add</button>
@@ -60,14 +60,14 @@ export class VoxelPrototypeUi {
 
     const { layout } = prototype;
     this.xInput.min = 0;
-    this.xInput.max = layout.cellsX;
-    this.xInput.value = layout.cellsX / 2;
+    this.xInput.max = layout.totalCellsX;
+    this.xInput.value = layout.totalCellsX / 2;
     this.yInput.min = 0;
-    this.yInput.max = layout.cellsY;
+    this.yInput.max = layout.totalCellsY;
     this.yInput.value = layout.baseHeight;
     this.zInput.min = 0;
-    this.zInput.max = layout.cellsZ;
-    this.zInput.value = layout.cellsZ / 2;
+    this.zInput.max = layout.totalCellsZ;
+    this.zInput.value = layout.totalCellsZ / 2;
     this.radiusInput.value = layout.defaultRadius;
     this.strengthInput.value = layout.defaultStrength;
     this.smoothnessInput.value = layout.defaultSmoothness;
@@ -113,7 +113,7 @@ export class VoxelPrototypeUi {
 
     const local = this.prototype.mapCellToVoxel(hoveredCell.x, hoveredCell.z);
     if (!local) {
-      this.controller.emitNotice('The cursor is outside the voxel chunk.', true);
+      this.controller.emitNotice('The cursor is outside the voxel world.', true);
       return;
     }
 
@@ -157,9 +157,10 @@ export class VoxelPrototypeUi {
     }
 
     this.toggleButton.textContent = state.visible
-      ? 'Hide marching-cubes chunk'
-      : 'Show marching-cubes chunk';
-    this.status.textContent = `${state.stampCount}/${state.maxStamps} sparse stamps · zero GPU readbacks`;
+      ? 'Hide marching-cubes chunks'
+      : 'Show marching-cubes chunks';
+    const rebuildLabel = state.rebuilding ? ' · rebuilding' : '';
+    this.status.textContent = `${state.readyChunkCount}/${state.chunkCount} chunks · ${state.chunkGrid.join('×')} grid · ${state.stampCount}/${state.maxStamps} stamps${rebuildLabel} · zero readbacks`;
   }
 
   dispose() {

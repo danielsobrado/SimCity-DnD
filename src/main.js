@@ -12,9 +12,10 @@ import { TerrainAwareEditorController } from './editor/TerrainAwareEditorControl
 import { TerrainView } from './editor/TerrainView.js';
 import { TileMap } from './editor/TileMap.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
-import { GpuVoxelChunk } from './editor/voxel/GpuVoxelChunk.js';
+import { GpuVoxelWorld } from './editor/voxel/GpuVoxelWorld.js';
 import { VoxelPrototypeUi } from './editor/voxel/VoxelPrototypeUi.js';
 import { VoxelStampStore } from './editor/voxel/VoxelStampStore.js';
+import { createVoxelWorldLayout } from './editor/voxel/VoxelWorldLayout.js';
 
 async function startEditor() {
   const config = loadEditorConfig();
@@ -35,8 +36,14 @@ async function startEditor() {
     height: config.map.height,
   });
   const objectMap = new ObjectMap({ tileMap, objectCatalog: OBJECT_CATALOG });
+  const voxelWorldLayout = createVoxelWorldLayout(config.voxelPrototype, config.map);
   const voxelStampStore = new VoxelStampStore({
-    cells: config.voxelPrototype.cells,
+    cells: [
+      voxelWorldLayout.totalCellsX,
+      voxelWorldLayout.totalCellsY,
+      voxelWorldLayout.totalCellsZ,
+    ],
+    legacyCells: config.voxelPrototype.cells,
     maxStamps: config.voxelPrototype.maxStamps,
   });
 
@@ -104,10 +111,9 @@ async function startEditor() {
     baseUrl: import.meta.env.BASE_URL,
   });
 
-  const voxelPrototype = new GpuVoxelChunk({
+  const voxelPrototype = new GpuVoxelWorld({
     terrainView,
-    config: config.voxelPrototype,
-    mapConfig: config.map,
+    layout: voxelWorldLayout,
     stampStore: voxelStampStore,
   });
   const voxelPrototypeUi = new VoxelPrototypeUi({
@@ -119,7 +125,7 @@ async function startEditor() {
   const voxelStatus = await voxelPrototype.initialize();
   voxelPrototypeUi.render();
   if (voxelStatus.code === 'failed') {
-    console.error('GPU voxel prototype failed to initialize.', voxelStatus.error);
+    console.error('GPU voxel world failed to initialize.', voxelStatus.error);
   }
 
   const resizeObserver = new ResizeObserver(([entry]) => {

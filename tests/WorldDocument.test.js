@@ -19,21 +19,25 @@ function createWorld() {
     tileMap,
     heightField: new HeightField({ width: 4, height: 4 }),
     objectMap: new ObjectMap({ tileMap, objectCatalog: catalog }),
-    voxelStampStore: new VoxelStampStore({ cells: [8, 8, 8], maxStamps: 8 }),
+    voxelStampStore: new VoxelStampStore({
+      cells: [16, 8, 16],
+      legacyCells: [8, 8, 8],
+      maxStamps: 8,
+    }),
   };
 }
 
 function createStamp() {
   return {
     operation: 'subtract',
-    center: [4, 4, 4],
+    center: [8, 4, 8],
     radius: 2,
     strength: 0.8,
     smoothness: 0.5,
   };
 }
 
-test('world documents preserve terrain, objects, heights, and voxel stamps', () => {
+test('world documents preserve terrain, objects, heights, voxel metadata, and stamps', () => {
   const source = createWorld();
   source.tileMap.paintSquare(0, 0, 1, 1);
   source.heightField.sculpt({
@@ -49,14 +53,17 @@ test('world documents preserve terrain, objects, heights, and voxel stamps', () 
   source.objectMap.place({ definitionKey: 'tree', x: 2, z: 2, rotation: 0 });
   source.voxelStampStore.add(createStamp());
 
+  const document = createWorldDocument(
+    source.tileMap,
+    source.heightField,
+    source.objectMap,
+    source.voxelStampStore,
+  );
+  assert.deepEqual(document.voxelWorld, { cells: [16, 8, 16] });
+
   const target = createWorld();
   loadWorldDocument(
-    createWorldDocument(
-      source.tileMap,
-      source.heightField,
-      source.objectMap,
-      source.voxelStampStore,
-    ),
+    document,
     target.tileMap,
     target.heightField,
     target.objectMap,
@@ -67,6 +74,35 @@ test('world documents preserve terrain, objects, heights, and voxel stamps', () 
   assert.deepEqual(Array.from(target.heightField.heights), Array.from(source.heightField.heights));
   assert.deepEqual(target.objectMap.toDocument(), source.objectMap.toDocument());
   assert.deepEqual(target.voxelStampStore.toDocument(), source.voxelStampStore.toDocument());
+});
+
+test('version 4 single-chunk stamps migrate to the center of the voxel world', () => {
+  const target = createWorld();
+  const document = createWorldDocument(
+    target.tileMap,
+    target.heightField,
+    target.objectMap,
+    target.voxelStampStore,
+  );
+  document.version = 4;
+  delete document.voxelWorld;
+  document.voxelStamps = [{
+    id: 1,
+    operation: 'subtract',
+    center: [4, 4, 4],
+    radius: 2,
+    strength: 0.8,
+    smoothness: 0.5,
+  }];
+
+  loadWorldDocument(
+    document,
+    target.tileMap,
+    target.heightField,
+    target.objectMap,
+    target.voxelStampStore,
+  );
+  assert.deepEqual(target.voxelStampStore.toDocument()[0].center, [8, 4, 8]);
 });
 
 test('legacy terrain-only documents load with empty object and voxel layers', () => {
@@ -105,7 +141,7 @@ test('invalid voxel stamps restore the previous world transactionally', () => {
       target.objectMap,
       target.voxelStampStore,
     ),
-    /center\[0\] must be within the chunk/,
+    /center\[0\] must be within the voxel world/,
   );
   assert.deepEqual(target.voxelStampStore.toDocument(), previous);
 });

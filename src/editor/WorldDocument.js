@@ -1,3 +1,5 @@
+import { VOXEL_STAMP_MAP_FORMAT_VERSION } from './constants.js';
+
 function resolveWorldModels(heightFieldOrObjectMap, objectMap, voxelStampStore) {
   if (objectMap) {
     return {
@@ -25,9 +27,22 @@ export function createWorldDocument(
     ...(models.heightField ? { heightfield: models.heightField.toDocument() } : {}),
     objects: models.objectMap.toDocument(),
     ...(models.voxelStampStore
-      ? { voxelStamps: models.voxelStampStore.toDocument() }
+      ? {
+        voxelWorld: models.voxelStampStore.toMetadata(),
+        voxelStamps: models.voxelStampStore.toDocument(),
+      }
       : {}),
   };
+}
+
+function resolveVoxelSourceCells(document, voxelStampStore) {
+  if (!voxelStampStore) {
+    return null;
+  }
+  if (document.version === VOXEL_STAMP_MAP_FORMAT_VERSION) {
+    return voxelStampStore.legacyCells;
+  }
+  return document.voxelWorld?.cells ?? voxelStampStore.cells;
 }
 
 export function loadWorldDocument(
@@ -48,7 +63,9 @@ export function loadWorldDocument(
     tileMap.loadDocument(document);
     models.heightField?.loadDocument(document.heightfield);
     models.objectMap.loadDocument(document.objects ?? []);
-    models.voxelStampStore?.loadDocument(document.voxelStamps ?? []);
+    models.voxelStampStore?.loadDocument(document.voxelStamps ?? [], {
+      sourceCells: resolveVoxelSourceCells(document, models.voxelStampStore),
+    });
     validate?.();
   } catch (error) {
     tileMap.replaceTiles(previousTiles);

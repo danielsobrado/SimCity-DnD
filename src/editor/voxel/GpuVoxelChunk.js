@@ -31,7 +31,6 @@ import {
   MC_TRIANGLE_EDGES,
   validateMarchingCubesTables,
 } from './MarchingCubesTables.js';
-import { createVoxelChunkLayout } from './VoxelChunkLayout.js';
 import { VOXEL_STAMP_OPERATION_CODES } from './VoxelStampStore.js';
 import {
   VOXEL_BOUNDS_COLOR,
@@ -49,35 +48,43 @@ const STATUS_READY = 'ready';
 const STATUS_UNSUPPORTED = 'unsupported';
 const STATUS_FAILED = 'failed';
 
-function createBounds(layout) {
-  const box = new THREE.BoxGeometry(layout.worldWidth, layout.worldHeight, layout.worldDepth);
+function createBounds(layout, descriptor) {
+  const box = new THREE.BoxGeometry(
+    layout.worldWidth / layout.chunksX,
+    layout.worldHeight,
+    layout.worldDepth / layout.chunksZ,
+  );
   const geometry = new THREE.EdgesGeometry(box);
   box.dispose();
 
   const material = new THREE.LineBasicMaterial({
     color: VOXEL_BOUNDS_COLOR,
     transparent: true,
-    opacity: 0.35,
+    opacity: 0.28,
   });
   const bounds = new THREE.LineSegments(geometry, material);
   bounds.position.y = layout.worldHeight / 2;
-  bounds.name = 'gpu-marching-cubes-bounds';
+  bounds.name = `gpu-marching-cubes-bounds-${descriptor.key}`;
   return bounds;
 }
 
-function createBaseFieldFunction(layout) {
+function createBaseFieldFunction(layout, descriptor) {
   const phase = layout.seed * 0.173;
   const frequency = layout.surfaceFrequency;
   const amplitude = layout.surfaceAmplitude;
 
   return Fn(([samplePosition]) => {
-    const localX = samplePosition.x.sub(layout.cellsX * 0.5);
-    const localZ = samplePosition.z.sub(layout.cellsZ * 0.5);
+    const worldX = samplePosition.x
+      .add(descriptor.offsetX)
+      .sub(layout.totalCellsX * 0.5);
+    const worldZ = samplePosition.z
+      .add(descriptor.offsetZ)
+      .sub(layout.totalCellsZ * 0.5);
     const surfaceHeight = float(layout.baseHeight)
-      .add(sin(localX.mul(frequency).add(phase)).mul(amplitude))
-      .add(cos(localZ.mul(frequency * 0.83).sub(phase * 0.7)).mul(amplitude * 0.65))
+      .add(sin(worldX.mul(frequency).add(phase)).mul(amplitude))
+      .add(cos(worldZ.mul(frequency * 0.83).sub(phase * 0.7)).mul(amplitude * 0.65))
       .add(
-        sin(localX.add(localZ).mul(frequency * 0.43).add(phase * 0.37))
+        sin(worldX.add(worldZ).mul(frequency * 0.43).add(phase * 0.37))
           .mul(amplitude * 0.35),
       );
 
@@ -93,15 +100,33 @@ function createLinearCoordinates(linearIndex, sizeX, sizeZ) {
   return { x, y, z };
 }
 
-function createGridPosition(linearIndex, sizeX, sizeZ) {
-  const coordinates = createLinearCoordinates(linearIndex, sizeX, sizeZ);
+function createSampleGridPosition(linearIndex, layout) {
+  const coordinates = createLinearCoordinates(
+    linearIndex,
+    layout.sampleCountX,
+    layout.sampleCountZ,
+  );
+  return vec3(
+    float(coordinates.x).sub(layout.sampleHalo),
+    float(coordinates.y).sub(layout.sampleHalo),
+    float(coordinates.z).sub(layout.sampleHalo),
+  );
+}
+
+function createCellPosition(linearIndex, layout) {
+  const coordinates = createLinearCoordinates(
+    linearIndex,
+    layout.chunkCellsX,
+    layout.chunkCellsZ,
+  );
   return vec3(float(coordinates.x), float(coordinates.y), float(coordinates.z));
 }
 
 function createSampleIndex(samplePosition, layout) {
-  const x = uint(clamp(samplePosition.x, 0, layout.cellsX));
-  const y = uint(clamp(samplePosition.y, 0, layout.cellsY));
-  const z = uint(clamp(samplePosition.z, 0, layout.cellsZ));
+  const halo = layout.sampleHalo;
+  const x = uint(clamp(samplePosition.x.add(halo), 0, layout.sampleCountX - 1));
+  const y = uint(clamp(samplePosition.y.add(halo), 0, layout.sampleCountY - 1));
+  const z = uint(clamp(samplePosition.z.add(halo), 0, layout.sampleCountZ - 1));
   return y
     .mul(uint(layout.samplePlaneSize))
     .add(z.mul(uint(layout.sampleCountX)))
@@ -123,14 +148,15 @@ function createSmoothMaximum(left, right, smoothing) {
 }
 
 export class GpuVoxelChunk {
-  constructor({ terrainView, config, mapConfig, stampStore }) {
+  constructor({ terrainView, worldLayout, descriptor }) {
     validateMarchingCubesTables();
 
     this.terrainView = terrainView;
     this.renderer = terrainView.renderer;
-    this.layout = createVoxelChunkLayout(config, mapConfig);
-    this.stampStore = stampStore;
-    this.statusCode = this.layout.enabled ? STATUS_PENDING : STATUS_DISABLED;
+    this.layout = worldLayout;
+    this.descriptor = descriptor;
+    this.stamps = [];
+    this.statusCode = worldLayout.enabled ? STATUS_PENDING : STATUS_DISABLED;
     this.errorMessage = null;
     this.group = null;
     this.mesh = null;
@@ -151,7 +177,6 @@ export class GpuVoxelChunk {
     this.computeSmooth = null;
     this.computeClassify = null;
     this.computeEmit = null;
-    this.unsubscribeStamps = null;
     this.regenerationPromise = null;
     this.regenerationRequested = false;
     this.rebuilding = false;
@@ -160,32 +185,25 @@ export class GpuVoxelChunk {
 
   getStatus() {
     return Object.freeze({
+      key: this.descriptor.key,
       code: this.statusCode,
-      enabled: this.layout.enabled,
-      supported: this.statusCode !== STATUS_UNSUPPORTED,
       ready: this.statusCode === STATUS_READY,
       visible: Boolean(this.group?.visible),
       rebuilding: this.rebuilding,
-      algorithm: 'marching-cubes',
-      cellCount: this.layout.cellCount,
-      maxTriangles: this.layout.maxTriangles,
-      maxVertices: this.layout.maxVertices,
-      stampCount: this.stampStore?.size ?? 0,
-      maxStamps: this.layout.maxStamps,
-      cells: Object.freeze([
-        this.layout.cellsX,
-        this.layout.cellsY,
-        this.layout.cellsZ,
-      ]),
+      stampCount: this.stamps.length,
       error: this.errorMessage,
     });
+  }
+
+  setStamps(stamps) {
+    this.stamps = stamps;
+    return this.requestRegeneration();
   }
 
   async initialize() {
     if (this.statusCode === STATUS_DISABLED || this.disposed) {
       return this.getStatus();
     }
-
     if (!this.renderer.backend?.isWebGPUBackend) {
       this.statusCode = STATUS_UNSUPPORTED;
       this.errorMessage = 'GPU marching cubes requires the WebGPU backend.';
@@ -199,13 +217,11 @@ export class GpuVoxelChunk {
       this.statusCode = STATUS_READY;
       this.group.visible = this.layout.visible;
       this.update();
-      this.unsubscribeStamps = this.stampStore?.subscribe(() => this.requestRegeneration());
     } catch (error) {
       this.errorMessage = error instanceof Error ? error.message : String(error);
       this.statusCode = STATUS_FAILED;
       this.disposeGpuResources();
     }
-
     return this.getStatus();
   }
 
@@ -245,7 +261,7 @@ export class GpuVoxelChunk {
     })().catch((error) => {
       this.errorMessage = error instanceof Error ? error.message : String(error);
       this.statusCode = STATUS_FAILED;
-      console.error('GPU marching-cubes regeneration failed.', error);
+      console.error(`GPU chunk ${this.descriptor.key} regeneration failed.`, error);
     }).finally(() => {
       this.rebuilding = false;
       this.regenerationPromise = null;
@@ -269,11 +285,7 @@ export class GpuVoxelChunk {
     const smoothedDensityBuffer = new THREE.StorageBufferAttribute(layout.sampleCount, 1);
     const densityWrite = storage(densityBuffer, 'float', layout.sampleCount);
     const densityRead = storage(densityBuffer, 'float', layout.sampleCount).toReadOnly();
-    const smoothedDensityWrite = storage(
-      smoothedDensityBuffer,
-      'float',
-      layout.sampleCount,
-    );
+    const smoothedDensityWrite = storage(smoothedDensityBuffer, 'float', layout.sampleCount);
     const smoothedDensityRead = storage(
       smoothedDensityBuffer,
       'float',
@@ -320,7 +332,7 @@ export class GpuVoxelChunk {
     const drawStorage = storage(drawBuffer, drawBufferStruct, drawBuffer.count);
     geometry.setIndirect(drawBuffer);
 
-    const sampleBaseField = createBaseFieldFunction(layout);
+    const sampleBaseField = createBaseFieldFunction(layout, this.descriptor);
     const sampleDensity = (samplePosition) => smoothedDensityRead.element(
       createSampleIndex(samplePosition, layout),
     );
@@ -339,15 +351,12 @@ export class GpuVoxelChunk {
       drawStorage.get('firstVertex').assign(uint(0));
       drawStorage.get('firstInstance').assign(uint(0));
       drawStorage.get('offset').assign(uint(0));
-    })().compute(1).setName('Initialize marching-cubes indirect draw');
+    })().compute(1).setName(`Initialize chunk ${this.descriptor.key} indirect draw`);
 
     const computeDensity = Fn(() => {
       const sampleIndex = uint(instanceIndex).toVar('densitySampleIndex');
-      const samplePosition = createGridPosition(
-        sampleIndex,
-        layout.sampleCountX,
-        layout.sampleCountZ,
-      ).toVar('densitySamplePosition');
+      const samplePosition = createSampleGridPosition(sampleIndex, layout)
+        .toVar('densitySamplePosition');
       const field = sampleBaseField(samplePosition).toVar('editedDensity');
 
       for (let stampIndex = 0; stampIndex < layout.maxStamps; stampIndex += 1) {
@@ -368,15 +377,13 @@ export class GpuVoxelChunk {
       }
 
       densityWrite.element(sampleIndex).assign(field);
-    })().compute(layout.sampleCount, [VOXEL_WORKGROUP_SIZE]).setName('Apply voxel SDF stamps');
+    })().compute(layout.sampleCount, [VOXEL_WORKGROUP_SIZE])
+      .setName(`Apply chunk ${this.descriptor.key} voxel SDF stamps`);
 
     const computeSmooth = Fn(() => {
       const sampleIndex = uint(instanceIndex).toVar('smoothSampleIndex');
-      const samplePosition = createGridPosition(
-        sampleIndex,
-        layout.sampleCountX,
-        layout.sampleCountZ,
-      ).toVar('smoothSamplePosition');
+      const samplePosition = createSampleGridPosition(sampleIndex, layout)
+        .toVar('smoothSamplePosition');
       const centerDensity = densityRead.element(sampleIndex);
       const neighborAverage = densityRead.element(createSampleIndex(samplePosition.add(vec3(1, 0, 0)), layout))
         .add(densityRead.element(createSampleIndex(samplePosition.sub(vec3(1, 0, 0)), layout)))
@@ -407,15 +414,12 @@ export class GpuVoxelChunk {
         neighborAverage,
         clamp(smoothWeight, 0, 1),
       ));
-    })().compute(layout.sampleCount, [VOXEL_WORKGROUP_SIZE]).setName('Smooth voxel SDF stamps');
+    })().compute(layout.sampleCount, [VOXEL_WORKGROUP_SIZE])
+      .setName(`Smooth chunk ${this.descriptor.key} voxel SDF stamps`);
 
     const computeClassify = Fn(() => {
       const linearIndex = uint(instanceIndex).toVar('cellLinearIndex');
-      const cellOrigin = createGridPosition(
-        linearIndex,
-        layout.cellsX,
-        layout.cellsZ,
-      ).toVar('cellOrigin');
+      const cellOrigin = createCellPosition(linearIndex, layout).toVar('cellOrigin');
       const caseIndex = uint(0).toVar('caseIndex');
 
       for (let cornerIndex = 0; cornerIndex < 8; cornerIndex += 1) {
@@ -429,18 +433,15 @@ export class GpuVoxelChunk {
         caseIndex,
         triangleCounts.element(caseIndex),
       ));
-    })().compute(layout.cellCount, [VOXEL_WORKGROUP_SIZE]).setName('Classify marching-cubes cells');
+    })().compute(layout.cellCount, [VOXEL_WORKGROUP_SIZE])
+      .setName(`Classify chunk ${this.descriptor.key} marching-cubes cells`);
 
     const computeEmit = Fn(() => {
       const linearIndex = uint(instanceIndex).toVar('emitCellLinearIndex');
       const classification = classificationRead.element(linearIndex);
       const caseIndex = classification.x;
       const triangleCount = classification.y;
-      const cellOrigin = createGridPosition(
-        linearIndex,
-        layout.cellsX,
-        layout.cellsZ,
-      ).toVar('emitCellOrigin');
+      const cellOrigin = createCellPosition(linearIndex, layout).toVar('emitCellOrigin');
 
       If(triangleCount.greaterThan(0), () => {
         const vertexBase = atomicAdd(
@@ -448,11 +449,7 @@ export class GpuVoxelChunk {
           triangleCount.mul(uint(3)),
         );
 
-        for (
-          let triangleSlot = 0;
-          triangleSlot < MC_MAX_TRIANGLES_PER_CELL;
-          triangleSlot += 1
-        ) {
+        for (let triangleSlot = 0; triangleSlot < MC_MAX_TRIANGLES_PER_CELL; triangleSlot += 1) {
           If(uint(triangleSlot).lessThan(triangleCount), () => {
             for (let vertexSlot = 0; vertexSlot < 3; vertexSlot += 1) {
               const tableIndex = caseIndex
@@ -473,9 +470,9 @@ export class GpuVoxelChunk {
               );
               const samplePosition = mix(pointA, pointB, interpolation);
               const localPosition = vec3(
-                samplePosition.x.sub(layout.cellsX * 0.5).mul(layout.voxelSize),
+                samplePosition.x.sub(layout.chunkCellsX * 0.5).mul(layout.voxelSize),
                 samplePosition.y.mul(layout.voxelSize),
-                samplePosition.z.sub(layout.cellsZ * 0.5).mul(layout.voxelSize),
+                samplePosition.z.sub(layout.chunkCellsZ * 0.5).mul(layout.voxelSize),
               );
               const outputIndex = vertexBase.add(uint(triangleSlot * 3 + vertexSlot));
               const normal = normalize(mix(
@@ -490,7 +487,8 @@ export class GpuVoxelChunk {
           });
         }
       });
-    })().compute(layout.cellCount, [VOXEL_WORKGROUP_SIZE]).setName('Emit marching-cubes surface');
+    })().compute(layout.cellCount, [VOXEL_WORKGROUP_SIZE])
+      .setName(`Emit chunk ${this.descriptor.key} marching-cubes surface`);
 
     const material = new THREE.MeshStandardNodeMaterial({
       roughness: VOXEL_ROUGHNESS,
@@ -508,12 +506,12 @@ export class GpuVoxelChunk {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.frustumCulled = false;
-    mesh.name = 'gpu-marching-cubes-surface';
+    mesh.name = `gpu-marching-cubes-surface-${this.descriptor.key}`;
 
     const group = new THREE.Group();
-    group.name = 'gpu-marching-cubes-root';
+    group.name = `gpu-marching-cubes-root-${this.descriptor.key}`;
     group.visible = false;
-    const bounds = createBounds(layout);
+    const bounds = createBounds(layout, this.descriptor);
     group.add(mesh, bounds);
     this.terrainView.scene.add(group);
 
@@ -554,9 +552,8 @@ export class GpuVoxelChunk {
     shapes.fill(0);
     controls.fill(0);
 
-    const stamps = this.stampStore?.list() ?? [];
-    for (let index = 0; index < stamps.length; index += 1) {
-      const stamp = stamps[index];
+    for (let index = 0; index < this.stamps.length; index += 1) {
+      const stamp = this.stamps[index];
       const offset = index * 4;
       shapes[offset] = stamp.center[0];
       shapes[offset + 1] = stamp.center[1];
@@ -569,18 +566,7 @@ export class GpuVoxelChunk {
 
     this.stampShapeBuffer.needsUpdate = true;
     this.stampControlBuffer.needsUpdate = true;
-    this.stampCountUniform.value = stamps.length;
-  }
-
-  mapCellToVoxel(cellX, cellZ) {
-    const world = this.terrainView.cellToWorld(cellX, cellZ);
-    const origin = this.terrainView.cellToWorld(this.layout.originX, this.layout.originZ);
-    const x = (world.x - origin.x) / this.layout.voxelSize + this.layout.cellsX * 0.5;
-    const z = (world.z - origin.z) / this.layout.voxelSize + this.layout.cellsZ * 0.5;
-    if (x < 0 || z < 0 || x > this.layout.cellsX || z > this.layout.cellsZ) {
-      return null;
-    }
-    return Object.freeze({ x, z });
+    this.stampCountUniform.value = this.stamps.length;
   }
 
   setVisible(visible) {
@@ -591,19 +577,15 @@ export class GpuVoxelChunk {
     return this.group.visible;
   }
 
-  toggle() {
-    return this.setVisible(!this.group?.visible);
-  }
-
   update() {
     if (this.statusCode !== STATUS_READY || !this.group) {
       return;
     }
     const origin = this.terrainView.cellToWorld(this.layout.originX, this.layout.originZ);
     this.group.position.set(
-      origin.x,
+      origin.x + this.descriptor.centerOffsetX,
       origin.y + this.layout.verticalOffset,
-      origin.z,
+      origin.z + this.descriptor.centerOffsetZ,
     );
   }
 
@@ -653,8 +635,6 @@ export class GpuVoxelChunk {
       return;
     }
     this.disposed = true;
-    this.unsubscribeStamps?.();
-    this.unsubscribeStamps = null;
     this.disposeGpuResources();
   }
 }
