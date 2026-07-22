@@ -1,9 +1,7 @@
 import * as THREE from 'three/webgpu';
 import {
   clamp,
-  cos,
   dot,
-  float,
   max,
   mix,
   positionLocal,
@@ -64,7 +62,7 @@ export function createStylizedLeafMaterial({ source, bounds, time, config }) {
     vec3(0),
   ).mul(config.trees.brightness);
 
-  const material = new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide });
+  const material = new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide });
   material.positionNode = finalPosition;
   material.colorNode = leafColor;
   if (source.map) {
@@ -84,7 +82,7 @@ export function createStylizedTrunkMaterial({ textures, config }) {
     .mul(mix(1, ao, config.trees.barkAoStrength))
     .mul(mix(0.82, 1.18, relief.mul(config.trees.barkRelief)))
     .mul(config.trees.barkBrightness);
-  const material = new THREE.MeshBasicNodeMaterial();
+  const material = new THREE.MeshLambertNodeMaterial();
   material.colorNode = barkColor;
   return material;
 }
