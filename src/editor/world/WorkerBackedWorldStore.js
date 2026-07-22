@@ -1,4 +1,8 @@
 import { InfiniteWorldStore } from './InfiniteWorldStore.js';
+import {
+  decodeChunkDocument,
+  encodeChunkDocument,
+} from './ChunkDocumentCodec.js';
 import { cellKey, chunkKey } from './WorldCoordinates.js';
 import { WORLD_HEIGHT_EPSILON } from './worldConstants.js';
 
@@ -8,6 +12,15 @@ function tileIndex(localX, localZ, chunkSize) {
 
 function heightIndex(localX, localZ, vertexSize) {
   return localZ * vertexSize + localX;
+}
+
+function assertGeneratorMetadata(actual, expected) {
+  const fields = ['seed', 'version', 'heightScale', 'seaLevel'];
+  for (const field of fields) {
+    if (actual?.[field] !== expected[field]) {
+      throw new Error(`World generator ${field} does not match the active editor configuration.`);
+    }
+  }
 }
 
 export class WorkerBackedWorldStore extends InfiniteWorldStore {
@@ -71,6 +84,22 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
     this.cache.set(page.key, completed);
     this.evictCache();
     return completed;
+  }
+
+  toDocument() {
+    const document = super.toDocument();
+    return {
+      ...document,
+      chunks: document.chunks.map((chunk) => encodeChunkDocument(chunk, this.chunkSize)),
+    };
+  }
+
+  loadInfiniteDocument(document) {
+    assertGeneratorMetadata(document.world?.generator, this.generator.toMetadata());
+    super.loadInfiniteDocument({
+      ...document,
+      chunks: document.chunks?.map((chunk) => decodeChunkDocument(chunk, this.chunkSize)),
+    });
   }
 
   loadLegacyDocument(document) {
