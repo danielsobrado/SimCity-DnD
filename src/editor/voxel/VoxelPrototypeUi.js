@@ -5,6 +5,8 @@ const STATUS_LABELS = Object.freeze({
   failed: 'GPU marching-cubes initialization failed.',
 });
 
+const STATUS_REFRESH_MS = 250;
+
 function readNumber(input, fieldName) {
   const value = Number(input.value);
   if (!Number.isFinite(value)) {
@@ -94,6 +96,7 @@ export class VoxelPrototypeUi {
     this.applyButton.addEventListener('click', this.onApply);
     this.clearButton.addEventListener('click', this.onClear);
     this.unsubscribeStamps = stampStore.subscribe(() => this.render());
+    this.statusTimer = window.setInterval(() => this.render(), STATUS_REFRESH_MS);
 
     const sidebar = root.querySelector('.sidebar');
     const controlsPanel = sidebar?.querySelector('.help-list')?.closest('.panel');
@@ -165,6 +168,7 @@ export class VoxelPrototypeUi {
   }
 
   dispose() {
+    window.clearInterval(this.statusTimer);
     this.toggleButton.removeEventListener('click', this.onToggle);
     this.operationRow.removeEventListener('click', this.onOperation);
     this.useCursorButton.removeEventListener('click', this.onUseCursor);
