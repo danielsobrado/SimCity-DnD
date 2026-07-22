@@ -44,18 +44,18 @@ export class ViewModeController {
 
     if (mode === PLAYER_MODE_WALK) {
       const spawn = this.editorCamera.getFocusWorld();
+      this.mode = PLAYER_MODE_WALK;
       this.editorCamera.setEnabled(false);
       this.playerController.setEnabled(true, spawn);
-      this.mode = PLAYER_MODE_WALK;
       if (requestPointerLock) {
         this.playerController.requestPointerLock();
       }
     } else {
       const focus = this.playerController.getFocusWorld();
+      this.mode = PLAYER_MODE_EDIT;
       this.playerController.setEnabled(false);
       this.editorCamera.setEnabled(true);
       this.editorCamera.focusWorld(focus.x, focus.z);
-      this.mode = PLAYER_MODE_EDIT;
     }
 
     this.emit();
