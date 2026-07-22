@@ -12,7 +12,7 @@ async function readSources() {
   ]);
 }
 
-test('uses per-chunk GPU density, storage geometry, and indirect drawing', async () => {
+test('uses per-slot GPU density, storage geometry, and indirect drawing', async () => {
   const [source] = await readSources();
 
   assert.match(source, /StorageBufferAttribute/);
@@ -26,23 +26,23 @@ test('uses per-chunk GPU density, storage geometry, and indirect drawing', async
   assert.match(source, /computeAsync\(this\.computeEmit\)/);
 });
 
-test('samples the procedural field in absolute voxel-world coordinates with a halo', async () => {
-  const [source] = await readSources();
+test('feeds streamed chunk offsets through reusable shader uniforms', async () => {
+  const [chunkSource, worldSource] = await readSources();
 
-  assert.match(source, /descriptor\.offsetX/);
-  assert.match(source, /descriptor\.offsetZ/);
-  assert.match(source, /layout\.totalCellsX/);
-  assert.match(source, /layout\.totalCellsZ/);
-  assert.match(source, /samplePosition\.x\.add\(halo\)/);
-  assert.match(source, /createSampleGridPosition/);
+  assert.match(chunkSource, /descriptor\.offsetX/);
+  assert.match(chunkSource, /descriptor\.offsetZ/);
+  assert.match(worldSource, /offsetX: uniform\(0\)/);
+  assert.match(worldSource, /slot\.shaderDescriptor\.offsetX\.value = descriptor\.offsetX/);
+  assert.match(worldSource, /slot\.shaderDescriptor\.offsetZ\.value = descriptor\.offsetZ/);
 });
 
-test('filters stamps per chunk and avoids unrelated regeneration', async () => {
+test('reuses a fixed slot pool and regenerates only changed assignments or stamps', async () => {
   const [, source] = await readSources();
 
-  assert.match(source, /selectVoxelStampsForChunk/);
-  assert.match(source, /stampSignatures/);
-  assert.match(source, /chunk\.setStamps\(selected\)/);
+  assert.match(source, /createVoxelStreamingPlan/);
+  assert.match(source, /signature === slot\.signature/);
+  assert.match(source, /slot\.chunk\.setStamps\(selected\)/);
+  assert.match(source, /Array\.from\([\s\S]*layout\.slotCount/);
 });
 
 test('does not introduce GPU-to-CPU readbacks', async () => {
