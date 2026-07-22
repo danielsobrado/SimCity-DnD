@@ -16,6 +16,7 @@ import { FRAME_RATE_DISPLAY_INTERVAL_MS } from './editor/performance/frameRateCo
 import { PlayerController } from './editor/player/PlayerController.js';
 import { ViewModeController } from './editor/player/ViewModeController.js';
 import { ViewModeUi } from './editor/player/ViewModeUi.js';
+import { StylizedSurfaceView } from './editor/stylized/StylizedSurfaceView.js';
 import { TerrainAwareEditorController } from './editor/TerrainAwareEditorController.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
 import { GpuVoxelWorld } from './editor/voxel/GpuVoxelWorld.js';
@@ -92,6 +93,7 @@ async function startEditor() {
     floatingOrigin,
     streamingConfig: config.world,
     rendererConfig: config.renderer,
+    stylizedConfig: config.stylizedSurface,
   });
 
   try {
@@ -108,6 +110,11 @@ async function startEditor() {
     heightField,
     objectMap,
     objectCatalog: OBJECT_CATALOG,
+  });
+  const stylizedSurface = new StylizedSurfaceView({
+    terrainView,
+    objectMap,
+    config: config.stylizedSurface,
   });
 
   const editorCamera = new EditorCamera({
@@ -223,6 +230,7 @@ async function startEditor() {
     ).catch((error) => {
       console.error('Terrain streaming update failed.', error);
     });
+    stylizedSurface.update(frameTimestamp);
     voxelPrototype.update(canonicalFocus);
 
     if (frameTimestamp >= nextStreamingStatusAt) {
@@ -238,6 +246,7 @@ async function startEditor() {
     resizeObserver.disconnect();
     voxelPrototypeUi.dispose();
     voxelPrototype.dispose();
+    stylizedSurface.dispose();
     assetPipeline.dispose();
     viewModeUi.dispose();
     viewModeController.dispose();
