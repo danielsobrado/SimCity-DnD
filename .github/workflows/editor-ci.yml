@@ -23,5 +23,11 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run validate:assets
-      - run: npm test
+      - name: Run tests
+        run: npm test 2>&1 | tee test-output.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: infinite-world-test-output
+          path: test-output.txt
       - run: npm run build
