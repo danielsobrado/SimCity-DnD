@@ -115,6 +115,7 @@ async function startEditor() {
     terrainView,
     objectMap,
     config: config.stylizedSurface,
+    baseUrl: import.meta.env.BASE_URL,
   });
 
   const editorCamera = new EditorCamera({
