@@ -42,6 +42,160 @@ terrain:
   maxHeight: 48
   sculptStrength: 1.25
   smoothFactor: 0.45
+stylizedSurface:
+  enabled: true
+  assets:
+    scene: /assets/grass-scene.glb
+    rockMaterial: RocksStylized_M
+    trunkMaterial: Material.011
+    leafMaterial: 2237f4d60830642a24d65276e7abe1e6
+    barkColor: /assets/textures/bark/bark_color.png
+    barkAo: /assets/textures/bark/bark_AO.png
+    barkHeight: /assets/textures/bark/bark_height.png
+    flowerA:
+      mask: /assets/textures/flower/flowers.png
+      zones: /assets/textures/flower/flowersRGB.png
+      gradient: /assets/textures/flower/flowersGradient.png
+    flowerB:
+      mask: /assets/textures/flower3/flowers.png
+      zones: /assets/textures/flower3/flowersRGB.png
+      gradient: /assets/textures/flower3/flowersGradient.png
+  grass:
+    residentRadius: 1
+    bladesPerCell: 6
+    tileIds: [0, 1, 4]
+    minWidth: 0.055
+    maxWidth: 0.085
+    minLength: 0.28
+    maxLength: 0.55
+  wind:
+    direction: [1, 0]
+    strength: 0.3
+    speed: 1.2
+    frequency: 0.4
+    turbulence: 0.3
+    lean: 0.5
+  color:
+    bottom: '#4f7c13'
+    top: '#79a01c'
+    brightness: 0.8
+    gradientStart: 0.15
+    gradientEnd: 1.0
+    gradientPower: 1.6
+  patch:
+    lush: '#6f9a2a'
+    dry: '#b8a94e'
+    strength: 0.35
+    scale: 0.15
+    bias: 1.6
+  dirt:
+    color: '#ac956c'
+    scale: 0.4
+    coverage: 0.27
+    softness: 0.06
+    warp: 0.2
+    bladeCut: 1.0
+    bladeBlend: 0.8
+  path:
+    tileId: 3
+    blendCells: 2.5
+  rocks:
+    enabled: true
+    residentRadius: 1
+    perChunk: 6
+    tileIds: [0, 1, 5]
+    minScale: 0.65
+    maxScale: 1.35
+    radius: 1.5
+    falloff: 0.7
+    flatten: 0.85
+    bend: 0.25
+  flowers:
+    enabled: true
+    residentRadius: 1
+    perChunk: 180
+    minSize: 0.35
+    maxSize: 0.65
+    dirtMax: 0.15
+    windStrength: 0.15
+    windLean: 0.25
+    bendAmplitude: 0.12
+    bendFrequency: 3.0
+    brightness: 1.0
+    colorR: '#b084c7'
+    colorG: '#cbb36a'
+    colorB: '#9287ff'
+    colorStem: '#648029'
+  trees:
+    enabled: true
+    residentRadius: 1
+    perChunk: 14
+    tileIds: [1]
+    minScale: 0.8
+    maxScale: 1.2
+    leafBottom: '#1c3b23'
+    leafTop: '#5c8338'
+    brightness: 1.05
+    gradientPower: 1.1
+    variationColor: '#1e4430'
+    variationStrength: 0.6
+    variationScale: 2.5
+    windStrength: 0.12
+    flutterAmplitude: 0.35
+    flutterSpeed: 3.2
+    dip: 0.25
+    barkScale: 5.6
+    barkTint: '#8a6a4a'
+    barkTintStrength: 0.0
+    barkBrightness: 1.55
+    barkAoStrength: 0.45
+    barkRelief: 1.0
+  ground:
+    variationColor: '#c4a77d'
+    variationScale: 1.24
+    variationStrength: 0.9
+    grainScale: 6.7
+    grainStrength: 0.95
+  sky:
+    enabled: true
+    radius: 5000
+    lowColor: '#4aa7e2'
+    highColor: '#8ecef2'
+    horizonLine: 0.05
+    horizonSpread: 0.15
+    sunElevation: 10
+    sunAzimuth: 258
+    sunColor: '#fbfcd6'
+    sunGlowColor: '#34a2ef'
+    sunSize: 0.015
+    sunEdgeSoftness: 0.04
+    sunEmission: 1.4
+    sunGlowFalloff: 53
+    sunGlowIntensity: 0.45
+    cloudSpeed: 0.012
+    cloudScale: 8.5
+    cloudDensity: 0.36
+    cloudSharpness: 0.05
+    cloudCore: '#dcdcdc'
+    cloudEdge: '#ffffff'
+    cloudRim: '#d2d2d2'
+    cloudOpacity: 0.4
+    cloudFloor: -0.03
+    cloudCeiling: 0.75
+    cloudRimFalloff: 8
+    cloudRimStrength: 0.2
+    groundLightColor: '#6f784d'
+    ambientIntensity: 2.0
+    directionalColor: '#ffffff'
+    directionalIntensity: 3.0
+    lightDistance: 220
+    shadows: true
+    shadowMapSize: 2048
+    shadowDistance: 120
+    shadowBias: -0.0002
+    shadowNormalBias: 0.02
+    fogColor: '#518cb4'
+    fogDensity: 0.0015
 voxelPrototype:
   enabled: true
   visible: true

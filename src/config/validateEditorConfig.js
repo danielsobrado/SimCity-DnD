@@ -40,6 +40,12 @@ function assertPositiveNumber(config, path) {
   }
 }
 
+function assertFiniteNumber(config, path) {
+  if (!Number.isFinite(readPath(config, path))) {
+    throw new Error(`Invalid editor configuration: ${path.join('.')} must be finite.`);
+  }
+}
+
 function assertBoolean(config, path) {
   if (typeof readPath(config, path) !== 'boolean') {
     throw new Error(`Invalid editor configuration: ${path.join('.')} must be boolean.`);
@@ -53,17 +59,192 @@ function assertNonNegativeInteger(config, path) {
   }
 }
 
+function assertTileIds(value, fieldName) {
+  if (!Array.isArray(value)
+      || value.length === 0
+      || value.some((tileId) => !Number.isInteger(tileId) || tileId < 0 || tileId > 255)) {
+    throw new Error(`Invalid editor configuration: ${fieldName} must contain unsigned-byte tile ids.`);
+  }
+}
+
+function assertAssetString(value, fieldName) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`Invalid editor configuration: ${fieldName} is required.`);
+  }
+}
+
+function validateStylizedSurface(config) {
+  const surface = config.stylizedSurface;
+  if (!surface) return;
+  assertBoolean(config, ['stylizedSurface', 'enabled']);
+  if (!surface.enabled) return;
+  assertBoolean(config, ['stylizedSurface', 'rocks', 'enabled']);
+  assertBoolean(config, ['stylizedSurface', 'flowers', 'enabled']);
+  assertBoolean(config, ['stylizedSurface', 'trees', 'enabled']);
+  assertBoolean(config, ['stylizedSurface', 'sky', 'enabled']);
+  assertBoolean(config, ['stylizedSurface', 'sky', 'shadows']);
+
+  const positivePaths = [
+    ['stylizedSurface', 'grass', 'bladesPerCell'],
+    ['stylizedSurface', 'grass', 'minWidth'],
+    ['stylizedSurface', 'grass', 'maxWidth'],
+    ['stylizedSurface', 'grass', 'minLength'],
+    ['stylizedSurface', 'grass', 'maxLength'],
+    ['stylizedSurface', 'wind', 'speed'],
+    ['stylizedSurface', 'wind', 'frequency'],
+    ['stylizedSurface', 'color', 'brightness'],
+    ['stylizedSurface', 'color', 'gradientEnd'],
+    ['stylizedSurface', 'color', 'gradientPower'],
+    ['stylizedSurface', 'patch', 'scale'],
+    ['stylizedSurface', 'patch', 'bias'],
+    ['stylizedSurface', 'dirt', 'scale'],
+    ['stylizedSurface', 'dirt', 'softness'],
+    ['stylizedSurface', 'path', 'blendCells'],
+    ['stylizedSurface', 'rocks', 'perChunk'],
+    ['stylizedSurface', 'rocks', 'minScale'],
+    ['stylizedSurface', 'rocks', 'maxScale'],
+    ['stylizedSurface', 'rocks', 'radius'],
+    ['stylizedSurface', 'rocks', 'falloff'],
+    ['stylizedSurface', 'flowers', 'perChunk'],
+    ['stylizedSurface', 'flowers', 'minSize'],
+    ['stylizedSurface', 'flowers', 'maxSize'],
+    ['stylizedSurface', 'flowers', 'bendFrequency'],
+    ['stylizedSurface', 'flowers', 'brightness'],
+    ['stylizedSurface', 'trees', 'perChunk'],
+    ['stylizedSurface', 'trees', 'minScale'],
+    ['stylizedSurface', 'trees', 'maxScale'],
+    ['stylizedSurface', 'trees', 'brightness'],
+    ['stylizedSurface', 'trees', 'gradientPower'],
+    ['stylizedSurface', 'trees', 'variationScale'],
+    ['stylizedSurface', 'trees', 'flutterSpeed'],
+    ['stylizedSurface', 'trees', 'barkScale'],
+    ['stylizedSurface', 'trees', 'barkBrightness'],
+    ['stylizedSurface', 'ground', 'variationScale'],
+    ['stylizedSurface', 'ground', 'grainScale'],
+    ['stylizedSurface', 'sky', 'radius'],
+    ['stylizedSurface', 'sky', 'horizonSpread'],
+    ['stylizedSurface', 'sky', 'sunSize'],
+    ['stylizedSurface', 'sky', 'sunEdgeSoftness'],
+    ['stylizedSurface', 'sky', 'sunEmission'],
+    ['stylizedSurface', 'sky', 'sunGlowFalloff'],
+    ['stylizedSurface', 'sky', 'cloudScale'],
+    ['stylizedSurface', 'sky', 'cloudSharpness'],
+    ['stylizedSurface', 'sky', 'cloudRimFalloff'],
+    ['stylizedSurface', 'sky', 'ambientIntensity'],
+    ['stylizedSurface', 'sky', 'directionalIntensity'],
+    ['stylizedSurface', 'sky', 'lightDistance'],
+    ['stylizedSurface', 'sky', 'shadowMapSize'],
+    ['stylizedSurface', 'sky', 'shadowDistance'],
+  ];
+  for (const path of positivePaths) assertPositiveNumber(config, path);
+
+  const finitePaths = [
+    ['stylizedSurface', 'wind', 'strength'],
+    ['stylizedSurface', 'wind', 'turbulence'],
+    ['stylizedSurface', 'wind', 'lean'],
+    ['stylizedSurface', 'color', 'gradientStart'],
+    ['stylizedSurface', 'dirt', 'warp'],
+    ['stylizedSurface', 'rocks', 'bend'],
+    ['stylizedSurface', 'flowers', 'windStrength'],
+    ['stylizedSurface', 'flowers', 'windLean'],
+    ['stylizedSurface', 'flowers', 'bendAmplitude'],
+    ['stylizedSurface', 'trees', 'windStrength'],
+    ['stylizedSurface', 'trees', 'flutterAmplitude'],
+    ['stylizedSurface', 'trees', 'dip'],
+    ['stylizedSurface', 'trees', 'barkRelief'],
+    ['stylizedSurface', 'sky', 'horizonLine'],
+    ['stylizedSurface', 'sky', 'sunElevation'],
+    ['stylizedSurface', 'sky', 'sunAzimuth'],
+    ['stylizedSurface', 'sky', 'sunGlowIntensity'],
+    ['stylizedSurface', 'sky', 'cloudSpeed'],
+    ['stylizedSurface', 'sky', 'cloudDensity'],
+    ['stylizedSurface', 'sky', 'cloudFloor'],
+    ['stylizedSurface', 'sky', 'cloudCeiling'],
+    ['stylizedSurface', 'sky', 'cloudRimStrength'],
+    ['stylizedSurface', 'sky', 'shadowBias'],
+    ['stylizedSurface', 'sky', 'shadowNormalBias'],
+    ['stylizedSurface', 'sky', 'fogDensity'],
+  ];
+  for (const path of finitePaths) assertFiniteNumber(config, path);
+
+  assertNonNegativeInteger(config, ['stylizedSurface', 'grass', 'residentRadius']);
+  assertNonNegativeInteger(config, ['stylizedSurface', 'rocks', 'residentRadius']);
+  assertNonNegativeInteger(config, ['stylizedSurface', 'flowers', 'residentRadius']);
+  assertNonNegativeInteger(config, ['stylizedSurface', 'trees', 'residentRadius']);
+
+  if (!Number.isInteger(surface.grass.bladesPerCell)
+      || !Number.isInteger(surface.rocks.perChunk)
+      || !Number.isInteger(surface.flowers.perChunk)
+      || !Number.isInteger(surface.trees.perChunk)) {
+    throw new Error('Invalid editor configuration: stylized instance counts must be integers.');
+  }
+  assertTileIds(surface.grass.tileIds, 'stylizedSurface.grass.tileIds');
+  assertTileIds(surface.rocks.tileIds, 'stylizedSurface.rocks.tileIds');
+  assertTileIds(surface.trees.tileIds, 'stylizedSurface.trees.tileIds');
+  if (!Array.isArray(surface.wind.direction)
+      || surface.wind.direction.length !== 2
+      || surface.wind.direction.some((value) => !Number.isFinite(value))) {
+    throw new Error('Invalid editor configuration: stylizedSurface.wind.direction must be a finite vec2.');
+  }
+  if (surface.grass.maxWidth < surface.grass.minWidth
+      || surface.grass.maxLength < surface.grass.minLength
+      || surface.rocks.maxScale < surface.rocks.minScale
+      || surface.flowers.maxSize < surface.flowers.minSize
+      || surface.trees.maxScale < surface.trees.minScale) {
+    throw new Error('Invalid editor configuration: stylized maximum dimensions must cover minimum dimensions.');
+  }
+  if (surface.color.gradientEnd <= surface.color.gradientStart) {
+    throw new Error('Invalid editor configuration: stylized grass gradientEnd must exceed gradientStart.');
+  }
+  const unitFields = [
+    surface.patch.strength,
+    surface.dirt.coverage,
+    surface.dirt.bladeCut,
+    surface.dirt.bladeBlend,
+    surface.rocks.flatten,
+    surface.flowers.dirtMax,
+    surface.trees.variationStrength,
+    surface.trees.barkTintStrength,
+    surface.trees.barkAoStrength,
+    surface.sky.cloudOpacity,
+  ];
+  if (unitFields.some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
+    throw new Error('Invalid editor configuration: stylized blend strengths must be within [0, 1].');
+  }
+  if (!Number.isInteger(surface.sky.shadowMapSize)
+      || surface.sky.shadowMapSize < 512
+      || surface.sky.shadowMapSize > 4096) {
+    throw new Error('Invalid editor configuration: stylized sky shadowMapSize must be an integer from 512 to 4096.');
+  }
+  if (surface.sky.cloudCeiling <= surface.sky.cloudFloor || surface.sky.fogDensity < 0) {
+    throw new Error('Invalid editor configuration: stylized sky cloud and fog ranges are invalid.');
+  }
+
+  const assetFields = [
+    ['stylizedSurface.assets.scene', surface.assets?.scene],
+    ['stylizedSurface.assets.rockMaterial', surface.assets?.rockMaterial],
+    ['stylizedSurface.assets.trunkMaterial', surface.assets?.trunkMaterial],
+    ['stylizedSurface.assets.leafMaterial', surface.assets?.leafMaterial],
+    ['stylizedSurface.assets.barkColor', surface.assets?.barkColor],
+    ['stylizedSurface.assets.barkAo', surface.assets?.barkAo],
+    ['stylizedSurface.assets.barkHeight', surface.assets?.barkHeight],
+    ['stylizedSurface.assets.flowerA.mask', surface.assets?.flowerA?.mask],
+    ['stylizedSurface.assets.flowerA.zones', surface.assets?.flowerA?.zones],
+    ['stylizedSurface.assets.flowerA.gradient', surface.assets?.flowerA?.gradient],
+    ['stylizedSurface.assets.flowerB.mask', surface.assets?.flowerB?.mask],
+    ['stylizedSurface.assets.flowerB.zones', surface.assets?.flowerB?.zones],
+    ['stylizedSurface.assets.flowerB.gradient', surface.assets?.flowerB?.gradient],
+  ];
+  for (const [fieldName, value] of assetFields) assertAssetString(value, fieldName);
+}
+
 export function validateEditorConfig(config) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error('Invalid editor configuration: expected a YAML object.');
   }
 
-  for (const path of REQUIRED_POSITIVE_PATHS) {
-    assertPositiveNumber(config, path);
-  }
-  for (const path of REQUIRED_BOOLEAN_PATHS) {
-    assertBoolean(config, path);
-  }
+  for (const path of REQUIRED_POSITIVE_PATHS) assertPositiveNumber(config, path);
+  for (const path of REQUIRED_BOOLEAN_PATHS) assertBoolean(config, path);
   assertNonNegativeInteger(config, ['world', 'loadRadius']);
   assertNonNegativeInteger(config, ['world', 'unloadRadius']);
 
@@ -124,5 +305,6 @@ export function validateEditorConfig(config) {
     throw new Error('Invalid editor configuration: brush.defaultSize must be listed in brush.sizes.');
   }
 
+  validateStylizedSurface(config);
   return config;
 }
