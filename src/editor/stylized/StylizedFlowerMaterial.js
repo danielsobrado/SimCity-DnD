@@ -1,7 +1,6 @@
 import * as THREE from 'three/webgpu';
 import {
   attribute,
-  clamp,
   cos,
   dot,
   float,
@@ -106,8 +105,9 @@ export function createStylizedFlowerMaterial({
     gradient,
   ).mul(config.flowers.brightness);
 
-  const material = new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide });
+  const material = new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide });
   material.positionNode = finalPosition;
+  material.normalNode = vec3(0, 1, 0);
   material.colorNode = flowerColor;
   material.opacityNode = mask.mul(alive);
   material.alphaTest = 0.5;
