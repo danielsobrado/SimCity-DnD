@@ -30,8 +30,19 @@ export class EditorCamera {
     this.camera.updateProjectionMatrix();
   }
 
+  setEnabled(enabled) {
+    this.controls.enabled = Boolean(enabled);
+  }
+
   setLeftPanEnabled(enabled) {
     this.controls.mouseButtons.LEFT = enabled ? THREE.MOUSE.PAN : null;
+  }
+
+  getFocusWorld() {
+    return Object.freeze({
+      x: this.controls.target.x,
+      z: this.controls.target.z,
+    });
   }
 
   focusWorld(x, z) {
@@ -50,7 +61,9 @@ export class EditorCamera {
   }
 
   update() {
-    this.controls.update();
+    if (this.controls.enabled) {
+      this.controls.update();
+    }
   }
 
   dispose() {
