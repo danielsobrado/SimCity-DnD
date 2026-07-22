@@ -33,9 +33,15 @@ export function stepPlayerPhysics({
   const length = Math.hypot(movementX, movementZ);
   const speed = config.walkSpeed * (input.running ? config.runMultiplier : 1);
   const scale = length > 0 ? speed * delta / length : 0;
-  const nextX = clamp(state.x + movementX * scale, bounds.minX, bounds.maxX);
-  const nextZ = clamp(state.z + movementZ * scale, bounds.minZ, bounds.maxZ);
-  const groundEyeY = getGroundHeight(nextX, nextZ) + config.eyeHeight;
+  let nextX = clamp(state.x + movementX * scale, bounds.minX, bounds.maxX);
+  let nextZ = clamp(state.z + movementZ * scale, bounds.minZ, bounds.maxZ);
+  let groundEyeY = getGroundHeight(nextX, nextZ) + config.eyeHeight;
+
+  if (groundEyeY - state.y > config.stepHeight) {
+    nextX = state.x;
+    nextZ = state.z;
+    groundEyeY = getGroundHeight(nextX, nextZ) + config.eyeHeight;
+  }
 
   let verticalVelocity = state.verticalVelocity;
   let nextY = state.y;
@@ -46,11 +52,18 @@ export function stepPlayerPhysics({
     grounded = false;
   }
 
+  if (grounded) {
+    const dropDistance = state.y - groundEyeY;
+    if (dropDistance <= config.groundSnapDistance) {
+      nextY = groundEyeY;
+    } else {
+      grounded = false;
+    }
+  }
+
   if (!grounded) {
     verticalVelocity -= config.gravity * delta;
     nextY += verticalVelocity * delta;
-  } else {
-    nextY = groundEyeY;
   }
 
   if (nextY <= groundEyeY + PLAYER_GROUND_EPSILON && verticalVelocity <= 0) {
