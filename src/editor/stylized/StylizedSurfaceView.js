@@ -19,6 +19,9 @@ export class StylizedSurfaceView {
     this.objectMap = objectMap;
     this.config = config;
     this.enabled = Boolean(config?.enabled);
+    if (this.enabled) {
+      for (const terrainSlot of terrainView.slots) terrainSlot.mesh.receiveShadow = true;
+    }
     this.rockView = this.enabled
       ? new StylizedRockView({ terrainView, config, baseUrl })
       : null;
