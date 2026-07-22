@@ -1,3 +1,4 @@
+import { loadEditorConfig } from '../config/loadEditorConfig.js';
 import {
   importAzgaarFullJson,
   isAzgaarFullJson,
@@ -30,13 +31,10 @@ export function exportMap(worldDocument) {
   URL.revokeObjectURL(url);
 }
 
-export async function importMap(file, { config } = {}) {
+export async function importMap(file, { config = null } = {}) {
   const document = parseDocument(await file.text());
   if (!isAzgaarFullJson(document)) {
     return document;
   }
-  if (!config) {
-    throw new Error('Azgaar import requires the active editor configuration.');
-  }
-  return importAzgaarFullJson(document, config);
+  return importAzgaarFullJson(document, config ?? loadEditorConfig());
 }
