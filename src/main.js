@@ -1,5 +1,6 @@
 import './styles.css';
 import './editor/performance/frameRateDisplay.css';
+import './editor/player/playerMode.css';
 import { loadEditorConfig } from './config/loadEditorConfig.js';
 import { installObjectAssets } from './editor/assets/installObjectAssets.js';
 import { EditorCamera } from './editor/EditorCamera.js';
@@ -12,6 +13,9 @@ import { OBJECT_RENDER_CATALOG } from './editor/objectRenderCatalog.js';
 import { FrameRateDisplay } from './editor/performance/FrameRateDisplay.js';
 import { FrameRateMeter } from './editor/performance/FrameRateMeter.js';
 import { FRAME_RATE_DISPLAY_INTERVAL_MS } from './editor/performance/frameRateConstants.js';
+import { PlayerController } from './editor/player/PlayerController.js';
+import { ViewModeController } from './editor/player/ViewModeController.js';
+import { ViewModeUi } from './editor/player/ViewModeUi.js';
 import { TerrainAwareEditorController } from './editor/TerrainAwareEditorController.js';
 import { TerrainView } from './editor/TerrainView.js';
 import { TileMap } from './editor/TileMap.js';
@@ -93,6 +97,15 @@ async function startEditor() {
     maxZoom: config.camera.maxZoom,
     damping: config.camera.damping,
   });
+  const playerController = new PlayerController({
+    canvas: terrainView.renderer.domElement,
+    terrainView,
+    config: config.player,
+  });
+  const viewModeController = new ViewModeController({
+    editorCamera,
+    playerController,
+  });
 
   const controller = new TerrainAwareEditorController({
     tileMap,
@@ -109,6 +122,7 @@ async function startEditor() {
   });
 
   ui.bind(controller);
+  const viewModeUi = new ViewModeUi({ root, controller: viewModeController });
   const assetPipeline = installObjectAssets({
     objectView,
     catalog: OBJECT_RENDER_CATALOG,
@@ -128,7 +142,7 @@ async function startEditor() {
     controller,
     stampStore: voxelStampStore,
   });
-  const voxelStatus = await voxelPrototype.initialize();
+  const voxelStatus = await voxelPrototype.initialize(viewModeController.getFocusWorld());
   voxelPrototypeUi.render();
   if (voxelStatus.code === 'failed') {
     console.error('GPU voxel world failed to initialize.', voxelStatus.error);
@@ -137,7 +151,7 @@ async function startEditor() {
   const resizeObserver = new ResizeObserver(([entry]) => {
     const { width, height } = entry.contentRect;
     terrainView.resize(width, height);
-    editorCamera.resize(width, height);
+    viewModeController.resize(width, height);
   });
   resizeObserver.observe(ui.viewport);
 
@@ -165,9 +179,9 @@ async function startEditor() {
       nextFrameRateDisplayAt = frameTimestamp + FRAME_RATE_DISPLAY_INTERVAL_MS;
     }
 
-    editorCamera.update();
-    voxelPrototype.update();
-    terrainView.render(editorCamera.camera);
+    viewModeController.update(frameTimestamp);
+    voxelPrototype.update(viewModeController.getFocusWorld());
+    terrainView.render(viewModeController.camera);
   });
 
   window.addEventListener('pagehide', () => {
@@ -177,6 +191,8 @@ async function startEditor() {
     voxelPrototypeUi.dispose();
     voxelPrototype.dispose();
     assetPipeline.dispose();
+    viewModeUi.dispose();
+    viewModeController.dispose();
     controller.dispose();
     editorCamera.dispose();
     objectView.dispose();
