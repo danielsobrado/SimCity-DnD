@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { uniform } from 'three/tsl';
 import { createTerrainMaterial } from './terrainMaterial.js';
 import { TILE_BY_ID, hexToRgbBytes } from './tileCatalog.js';
 import { cellCenterToWorld, worldToCell } from './world/WorldCoordinates.js';
@@ -10,9 +11,14 @@ import {
 const PICK_ITERATIONS = 6;
 const PREVIEW_HEIGHT_OFFSET = 0.08;
 
-function createSlot({ slotIndex, scene, geometry, worldStore }) {
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function createSlot({ slotIndex, scene, geometry, worldStore, stylizedConfig }) {
   const chunkSize = worldStore.chunkSize;
   const texturePixels = new Uint8Array(chunkSize * chunkSize * 4);
+  const surfaceMaskPixels = new Uint8Array(chunkSize * chunkSize * 4);
   const heightPixels = new Float32Array((chunkSize + 1) * (chunkSize + 1));
   const tileTexture = new THREE.DataTexture(
     texturePixels,
@@ -26,6 +32,18 @@ function createSlot({ slotIndex, scene, geometry, worldStore }) {
   tileTexture.generateMipmaps = false;
   tileTexture.colorSpace = THREE.SRGBColorSpace;
 
+  const surfaceMaskTexture = new THREE.DataTexture(
+    surfaceMaskPixels,
+    chunkSize,
+    chunkSize,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
+  );
+  surfaceMaskTexture.magFilter = THREE.LinearFilter;
+  surfaceMaskTexture.minFilter = THREE.LinearFilter;
+  surfaceMaskTexture.generateMipmaps = false;
+  surfaceMaskTexture.colorSpace = THREE.NoColorSpace;
+
   const heightTexture = new THREE.DataTexture(
     heightPixels,
     chunkSize + 1,
@@ -38,12 +56,16 @@ function createSlot({ slotIndex, scene, geometry, worldStore }) {
   heightTexture.generateMipmaps = false;
   heightTexture.unpackAlignment = 1;
 
+  const chunkCenter = uniform(new THREE.Vector2());
   const material = createTerrainMaterial({
     tileTexture,
     heightTexture,
+    surfaceMaskTexture,
+    chunkCenter,
+    chunkWorldSize: chunkSize * worldStore.tileSize,
     width: chunkSize,
     height: chunkSize,
-    chunkSize,
+    stylizedConfig,
   });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.rotation.x = -Math.PI / 2;
@@ -55,14 +77,18 @@ function createSlot({ slotIndex, scene, geometry, worldStore }) {
     slotIndex,
     key: null,
     descriptor: null,
+    page: null,
     lastUsed: 0,
     token: 0,
     loading: false,
     pageRevision: -1,
     texturePixels,
+    surfaceMaskPixels,
     heightPixels,
     tileTexture,
+    surfaceMaskTexture,
     heightTexture,
+    chunkCenter,
     material,
     mesh,
   };
@@ -79,7 +105,38 @@ function writeTilePixels(slot, tiles) {
     slot.texturePixels[offset] = red;
     slot.texturePixels[offset + 1] = green;
     slot.texturePixels[offset + 2] = blue;
-    slot.texturePixels[offset + 3] = 255;
+    slot.texturePixels[offset + 3] = tile.id;
+  }
+}
+
+function writeSurfaceMaskPixels(slot, page, worldStore, config) {
+  const chunkSize = worldStore.chunkSize;
+  const blendCells = Math.max(0.5, config.path.blendCells);
+  const searchRadius = Math.ceil(blendCells + 1);
+  const roadTileId = config.path.tileId;
+  const grassTileIds = new Set(config.grass.tileIds);
+
+  for (let localZ = 0; localZ < chunkSize; localZ += 1) {
+    for (let localX = 0; localX < chunkSize; localX += 1) {
+      const cellIndex = localZ * chunkSize + localX;
+      const worldX = page.originX + localX;
+      const worldZ = page.originZ + localZ;
+      let nearestRoad = Number.POSITIVE_INFINITY;
+      for (let offsetZ = -searchRadius; offsetZ <= searchRadius; offsetZ += 1) {
+        for (let offsetX = -searchRadius; offsetX <= searchRadius; offsetX += 1) {
+          if (worldStore.getTile(worldX + offsetX, worldZ + offsetZ) !== roadTileId) continue;
+          nearestRoad = Math.min(nearestRoad, Math.hypot(offsetX, offsetZ));
+        }
+      }
+      const pathInfluence = Number.isFinite(nearestRoad)
+        ? clamp(1 - Math.max(0, nearestRoad - 0.35) / blendCells, 0, 1)
+        : 0;
+      const offset = cellIndex * 4;
+      slot.surfaceMaskPixels[offset] = Math.round(pathInfluence * 255);
+      slot.surfaceMaskPixels[offset + 1] = grassTileIds.has(page.tiles[cellIndex]) ? 255 : 0;
+      slot.surfaceMaskPixels[offset + 2] = 0;
+      slot.surfaceMaskPixels[offset + 3] = 255;
+    }
   }
 }
 
@@ -92,6 +149,7 @@ export class InfiniteTerrainView {
     floatingOrigin,
     streamingConfig,
     rendererConfig,
+    stylizedConfig,
   }) {
     this.container = container;
     this.tileMap = tileMap;
@@ -99,6 +157,7 @@ export class InfiniteTerrainView {
     this.worldStore = worldStore;
     this.floatingOrigin = floatingOrigin;
     this.streamingConfig = streamingConfig;
+    this.stylizedConfig = stylizedConfig;
     this.chunkSize = worldStore.chunkSize;
     this.chunkWorldSize = this.chunkSize * worldStore.tileSize;
     this.raycaster = new THREE.Raycaster();
@@ -136,6 +195,7 @@ export class InfiniteTerrainView {
         scene: this.scene,
         geometry: this.geometry,
         worldStore,
+        stylizedConfig,
       }),
     );
 
@@ -257,9 +317,12 @@ export class InfiniteTerrainView {
 
   uploadPage(slot, page) {
     writeTilePixels(slot, page.tiles);
+    writeSurfaceMaskPixels(slot, page, this.worldStore, this.stylizedConfig);
     slot.heightPixels.set(page.heights);
     slot.tileTexture.needsUpdate = true;
+    slot.surfaceMaskTexture.needsUpdate = true;
     slot.heightTexture.needsUpdate = true;
+    slot.page = page;
     slot.pageRevision = page.revision;
   }
 
@@ -281,6 +344,7 @@ export class InfiniteTerrainView {
       slot.descriptor.centerWorldZ,
     );
     slot.mesh.position.set(render.x, 0, render.z);
+    slot.chunkCenter.value.set(slot.descriptor.centerWorldX, slot.descriptor.centerWorldZ);
   }
 
   onWorldChange(change) {
@@ -297,8 +361,10 @@ export class InfiniteTerrainView {
     for (const coordinate of coordinates) {
       const chunkX = Math.floor(coordinate.x / this.chunkSize);
       const chunkZ = Math.floor(coordinate.z / this.chunkSize);
-      for (let offsetZ = change.kind === 'height' ? -1 : 0; offsetZ <= 0; offsetZ += 1) {
-        for (let offsetX = change.kind === 'height' ? -1 : 0; offsetX <= 0; offsetX += 1) {
+      const minimumOffset = -1;
+      const maximumOffset = change.kind === 'tile' ? 1 : 0;
+      for (let offsetZ = minimumOffset; offsetZ <= maximumOffset; offsetZ += 1) {
+        for (let offsetX = minimumOffset; offsetX <= maximumOffset; offsetX += 1) {
           affected.add(`${chunkX + offsetX}:${chunkZ + offsetZ}`);
         }
       }
@@ -425,9 +491,11 @@ export class InfiniteTerrainView {
       this.scene.remove(slot.mesh);
       slot.material.dispose();
       slot.tileTexture.dispose();
+      slot.surfaceMaskTexture.dispose();
       slot.heightTexture.dispose();
     }
     this.geometry.dispose();
     this.renderer.dispose();
+    this.renderer.domElement.remove();
   }
 }
