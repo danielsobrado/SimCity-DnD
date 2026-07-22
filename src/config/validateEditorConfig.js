@@ -53,6 +53,70 @@ function assertNonNegativeInteger(config, path) {
   }
 }
 
+function validateStylizedSurface(config) {
+  const surface = config.stylizedSurface;
+  if (!surface) return;
+  if (typeof surface.enabled !== 'boolean') {
+    throw new Error('Invalid editor configuration: stylizedSurface.enabled must be boolean.');
+  }
+  if (!surface.enabled) return;
+
+  const positivePaths = [
+    ['stylizedSurface', 'grass', 'bladesPerCell'],
+    ['stylizedSurface', 'grass', 'minWidth'],
+    ['stylizedSurface', 'grass', 'maxWidth'],
+    ['stylizedSurface', 'grass', 'minLength'],
+    ['stylizedSurface', 'grass', 'maxLength'],
+    ['stylizedSurface', 'wind', 'speed'],
+    ['stylizedSurface', 'wind', 'frequency'],
+    ['stylizedSurface', 'color', 'brightness'],
+    ['stylizedSurface', 'color', 'gradientEnd'],
+    ['stylizedSurface', 'color', 'gradientPower'],
+    ['stylizedSurface', 'patch', 'scale'],
+    ['stylizedSurface', 'patch', 'bias'],
+    ['stylizedSurface', 'dirt', 'scale'],
+    ['stylizedSurface', 'dirt', 'softness'],
+    ['stylizedSurface', 'path', 'blendCells'],
+    ['stylizedSurface', 'rocks', 'radius'],
+    ['stylizedSurface', 'rocks', 'falloff'],
+    ['stylizedSurface', 'ground', 'variationScale'],
+    ['stylizedSurface', 'ground', 'grainScale'],
+  ];
+  for (const path of positivePaths) assertPositiveNumber(config, path);
+  assertNonNegativeInteger(config, ['stylizedSurface', 'grass', 'residentRadius']);
+
+  if (!Number.isInteger(surface.grass.bladesPerCell)) {
+    throw new Error('Invalid editor configuration: stylizedSurface.grass.bladesPerCell must be an integer.');
+  }
+  if (!Array.isArray(surface.grass.tileIds)
+      || surface.grass.tileIds.length === 0
+      || surface.grass.tileIds.some((tileId) => !Number.isInteger(tileId) || tileId < 0 || tileId > 255)) {
+    throw new Error('Invalid editor configuration: stylizedSurface.grass.tileIds must contain unsigned-byte tile ids.');
+  }
+  if (!Array.isArray(surface.wind.direction)
+      || surface.wind.direction.length !== 2
+      || surface.wind.direction.some((value) => !Number.isFinite(value))) {
+    throw new Error('Invalid editor configuration: stylizedSurface.wind.direction must be a finite vec2.');
+  }
+  if (surface.grass.maxWidth < surface.grass.minWidth
+      || surface.grass.maxLength < surface.grass.minLength) {
+    throw new Error('Invalid editor configuration: stylized grass maximum dimensions must cover minimum dimensions.');
+  }
+  if (surface.color.gradientEnd <= surface.color.gradientStart) {
+    throw new Error('Invalid editor configuration: stylized grass gradientEnd must exceed gradientStart.');
+  }
+  const unitFields = [
+    surface.patch.strength,
+    surface.dirt.coverage,
+    surface.dirt.bladeCut,
+    surface.dirt.bladeBlend,
+    surface.rocks.flatten,
+  ];
+  if (unitFields.some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
+    throw new Error('Invalid editor configuration: stylized blend strengths must be within [0, 1].');
+  }
+}
+
 export function validateEditorConfig(config) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error('Invalid editor configuration: expected a YAML object.');
@@ -124,5 +188,6 @@ export function validateEditorConfig(config) {
     throw new Error('Invalid editor configuration: brush.defaultSize must be listed in brush.sizes.');
   }
 
+  validateStylizedSurface(config);
   return config;
 }
