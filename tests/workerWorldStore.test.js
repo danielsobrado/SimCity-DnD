@@ -93,11 +93,12 @@ test('dense modified chunks use binary encoding and round trip', () => {
   }
 
   const document = store.toDocument();
-  assert.equal(document.chunks.length, 1);
-  assert.equal(document.chunks[0].encoding, 'base64-le-v1');
-  assert.equal(typeof document.chunks[0].tileData, 'string');
-  assert.equal(typeof document.chunks[0].heightData, 'string');
-  assert.equal(document.chunks[0].tiles, undefined);
+  assert.equal(document.chunks.length, 4);
+  const primary = document.chunks.find((chunk) => chunk.x === 0 && chunk.z === 0);
+  assert.equal(primary.encoding, 'base64-le-v1');
+  assert.equal(typeof primary.tileData, 'string');
+  assert.equal(typeof primary.heightData, 'string');
+  assert.equal(primary.tiles, undefined);
 
   const { store: restored } = createStore();
   restored.loadDocument(document);
