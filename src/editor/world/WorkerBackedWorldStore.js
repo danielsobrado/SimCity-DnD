@@ -1,5 +1,6 @@
 import { InfiniteWorldStore } from './InfiniteWorldStore.js';
 import { cellKey, chunkKey } from './WorldCoordinates.js';
+import { WORLD_HEIGHT_EPSILON } from './worldConstants.js';
 
 function tileIndex(localX, localZ, chunkSize) {
   return localZ * chunkSize + localX;
@@ -43,7 +44,7 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
     if (current) {
       return current;
     }
-    const { chunkX, chunkZ, originX, originZ } = page;
+    const { originX, originZ } = page;
     for (let localZ = 0; localZ < this.chunkSize; localZ += 1) {
       for (let localX = 0; localX < this.chunkSize; localX += 1) {
         const override = this.tileOverrides.get(cellKey(originX + localX, originZ + localZ));
@@ -70,6 +71,29 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
     this.cache.set(page.key, completed);
     this.evictCache();
     return completed;
+  }
+
+  loadLegacyDocument(document) {
+    super.loadLegacyDocument(document);
+    const offsetX = -Math.floor(document.width / 2);
+    const offsetZ = -Math.floor(document.height / 2);
+    const explicit = new Map(document.heightfield?.values ?? []);
+    const vertexWidth = document.width + 1;
+    const vertexHeight = document.height + 1;
+    const heightOverrides = new Map();
+
+    for (let localZ = 0; localZ < vertexHeight; localZ += 1) {
+      for (let localX = 0; localX < vertexWidth; localX += 1) {
+        const index = localZ * vertexWidth + localX;
+        const value = explicit.get(index) ?? 0;
+        const worldX = offsetX + localX;
+        const worldZ = offsetZ + localZ;
+        if (Math.abs(value - this.generator.sampleHeight(worldX, worldZ)) > WORLD_HEIGHT_EPSILON) {
+          heightOverrides.set(cellKey(worldX, worldZ), value);
+        }
+      }
+    }
+    this.heightOverrides = heightOverrides;
   }
 
   clearOverrides() {
