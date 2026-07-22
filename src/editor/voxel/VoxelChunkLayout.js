@@ -1,5 +1,7 @@
+import { MC_MAX_TRIANGLES_PER_CELL } from './MarchingCubesTables.js';
 import {
   VOXEL_MAX_AXIS_CELLS,
+  VOXEL_MAX_OUTPUT_VERTICES,
   VOXEL_MAX_TOTAL_CELLS,
 } from './voxelConstants.js';
 
@@ -56,9 +58,15 @@ export function createVoxelChunkLayout(config, mapConfig) {
     }
   }
 
-  const maxInstances = cellsX * cellsY * cellsZ;
-  if (maxInstances > VOXEL_MAX_TOTAL_CELLS) {
+  const cellCount = cellsX * cellsY * cellsZ;
+  if (cellCount > VOXEL_MAX_TOTAL_CELLS) {
     throw new Error(`Voxel prototype cell count exceeds ${VOXEL_MAX_TOTAL_CELLS}.`);
+  }
+
+  const maxTriangles = cellCount * MC_MAX_TRIANGLES_PER_CELL;
+  const maxVertices = maxTriangles * 3;
+  if (maxVertices > VOXEL_MAX_OUTPUT_VERTICES) {
+    throw new Error(`Voxel prototype marching-cubes output exceeds ${VOXEL_MAX_OUTPUT_VERTICES} vertices.`);
   }
 
   if (!mapConfig
@@ -84,7 +92,10 @@ export function createVoxelChunkLayout(config, mapConfig) {
     surfaceAmplitude: config.surfaceAmplitude,
     surfaceFrequency: config.surfaceFrequency,
     seed: config.seed,
-    maxInstances,
+    cellCount,
+    maxTriangles,
+    maxVertices,
+    maxInstances: maxTriangles,
     worldWidth: cellsX * config.voxelSize,
     worldHeight: cellsY * config.voxelSize,
     worldDepth: cellsZ * config.voxelSize,
