@@ -25,8 +25,9 @@ import { createVoxelWorldLayout } from './editor/voxel/VoxelWorldLayout.js';
 import { ChunkedHeightField } from './editor/world/ChunkedHeightField.js';
 import { ChunkedTileMap } from './editor/world/ChunkedTileMap.js';
 import { FloatingOrigin } from './editor/world/FloatingOrigin.js';
-import { InfiniteWorldStore } from './editor/world/InfiniteWorldStore.js';
 import { ProceduralWorldGenerator } from './editor/world/ProceduralWorldGenerator.js';
+import { WorkerBackedWorldStore } from './editor/world/WorkerBackedWorldStore.js';
+import { WorldChunkWorkerClient } from './editor/world/WorldChunkWorkerClient.js';
 
 async function startEditor() {
   const config = loadEditorConfig();
@@ -42,7 +43,12 @@ async function startEditor() {
     heightScale: config.world.heightScale,
     seaLevel: config.world.seaLevel,
   });
-  const worldStore = new InfiniteWorldStore({
+  const chunkWorker = new WorldChunkWorkerClient({
+    chunkSize: config.world.chunkSize,
+    generator,
+  });
+  const worldStore = new WorkerBackedWorldStore({
+    chunkWorker,
     chunkSize: config.world.chunkSize,
     tileSize: config.map.tileSize,
     cacheLimit: config.world.maxCpuChunks,
@@ -90,6 +96,7 @@ async function startEditor() {
     await terrainView.initialize();
   } catch (error) {
     terrainView.dispose();
+    worldStore.dispose();
     throw error;
   }
 
@@ -132,6 +139,10 @@ async function startEditor() {
     terrainConfig: config.terrain,
     voxelStampStore,
   });
+  controller.focusProvider = () => {
+    const renderFocus = viewModeController.getFocusWorld();
+    return floatingOrigin.toCanonical(renderFocus.x, renderFocus.z);
+  };
 
   ui.bind(controller);
   const viewModeUi = new ViewModeUi({ root, controller: viewModeController });
@@ -223,6 +234,7 @@ async function startEditor() {
     objectView.dispose();
     frameRateDisplay.dispose();
     terrainView.dispose();
+    worldStore.dispose();
   }, { once: true });
 }
 
