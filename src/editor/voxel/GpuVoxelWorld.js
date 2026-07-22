@@ -105,6 +105,7 @@ export class GpuVoxelWorld {
     this.unsubscribeStamps = null;
     this.focusChunk = null;
     this.focusKey = null;
+    this.pendingFocusWorld = null;
     this.clock = 0;
     this.visible = layout.visible;
     this.initialized = false;
@@ -224,8 +225,16 @@ export class GpuVoxelWorld {
     const nextFocus = worldToVoxelChunk(this.layout, focusWorld.x, focusWorld.z);
     const nextKey = `${nextFocus.chunkX}:${nextFocus.chunkZ}`;
     if (nextKey !== this.focusKey) {
-      this.updateAssignments(focusWorld, true);
+      this.pendingFocusWorld = { x: focusWorld.x, z: focusWorld.z };
     }
+
+    const rebuilding = this.slots.some((slot) => slot.chunk.getStatus().rebuilding);
+    if (this.pendingFocusWorld && !rebuilding) {
+      const pendingFocusWorld = this.pendingFocusWorld;
+      this.pendingFocusWorld = null;
+      this.updateAssignments(pendingFocusWorld, true);
+    }
+
     for (const slot of this.slots) {
       slot.chunk.update();
     }
@@ -236,6 +245,7 @@ export class GpuVoxelWorld {
       return;
     }
     this.disposed = true;
+    this.pendingFocusWorld = null;
     this.unsubscribeStamps?.();
     this.unsubscribeStamps = null;
     for (const slot of this.slots) {
