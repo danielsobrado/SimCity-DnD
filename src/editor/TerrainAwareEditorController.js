@@ -6,12 +6,14 @@ export class TerrainAwareEditorController extends EditorController {
   constructor(options) {
     super(options);
     this.voxelStampStore = options.voxelStampStore ?? null;
+    this.worldStore = options.worldStore ?? options.tileMap?.worldStore ?? null;
   }
 
   getState() {
     return {
       ...super.getState(),
       voxelStampCount: this.voxelStampStore?.size ?? 0,
+      worldStats: this.worldStore?.getStats() ?? null,
     };
   }
 
@@ -103,6 +105,21 @@ export class TerrainAwareEditorController extends EditorController {
       this.voxelStampStore.replaceAll(direction === 'undo' ? entry.before : entry.after);
       return;
     }
+    if (entry.kind === 'infinite-world') {
+      this.worldStore.restoreSnapshot(
+        direction === 'undo' ? entry.beforeWorld : entry.afterWorld,
+      );
+      this.objectMap.replaceAll(
+        direction === 'undo' ? entry.beforeObjects : entry.afterObjects,
+      );
+      this.voxelStampStore?.replaceAll(
+        direction === 'undo' ? entry.beforeVoxelStamps : entry.afterVoxelStamps,
+      );
+      this.setSelectedObject(null);
+      this.terrainView.refreshAll();
+      this.refreshObjects();
+      return;
+    }
 
     super.applyHistory(entry, direction);
     if (entry.kind === 'world' && this.voxelStampStore) {
@@ -113,6 +130,34 @@ export class TerrainAwareEditorController extends EditorController {
   }
 
   clearWorld() {
+    if (this.worldStore) {
+      const beforeWorld = this.worldStore.createSnapshot();
+      const beforeObjects = this.objectMap.clear();
+      const beforeVoxelStamps = this.voxelStampStore?.clear() ?? [];
+      if (beforeWorld.tileOverrides.length === 0
+          && beforeWorld.heightOverrides.length === 0
+          && beforeObjects.length === 0
+          && beforeVoxelStamps.length === 0) {
+        return;
+      }
+      this.worldStore.clearOverrides();
+      const afterWorld = this.worldStore.createSnapshot();
+      this.commitHistory({
+        kind: 'infinite-world',
+        beforeWorld,
+        afterWorld,
+        beforeObjects,
+        afterObjects: [],
+        beforeVoxelStamps,
+        afterVoxelStamps: [],
+      });
+      this.setSelectedObject(null);
+      this.terrainView.refreshAll();
+      this.refreshObjects();
+      this.emitMap();
+      return;
+    }
+
     const beforeObjects = this.objectMap.clear();
     const terrainPatch = this.tileMap.fill(0);
     const heightPatch = this.heightField.fill(0);
