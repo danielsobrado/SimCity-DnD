@@ -8,7 +8,6 @@ import {
   mix,
   oneMinus,
   positionLocal,
-  pow,
   smoothstep,
   texture,
   uv,
@@ -103,9 +102,10 @@ export function createTerrainMaterial({
   );
   groundColor = max(groundColor, vec3(0));
 
-  const material = new THREE.MeshBasicNodeMaterial();
+  const material = new THREE.MeshLambertNodeMaterial();
   const cellShaded = mix(groundColor, CELL_GRID_COLOR, cellGrid.mul(0.08));
   material.colorNode = cellShaded.mul(heightShade);
+  material.normalNode = vec3(0, 0, 1);
   material.positionNode = positionLocal.add(vec3(0, 0, terrainHeight));
   return material;
 }
