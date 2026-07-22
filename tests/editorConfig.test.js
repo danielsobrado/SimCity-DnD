@@ -20,6 +20,8 @@ function createValidConfig() {
       jumpSpeed: 8,
       gravity: 24,
       eyeHeight: 1.7,
+      stepHeight: 1.1,
+      groundSnapDistance: 0.6,
       mouseSensitivity: 0.0022,
       maxPitchDegrees: 85,
     },
@@ -83,6 +85,16 @@ test('rejects invalid player pitch limits', () => {
   assert.throws(
     () => validateEditorConfig(config),
     /player\.maxPitchDegrees must be within/,
+  );
+});
+
+test('rejects non-positive player step heights', () => {
+  const config = createValidConfig();
+  config.player.stepHeight = 0;
+
+  assert.throws(
+    () => validateEditorConfig(config),
+    /player\.stepHeight must be positive/,
   );
 });
 
