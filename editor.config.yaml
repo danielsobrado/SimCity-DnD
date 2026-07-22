@@ -42,6 +42,73 @@ terrain:
   maxHeight: 48
   sculptStrength: 1.25
   smoothFactor: 0.45
+stylizedSurface:
+  enabled: true
+  assets:
+    scene: /assets/grass-scene.glb
+    rockMaterial: RocksStylized_M
+    barkColor: /assets/textures/bark/bark_color.png
+    barkAo: /assets/textures/bark/bark_AO.png
+    barkHeight: /assets/textures/bark/bark_height.png
+    flowerA:
+      mask: /assets/textures/flower/flowers.png
+      zones: /assets/textures/flower/flowersRGB.png
+      gradient: /assets/textures/flower/flowersGradient.png
+    flowerB:
+      mask: /assets/textures/flower3/flowers.png
+      zones: /assets/textures/flower3/flowersRGB.png
+      gradient: /assets/textures/flower3/flowersGradient.png
+  grass:
+    residentRadius: 1
+    bladesPerCell: 8
+    tileIds: [0, 1, 4]
+    minWidth: 0.055
+    maxWidth: 0.085
+    minLength: 0.28
+    maxLength: 0.55
+  wind:
+    direction: [1, 0]
+    strength: 0.3
+    speed: 1.2
+    frequency: 0.4
+    turbulence: 0.3
+    lean: 0.5
+  color:
+    bottom: '#4f7c13'
+    top: '#79a01c'
+    brightness: 0.8
+    gradientStart: 0.15
+    gradientEnd: 1.0
+    gradientPower: 1.6
+  patch:
+    lush: '#6f9a2a'
+    dry: '#b8a94e'
+    strength: 0.35
+    scale: 0.15
+    bias: 1.6
+  dirt:
+    color: '#ac956c'
+    scale: 0.4
+    coverage: 0.27
+    softness: 0.06
+    warp: 0.2
+    bladeCut: 1.0
+    bladeBlend: 0.8
+  path:
+    tileId: 3
+    blendCells: 2.5
+  rocks:
+    enabled: true
+    radius: 1.5
+    falloff: 0.7
+    flatten: 0.85
+    bend: 0.25
+  ground:
+    variationColor: '#c4a77d'
+    variationScale: 1.24
+    variationStrength: 0.9
+    grainScale: 6.7
+    grainStrength: 0.95
 voxelPrototype:
   enabled: true
   visible: true
