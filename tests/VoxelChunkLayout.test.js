@@ -10,20 +10,20 @@ function createConfig() {
     visible: true,
     cells: [24, 16, 24],
     voxelSize: 1.5,
-    originCell: [280, 240],
     verticalOffset: 0.2,
     baseHeight: 7,
     surfaceAmplitude: 3,
     surfaceFrequency: 0.28,
     seed: 17,
-    maxStamps: 64,
+    maxStamps: 256,
+    maxStampsPerChunk: 32,
     defaultRadius: 2.5,
     defaultStrength: 0.75,
     defaultSmoothness: 0.65,
   };
 }
 
-test('derives bounded marching-cubes output and halo dimensions', () => {
+test('derives bounded reusable marching-cubes slot dimensions', () => {
   const layout = createVoxelChunkLayout(createConfig(), MAP_CONFIG);
 
   assert.equal(layout.cellCount, 9216);
@@ -34,14 +34,15 @@ test('derives bounded marching-cubes output and halo dimensions', () => {
     [layout.sampleCountX, layout.sampleCountY, layout.sampleCountZ],
     [27, 19, 27],
   );
-  assert.equal(layout.worldWidth, 36);
+  assert.equal(layout.chunkWorldWidth, 36);
   assert.equal(layout.worldHeight, 24);
-  assert.equal(layout.worldDepth, 36);
-  assert.deepEqual([layout.originX, layout.originZ], [280, 240]);
+  assert.equal(layout.chunkWorldDepth, 36);
+  assert.equal(layout.maxGlobalStamps, 256);
+  assert.equal(layout.maxStamps, 32);
   assert.ok(Object.isFrozen(layout));
 });
 
-test('rejects voxel axes outside the bounded prototype range', () => {
+test('rejects voxel axes outside the bounded slot range', () => {
   const config = createConfig();
   config.cells = [65, 16, 24];
 
@@ -61,12 +62,12 @@ test('rejects marching-cubes output beyond the GPU vertex budget', () => {
   );
 });
 
-test('rejects a voxel origin outside the logical map', () => {
+test('rejects excessive per-chunk stamp capacity', () => {
   const config = createConfig();
-  config.originCell = [512, 0];
+  config.maxStampsPerChunk = 65;
 
   assert.throws(
     () => createVoxelChunkLayout(config, MAP_CONFIG),
-    /originCell must be inside the map/,
+    /maxStampsPerChunk must be within 1–64/,
   );
 });
