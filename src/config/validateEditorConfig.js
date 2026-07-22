@@ -53,6 +53,14 @@ function assertNonNegativeInteger(config, path) {
   }
 }
 
+function assertTileIds(value, fieldName) {
+  if (!Array.isArray(value)
+      || value.length === 0
+      || value.some((tileId) => !Number.isInteger(tileId) || tileId < 0 || tileId > 255)) {
+    throw new Error(`Invalid editor configuration: ${fieldName} must contain unsigned-byte tile ids.`);
+  }
+}
+
 function validateStylizedSurface(config) {
   const surface = config.stylizedSurface;
   if (!surface) return;
@@ -60,6 +68,9 @@ function validateStylizedSurface(config) {
     throw new Error('Invalid editor configuration: stylizedSurface.enabled must be boolean.');
   }
   if (!surface.enabled) return;
+  if (typeof surface.rocks?.enabled !== 'boolean') {
+    throw new Error('Invalid editor configuration: stylizedSurface.rocks.enabled must be boolean.');
+  }
 
   const positivePaths = [
     ['stylizedSurface', 'grass', 'bladesPerCell'],
@@ -77,6 +88,9 @@ function validateStylizedSurface(config) {
     ['stylizedSurface', 'dirt', 'scale'],
     ['stylizedSurface', 'dirt', 'softness'],
     ['stylizedSurface', 'path', 'blendCells'],
+    ['stylizedSurface', 'rocks', 'perChunk'],
+    ['stylizedSurface', 'rocks', 'minScale'],
+    ['stylizedSurface', 'rocks', 'maxScale'],
     ['stylizedSurface', 'rocks', 'radius'],
     ['stylizedSurface', 'rocks', 'falloff'],
     ['stylizedSurface', 'ground', 'variationScale'],
@@ -84,15 +98,16 @@ function validateStylizedSurface(config) {
   ];
   for (const path of positivePaths) assertPositiveNumber(config, path);
   assertNonNegativeInteger(config, ['stylizedSurface', 'grass', 'residentRadius']);
+  assertNonNegativeInteger(config, ['stylizedSurface', 'rocks', 'residentRadius']);
 
   if (!Number.isInteger(surface.grass.bladesPerCell)) {
     throw new Error('Invalid editor configuration: stylizedSurface.grass.bladesPerCell must be an integer.');
   }
-  if (!Array.isArray(surface.grass.tileIds)
-      || surface.grass.tileIds.length === 0
-      || surface.grass.tileIds.some((tileId) => !Number.isInteger(tileId) || tileId < 0 || tileId > 255)) {
-    throw new Error('Invalid editor configuration: stylizedSurface.grass.tileIds must contain unsigned-byte tile ids.');
+  if (!Number.isInteger(surface.rocks.perChunk)) {
+    throw new Error('Invalid editor configuration: stylizedSurface.rocks.perChunk must be an integer.');
   }
+  assertTileIds(surface.grass.tileIds, 'stylizedSurface.grass.tileIds');
+  assertTileIds(surface.rocks.tileIds, 'stylizedSurface.rocks.tileIds');
   if (!Array.isArray(surface.wind.direction)
       || surface.wind.direction.length !== 2
       || surface.wind.direction.some((value) => !Number.isFinite(value))) {
@@ -101,6 +116,9 @@ function validateStylizedSurface(config) {
   if (surface.grass.maxWidth < surface.grass.minWidth
       || surface.grass.maxLength < surface.grass.minLength) {
     throw new Error('Invalid editor configuration: stylized grass maximum dimensions must cover minimum dimensions.');
+  }
+  if (surface.rocks.maxScale < surface.rocks.minScale) {
+    throw new Error('Invalid editor configuration: stylized rock maxScale must cover minScale.');
   }
   if (surface.color.gradientEnd <= surface.color.gradientStart) {
     throw new Error('Invalid editor configuration: stylized grass gradientEnd must exceed gradientStart.');
@@ -114,6 +132,10 @@ function validateStylizedSurface(config) {
   ];
   if (unitFields.some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
     throw new Error('Invalid editor configuration: stylized blend strengths must be within [0, 1].');
+  }
+  if (typeof surface.assets?.scene !== 'string' || surface.assets.scene.length === 0
+      || typeof surface.assets?.rockMaterial !== 'string' || surface.assets.rockMaterial.length === 0) {
+    throw new Error('Invalid editor configuration: stylized surface asset paths and rock material are required.');
   }
 }
 
