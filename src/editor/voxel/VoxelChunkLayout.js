@@ -72,6 +72,9 @@ export function createVoxelChunkLayout(config, mapConfig) {
     VOXEL_MAX_STAMPS_PER_CHUNK,
     'maxStampsPerChunk',
   );
+  if (config.maxStamps > config.maxStampsPerChunk) {
+    throw new Error('Voxel prototype maxStamps must not exceed maxStampsPerChunk.');
+  }
   if (!Number.isInteger(config.seed)) {
     throw new Error('Voxel prototype seed must be an integer.');
   }
