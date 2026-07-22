@@ -1,8 +1,8 @@
 const STATUS_LABELS = Object.freeze({
   disabled: 'Disabled in editor.config.yaml.',
-  pending: 'Preparing GPU voxel buffers…',
+  pending: 'Preparing GPU marching-cubes buffers…',
   unsupported: 'Unavailable: the active renderer is not using WebGPU.',
-  failed: 'GPU voxel initialization failed.',
+  failed: 'GPU marching-cubes initialization failed.',
 });
 
 export class VoxelPrototypeUi {
@@ -11,9 +11,9 @@ export class VoxelPrototypeUi {
     this.panel = document.createElement('section');
     this.panel.className = 'panel';
     this.panel.innerHTML = `
-      <h2>GPU voxel prototype</h2>
+      <h2>GPU marching cubes</h2>
       <button class="action-button action-button--wide" type="button" data-role="voxel-toggle">
-        Voxel chunk
+        Marching-cubes chunk
       </button>
       <p class="panel-note" data-role="voxel-status"></p>
     `;
@@ -39,13 +39,13 @@ export class VoxelPrototypeUi {
     this.button.disabled = !state.ready;
 
     if (!state.ready) {
-      this.button.textContent = 'Voxel chunk unavailable';
+      this.button.textContent = 'Marching cubes unavailable';
       this.status.textContent = state.error ?? STATUS_LABELS[state.code] ?? 'Unavailable.';
       return;
     }
 
-    this.button.textContent = state.visible ? 'Hide voxel chunk' : 'Show voxel chunk';
-    this.status.textContent = `${state.cells.join('×')} cells · indirect draw · zero GPU readbacks`;
+    this.button.textContent = state.visible ? 'Hide marching-cubes chunk' : 'Show marching-cubes chunk';
+    this.status.textContent = `${state.cells.join('×')} cells · smooth GPU surface · zero readbacks`;
   }
 
   dispose() {

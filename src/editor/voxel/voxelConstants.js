@@ -1,9 +1,10 @@
 export const VOXEL_WORKGROUP_SIZE = 64;
 export const VOXEL_MAX_AXIS_CELLS = 64;
 export const VOXEL_MAX_TOTAL_CELLS = 262144;
-export const VOXEL_CUBE_FILL_RATIO = 0.92;
+export const VOXEL_MAX_OUTPUT_VERTICES = 1500000;
 export const VOXEL_BOUNDS_COLOR = 0x7bc8ff;
 export const VOXEL_LOW_COLOR = Object.freeze([0.28, 0.18, 0.1]);
 export const VOXEL_HIGH_COLOR = Object.freeze([0.25, 0.56, 0.22]);
 export const VOXEL_ROUGHNESS = 0.94;
 export const VOXEL_METALNESS = 0;
+export const VOXEL_INTERPOLATION_EPSILON = 0.000001;

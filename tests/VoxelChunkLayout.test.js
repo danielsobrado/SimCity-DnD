@@ -19,10 +19,13 @@ function createConfig() {
   };
 }
 
-test('derives bounded GPU voxel chunk dimensions', () => {
+test('derives bounded marching-cubes output dimensions', () => {
   const layout = createVoxelChunkLayout(createConfig(), MAP_CONFIG);
 
-  assert.equal(layout.maxInstances, 9216);
+  assert.equal(layout.cellCount, 9216);
+  assert.equal(layout.maxTriangles, 46080);
+  assert.equal(layout.maxVertices, 138240);
+  assert.equal(layout.maxInstances, 46080);
   assert.equal(layout.worldWidth, 36);
   assert.equal(layout.worldHeight, 24);
   assert.equal(layout.worldDepth, 36);
@@ -37,6 +40,16 @@ test('rejects voxel axes outside the bounded prototype range', () => {
   assert.throws(
     () => createVoxelChunkLayout(config, MAP_CONFIG),
     /x cells must be within 1–64/,
+  );
+});
+
+test('rejects marching-cubes output beyond the GPU vertex budget', () => {
+  const config = createConfig();
+  config.cells = [64, 64, 64];
+
+  assert.throws(
+    () => createVoxelChunkLayout(config, MAP_CONFIG),
+    /marching-cubes output exceeds/,
   );
 });
 
