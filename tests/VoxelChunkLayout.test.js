@@ -71,3 +71,14 @@ test('rejects excessive per-chunk stamp capacity', () => {
     /maxStampsPerChunk must be within 1–64/,
   );
 });
+
+test('rejects global stamp capacity above the per-chunk upload capacity', () => {
+  const config = createConfig();
+  config.maxStamps = 64;
+  config.maxStampsPerChunk = 32;
+
+  assert.throws(
+    () => createVoxelChunkLayout(config, MAP_CONFIG),
+    /maxStamps must not exceed maxStampsPerChunk/,
+  );
+});
