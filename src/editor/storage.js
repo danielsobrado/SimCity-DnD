@@ -1,3 +1,8 @@
+import {
+  importAzgaarFullJson,
+  isAzgaarFullJson,
+} from './import/AzgaarJsonImporter.js';
+
 function parseDocument(serialized) {
   const document = JSON.parse(serialized);
   if (!document || typeof document !== 'object') {
@@ -20,11 +25,18 @@ export function exportMap(worldDocument) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `simcity-dnd-map-${Date.now()}.json`;
+  anchor.download = `simcity-dnd-world-${Date.now()}.json`;
   anchor.click();
   URL.revokeObjectURL(url);
 }
 
-export async function importMap(file) {
-  return parseDocument(await file.text());
+export async function importMap(file, { config } = {}) {
+  const document = parseDocument(await file.text());
+  if (!isAzgaarFullJson(document)) {
+    return document;
+  }
+  if (!config) {
+    throw new Error('Azgaar import requires the active editor configuration.');
+  }
+  return importAzgaarFullJson(document, config);
 }
