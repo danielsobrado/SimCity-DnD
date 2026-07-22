@@ -82,13 +82,13 @@ test('requires unload radius to cover the load radius', () => {
   );
 });
 
-test('requires enough terrain slots for the load radius', () => {
+test('requires enough terrain slots for the unload radius', () => {
   const config = createValidConfig();
-  config.world.maxResidentChunks = 24;
+  config.world.maxResidentChunks = 48;
 
   assert.throws(
     () => validateEditorConfig(config),
-    /world\.maxResidentChunks must be at least 25/,
+    /world\.maxResidentChunks must be at least 49 for the unload window/,
   );
 });
 
