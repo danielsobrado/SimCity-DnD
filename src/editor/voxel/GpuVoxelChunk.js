@@ -7,14 +7,17 @@ import {
   attribute,
   clamp,
   cos,
+  distance,
   float,
   instanceIndex,
+  max,
   mix,
   normalize,
   sin,
   storage,
   struct,
   uint,
+  uniform,
   uvec2,
   vec3,
   vec4,
@@ -29,6 +32,7 @@ import {
   validateMarchingCubesTables,
 } from './MarchingCubesTables.js';
 import { createVoxelChunkLayout } from './VoxelChunkLayout.js';
+import { VOXEL_STAMP_OPERATION_CODES } from './VoxelStampStore.js';
 import {
   VOXEL_BOUNDS_COLOR,
   VOXEL_HIGH_COLOR,
@@ -61,7 +65,7 @@ function createBounds(layout) {
   return bounds;
 }
 
-function createFieldFunction(layout) {
+function createBaseFieldFunction(layout) {
   const phase = layout.seed * 0.173;
   const frequency = layout.surfaceFrequency;
   const amplitude = layout.surfaceAmplitude;
@@ -81,44 +85,51 @@ function createFieldFunction(layout) {
   });
 }
 
-function createNormalFunction(layout) {
-  const phase = layout.seed * 0.173;
-  const frequency = layout.surfaceFrequency;
-  const amplitude = layout.surfaceAmplitude;
-  const diagonalFrequency = frequency * 0.43;
-  const diagonalAmplitude = amplitude * 0.35;
-
-  return Fn(([samplePosition]) => {
-    const localX = samplePosition.x.sub(layout.cellsX * 0.5);
-    const localZ = samplePosition.z.sub(layout.cellsZ * 0.5);
-    const diagonalPhase = localX.add(localZ).mul(diagonalFrequency).add(phase * 0.37);
-
-    const surfaceDx = cos(localX.mul(frequency).add(phase))
-      .mul(amplitude * frequency)
-      .add(cos(diagonalPhase).mul(diagonalAmplitude * diagonalFrequency));
-    const surfaceDz = sin(localZ.mul(frequency * 0.83).sub(phase * 0.7))
-      .mul(-amplitude * 0.65 * frequency * 0.83)
-      .add(cos(diagonalPhase).mul(diagonalAmplitude * diagonalFrequency));
-
-    return normalize(vec3(surfaceDx.negate(), 1, surfaceDz.negate()));
-  });
+function createLinearCoordinates(linearIndex, sizeX, sizeZ) {
+  const yzIndex = linearIndex.div(uint(sizeX));
+  const x = linearIndex.sub(yzIndex.mul(uint(sizeX)));
+  const y = yzIndex.div(uint(sizeZ));
+  const z = yzIndex.sub(y.mul(uint(sizeZ)));
+  return { x, y, z };
 }
 
-function createCellOrigin(linearIndex, layout) {
-  const yzIndex = linearIndex.div(uint(layout.cellsX));
-  const cellX = linearIndex.sub(yzIndex.mul(uint(layout.cellsX)));
-  const cellY = yzIndex.div(uint(layout.cellsZ));
-  const cellZ = yzIndex.sub(cellY.mul(uint(layout.cellsZ)));
-  return vec3(float(cellX), float(cellY), float(cellZ));
+function createGridPosition(linearIndex, sizeX, sizeZ) {
+  const coordinates = createLinearCoordinates(linearIndex, sizeX, sizeZ);
+  return vec3(float(coordinates.x), float(coordinates.y), float(coordinates.z));
+}
+
+function createSampleIndex(samplePosition, layout) {
+  const x = uint(clamp(samplePosition.x, 0, layout.cellsX));
+  const y = uint(clamp(samplePosition.y, 0, layout.cellsY));
+  const z = uint(clamp(samplePosition.z, 0, layout.cellsZ));
+  return y
+    .mul(uint(layout.samplePlaneSize))
+    .add(z.mul(uint(layout.sampleCountX)))
+    .add(x);
+}
+
+function createSmoothMinimum(left, right, smoothing) {
+  const radius = max(smoothing, VOXEL_INTERPOLATION_EPSILON);
+  const weight = clamp(
+    float(0.5).add(right.sub(left).div(radius).mul(0.5)),
+    0,
+    1,
+  );
+  return mix(right, left, weight).sub(radius.mul(weight).mul(float(1).sub(weight)));
+}
+
+function createSmoothMaximum(left, right, smoothing) {
+  return createSmoothMinimum(left.negate(), right.negate(), smoothing).negate();
 }
 
 export class GpuVoxelChunk {
-  constructor({ terrainView, config, mapConfig }) {
+  constructor({ terrainView, config, mapConfig, stampStore }) {
     validateMarchingCubesTables();
 
     this.terrainView = terrainView;
     this.renderer = terrainView.renderer;
     this.layout = createVoxelChunkLayout(config, mapConfig);
+    this.stampStore = stampStore;
     this.statusCode = this.layout.enabled ? STATUS_PENDING : STATUS_DISABLED;
     this.errorMessage = null;
     this.group = null;
@@ -126,13 +137,24 @@ export class GpuVoxelChunk {
     this.bounds = null;
     this.geometry = null;
     this.material = null;
+    this.densityBuffer = null;
+    this.smoothedDensityBuffer = null;
     this.classificationBuffer = null;
     this.positionBuffer = null;
     this.normalBuffer = null;
     this.drawBuffer = null;
+    this.stampShapeBuffer = null;
+    this.stampControlBuffer = null;
+    this.stampCountUniform = null;
     this.computeInit = null;
+    this.computeDensity = null;
+    this.computeSmooth = null;
     this.computeClassify = null;
     this.computeEmit = null;
+    this.unsubscribeStamps = null;
+    this.regenerationPromise = null;
+    this.regenerationRequested = false;
+    this.rebuilding = false;
     this.disposed = false;
   }
 
@@ -143,10 +165,13 @@ export class GpuVoxelChunk {
       supported: this.statusCode !== STATUS_UNSUPPORTED,
       ready: this.statusCode === STATUS_READY,
       visible: Boolean(this.group?.visible),
+      rebuilding: this.rebuilding,
       algorithm: 'marching-cubes',
       cellCount: this.layout.cellCount,
       maxTriangles: this.layout.maxTriangles,
       maxVertices: this.layout.maxVertices,
+      stampCount: this.stampStore?.size ?? 0,
+      maxStamps: this.layout.maxStamps,
       cells: Object.freeze([
         this.layout.cellsX,
         this.layout.cellsY,
@@ -169,10 +194,12 @@ export class GpuVoxelChunk {
 
     try {
       this.createGpuResources();
-      await this.regenerate();
+      this.uploadStamps();
+      await this.regeneratePasses();
       this.statusCode = STATUS_READY;
       this.group.visible = this.layout.visible;
       this.update();
+      this.unsubscribeStamps = this.stampStore?.subscribe(() => this.requestRegeneration());
     } catch (error) {
       this.errorMessage = error instanceof Error ? error.message : String(error);
       this.statusCode = STATUS_FAILED;
@@ -182,14 +209,49 @@ export class GpuVoxelChunk {
     return this.getStatus();
   }
 
-  async regenerate() {
-    if (!this.computeInit || !this.computeClassify || !this.computeEmit) {
+  async regeneratePasses() {
+    if (!this.computeInit
+        || !this.computeDensity
+        || !this.computeSmooth
+        || !this.computeClassify
+        || !this.computeEmit) {
       throw new Error('GPU marching-cubes resources are not initialized.');
     }
 
     await this.renderer.computeAsync(this.computeInit);
+    await this.renderer.computeAsync(this.computeDensity);
+    await this.renderer.computeAsync(this.computeSmooth);
     await this.renderer.computeAsync(this.computeClassify);
     await this.renderer.computeAsync(this.computeEmit);
+  }
+
+  requestRegeneration() {
+    if (this.disposed || !this.computeInit) {
+      return Promise.resolve();
+    }
+
+    this.regenerationRequested = true;
+    if (this.regenerationPromise) {
+      return this.regenerationPromise;
+    }
+
+    this.regenerationPromise = (async () => {
+      this.rebuilding = true;
+      while (this.regenerationRequested && !this.disposed) {
+        this.regenerationRequested = false;
+        this.uploadStamps();
+        await this.regeneratePasses();
+      }
+    })().catch((error) => {
+      this.errorMessage = error instanceof Error ? error.message : String(error);
+      this.statusCode = STATUS_FAILED;
+      console.error('GPU marching-cubes regeneration failed.', error);
+    }).finally(() => {
+      this.rebuilding = false;
+      this.regenerationPromise = null;
+    });
+
+    return this.regenerationPromise;
   }
 
   createGpuResources() {
@@ -203,9 +265,36 @@ export class GpuVoxelChunk {
     const positionWrite = storage(positionBuffer, 'vec4', layout.maxVertices);
     const normalWrite = storage(normalBuffer, 'vec4', layout.maxVertices);
 
+    const densityBuffer = new THREE.StorageBufferAttribute(layout.sampleCount, 1);
+    const smoothedDensityBuffer = new THREE.StorageBufferAttribute(layout.sampleCount, 1);
+    const densityWrite = storage(densityBuffer, 'float', layout.sampleCount);
+    const densityRead = storage(densityBuffer, 'float', layout.sampleCount).toReadOnly();
+    const smoothedDensityWrite = storage(
+      smoothedDensityBuffer,
+      'float',
+      layout.sampleCount,
+    );
+    const smoothedDensityRead = storage(
+      smoothedDensityBuffer,
+      'float',
+      layout.sampleCount,
+    ).toReadOnly();
+
     const classificationBuffer = new THREE.StorageBufferAttribute(layout.cellCount, 2);
     const classificationWrite = storage(classificationBuffer, 'uvec2', layout.cellCount);
     const classificationRead = storage(classificationBuffer, 'uvec2', layout.cellCount).toReadOnly();
+
+    const stampShapeBuffer = new THREE.StorageBufferAttribute(
+      new Float32Array(layout.maxStamps * 4),
+      4,
+    );
+    const stampControlBuffer = new THREE.StorageBufferAttribute(
+      new Float32Array(layout.maxStamps * 4),
+      4,
+    );
+    const stampShapes = storage(stampShapeBuffer, 'vec4', layout.maxStamps).toReadOnly();
+    const stampControls = storage(stampControlBuffer, 'vec4', layout.maxStamps).toReadOnly();
+    const stampCountUniform = uniform(0, 'uint');
 
     const cornerOffsetAttribute = new THREE.StorageBufferAttribute(MC_CORNER_OFFSETS, 4);
     const edgeCornerAttribute = new THREE.StorageBufferAttribute(MC_EDGE_CORNERS, 2);
@@ -231,8 +320,18 @@ export class GpuVoxelChunk {
     const drawStorage = storage(drawBuffer, drawBufferStruct, drawBuffer.count);
     geometry.setIndirect(drawBuffer);
 
-    const sampleField = createFieldFunction(layout);
-    const sampleNormal = createNormalFunction(layout);
+    const sampleBaseField = createBaseFieldFunction(layout);
+    const sampleDensity = (samplePosition) => smoothedDensityRead.element(
+      createSampleIndex(samplePosition, layout),
+    );
+    const sampleGradient = Fn(([samplePosition]) => normalize(vec3(
+      sampleDensity(samplePosition.add(vec3(1, 0, 0)))
+        .sub(sampleDensity(samplePosition.sub(vec3(1, 0, 0)))),
+      sampleDensity(samplePosition.add(vec3(0, 1, 0)))
+        .sub(sampleDensity(samplePosition.sub(vec3(0, 1, 0)))),
+      sampleDensity(samplePosition.add(vec3(0, 0, 1)))
+        .sub(sampleDensity(samplePosition.sub(vec3(0, 0, 1)))),
+    )));
 
     const computeInit = Fn(() => {
       atomicStore(drawStorage.get('vertexCount'), uint(0));
@@ -242,14 +341,86 @@ export class GpuVoxelChunk {
       drawStorage.get('offset').assign(uint(0));
     })().compute(1).setName('Initialize marching-cubes indirect draw');
 
+    const computeDensity = Fn(() => {
+      const sampleIndex = uint(instanceIndex).toVar('densitySampleIndex');
+      const samplePosition = createGridPosition(
+        sampleIndex,
+        layout.sampleCountX,
+        layout.sampleCountZ,
+      ).toVar('densitySamplePosition');
+      const field = sampleBaseField(samplePosition).toVar('editedDensity');
+
+      for (let stampIndex = 0; stampIndex < layout.maxStamps; stampIndex += 1) {
+        If(uint(stampIndex).lessThan(stampCountUniform), () => {
+          const shape = stampShapes.element(stampIndex);
+          const control = stampControls.element(stampIndex);
+          const sphereDistance = distance(samplePosition, shape.xyz).sub(shape.w);
+          const smoothing = max(control.z, VOXEL_INTERPOLATION_EPSILON);
+
+          If(control.x.lessThan(0.5), () => {
+            const combined = createSmoothMinimum(field, sphereDistance, smoothing);
+            field.assign(mix(field, combined, control.y));
+          }).ElseIf(control.x.lessThan(1.5), () => {
+            const carved = createSmoothMaximum(field, sphereDistance.negate(), smoothing);
+            field.assign(mix(field, carved, control.y));
+          });
+        });
+      }
+
+      densityWrite.element(sampleIndex).assign(field);
+    })().compute(layout.sampleCount, [VOXEL_WORKGROUP_SIZE]).setName('Apply voxel SDF stamps');
+
+    const computeSmooth = Fn(() => {
+      const sampleIndex = uint(instanceIndex).toVar('smoothSampleIndex');
+      const samplePosition = createGridPosition(
+        sampleIndex,
+        layout.sampleCountX,
+        layout.sampleCountZ,
+      ).toVar('smoothSamplePosition');
+      const centerDensity = densityRead.element(sampleIndex);
+      const neighborAverage = densityRead.element(createSampleIndex(samplePosition.add(vec3(1, 0, 0)), layout))
+        .add(densityRead.element(createSampleIndex(samplePosition.sub(vec3(1, 0, 0)), layout)))
+        .add(densityRead.element(createSampleIndex(samplePosition.add(vec3(0, 1, 0)), layout)))
+        .add(densityRead.element(createSampleIndex(samplePosition.sub(vec3(0, 1, 0)), layout)))
+        .add(densityRead.element(createSampleIndex(samplePosition.add(vec3(0, 0, 1)), layout)))
+        .add(densityRead.element(createSampleIndex(samplePosition.sub(vec3(0, 0, 1)), layout)))
+        .div(6);
+      const smoothWeight = float(0).toVar('smoothStampWeight');
+
+      for (let stampIndex = 0; stampIndex < layout.maxStamps; stampIndex += 1) {
+        If(uint(stampIndex).lessThan(stampCountUniform), () => {
+          const shape = stampShapes.element(stampIndex);
+          const control = stampControls.element(stampIndex);
+          If(control.x.greaterThan(1.5), () => {
+            const radialWeight = clamp(
+              float(1).sub(distance(samplePosition, shape.xyz).div(shape.w)),
+              0,
+              1,
+            ).mul(control.y);
+            smoothWeight.assign(max(smoothWeight, radialWeight));
+          });
+        });
+      }
+
+      smoothedDensityWrite.element(sampleIndex).assign(mix(
+        centerDensity,
+        neighborAverage,
+        clamp(smoothWeight, 0, 1),
+      ));
+    })().compute(layout.sampleCount, [VOXEL_WORKGROUP_SIZE]).setName('Smooth voxel SDF stamps');
+
     const computeClassify = Fn(() => {
       const linearIndex = uint(instanceIndex).toVar('cellLinearIndex');
-      const cellOrigin = createCellOrigin(linearIndex, layout).toVar('cellOrigin');
+      const cellOrigin = createGridPosition(
+        linearIndex,
+        layout.cellsX,
+        layout.cellsZ,
+      ).toVar('cellOrigin');
       const caseIndex = uint(0).toVar('caseIndex');
 
       for (let cornerIndex = 0; cornerIndex < 8; cornerIndex += 1) {
         const cornerPosition = cellOrigin.add(cornerOffsets.element(cornerIndex).xyz);
-        If(sampleField(cornerPosition).lessThan(0), () => {
+        If(sampleDensity(cornerPosition).lessThan(0), () => {
           caseIndex.addAssign(uint(1 << cornerIndex));
         });
       }
@@ -265,7 +436,11 @@ export class GpuVoxelChunk {
       const classification = classificationRead.element(linearIndex);
       const caseIndex = classification.x;
       const triangleCount = classification.y;
-      const cellOrigin = createCellOrigin(linearIndex, layout).toVar('emitCellOrigin');
+      const cellOrigin = createGridPosition(
+        linearIndex,
+        layout.cellsX,
+        layout.cellsZ,
+      ).toVar('emitCellOrigin');
 
       If(triangleCount.greaterThan(0), () => {
         const vertexBase = atomicAdd(
@@ -287,8 +462,8 @@ export class GpuVoxelChunk {
               const cornerPair = edgeCorners.element(edgeIndex);
               const pointA = cellOrigin.add(cornerOffsets.element(cornerPair.x).xyz);
               const pointB = cellOrigin.add(cornerOffsets.element(cornerPair.y).xyz);
-              const fieldA = sampleField(pointA);
-              const fieldB = sampleField(pointB);
+              const fieldA = sampleDensity(pointA);
+              const fieldB = sampleDensity(pointB);
               const interpolation = clamp(
                 fieldA.negate().div(
                   fieldB.sub(fieldA).add(VOXEL_INTERPOLATION_EPSILON),
@@ -303,9 +478,14 @@ export class GpuVoxelChunk {
                 samplePosition.z.sub(layout.cellsZ * 0.5).mul(layout.voxelSize),
               );
               const outputIndex = vertexBase.add(uint(triangleSlot * 3 + vertexSlot));
+              const normal = normalize(mix(
+                sampleGradient(pointA),
+                sampleGradient(pointB),
+                interpolation,
+              ));
 
               positionWrite.element(outputIndex).assign(vec4(localPosition, 1));
-              normalWrite.element(outputIndex).assign(vec4(sampleNormal(samplePosition), 0));
+              normalWrite.element(outputIndex).assign(vec4(normal, 0));
             }
           });
         }
@@ -342,10 +522,15 @@ export class GpuVoxelChunk {
     this.bounds = bounds;
     this.geometry = geometry;
     this.material = material;
+    this.densityBuffer = densityBuffer;
+    this.smoothedDensityBuffer = smoothedDensityBuffer;
     this.classificationBuffer = classificationBuffer;
     this.positionBuffer = positionBuffer;
     this.normalBuffer = normalBuffer;
     this.drawBuffer = drawBuffer;
+    this.stampShapeBuffer = stampShapeBuffer;
+    this.stampControlBuffer = stampControlBuffer;
+    this.stampCountUniform = stampCountUniform;
     this.lookupAttributes = [
       cornerOffsetAttribute,
       edgeCornerAttribute,
@@ -353,8 +538,49 @@ export class GpuVoxelChunk {
       triangleEdgeAttribute,
     ];
     this.computeInit = computeInit;
+    this.computeDensity = computeDensity;
+    this.computeSmooth = computeSmooth;
     this.computeClassify = computeClassify;
     this.computeEmit = computeEmit;
+  }
+
+  uploadStamps() {
+    if (!this.stampShapeBuffer || !this.stampControlBuffer || !this.stampCountUniform) {
+      return;
+    }
+
+    const shapes = this.stampShapeBuffer.array;
+    const controls = this.stampControlBuffer.array;
+    shapes.fill(0);
+    controls.fill(0);
+
+    const stamps = this.stampStore?.list() ?? [];
+    for (let index = 0; index < stamps.length; index += 1) {
+      const stamp = stamps[index];
+      const offset = index * 4;
+      shapes[offset] = stamp.center[0];
+      shapes[offset + 1] = stamp.center[1];
+      shapes[offset + 2] = stamp.center[2];
+      shapes[offset + 3] = stamp.radius;
+      controls[offset] = VOXEL_STAMP_OPERATION_CODES[stamp.operation];
+      controls[offset + 1] = stamp.strength;
+      controls[offset + 2] = stamp.smoothness;
+    }
+
+    this.stampShapeBuffer.needsUpdate = true;
+    this.stampControlBuffer.needsUpdate = true;
+    this.stampCountUniform.value = stamps.length;
+  }
+
+  mapCellToVoxel(cellX, cellZ) {
+    const world = this.terrainView.cellToWorld(cellX, cellZ);
+    const origin = this.terrainView.cellToWorld(this.layout.originX, this.layout.originZ);
+    const x = (world.x - origin.x) / this.layout.voxelSize + this.layout.cellsX * 0.5;
+    const z = (world.z - origin.z) / this.layout.voxelSize + this.layout.cellsZ * 0.5;
+    if (x < 0 || z < 0 || x > this.layout.cellsX || z > this.layout.cellsZ) {
+      return null;
+    }
+    return Object.freeze({ x, z });
   }
 
   setVisible(visible) {
@@ -389,24 +615,35 @@ export class GpuVoxelChunk {
     this.material?.dispose();
     this.bounds?.geometry.dispose();
     this.bounds?.material.dispose();
+    this.densityBuffer?.dispose?.();
+    this.smoothedDensityBuffer?.dispose?.();
     this.classificationBuffer?.dispose?.();
     this.positionBuffer?.dispose?.();
     this.normalBuffer?.dispose?.();
     this.drawBuffer?.dispose?.();
-    for (const attribute of this.lookupAttributes ?? []) {
-      attribute.dispose?.();
+    this.stampShapeBuffer?.dispose?.();
+    this.stampControlBuffer?.dispose?.();
+    for (const lookupAttribute of this.lookupAttributes ?? []) {
+      lookupAttribute.dispose?.();
     }
     this.group = null;
     this.mesh = null;
     this.bounds = null;
     this.geometry = null;
     this.material = null;
+    this.densityBuffer = null;
+    this.smoothedDensityBuffer = null;
     this.classificationBuffer = null;
     this.positionBuffer = null;
     this.normalBuffer = null;
     this.drawBuffer = null;
+    this.stampShapeBuffer = null;
+    this.stampControlBuffer = null;
+    this.stampCountUniform = null;
     this.lookupAttributes = null;
     this.computeInit = null;
+    this.computeDensity = null;
+    this.computeSmooth = null;
     this.computeClassify = null;
     this.computeEmit = null;
   }
@@ -416,6 +653,8 @@ export class GpuVoxelChunk {
       return;
     }
     this.disposed = true;
+    this.unsubscribeStamps?.();
+    this.unsubscribeStamps = null;
     this.disposeGpuResources();
   }
 }
