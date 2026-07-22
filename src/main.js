@@ -208,7 +208,7 @@ async function startEditor() {
     const rebase = terrainView.updateFloatingOrigin(renderFocus);
     if (rebase) {
       viewModeController.shiftWorld(rebase.shiftX, rebase.shiftZ);
-      objectView.refreshAll();
+      controller.refreshObjects();
       renderFocus = viewModeController.getFocusWorld();
     }
     const canonicalFocus = floatingOrigin.toCanonical(renderFocus.x, renderFocus.z);
