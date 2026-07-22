@@ -42,8 +42,8 @@ export function createVoxelChunkDescriptor(worldLayout, chunkX, chunkZ) {
     maxZ: offsetZ + worldLayout.chunkCellsZ,
     centerWorldX: -worldLayout.mapWorldWidth / 2
       + (offsetX + worldLayout.chunkCellsX * 0.5) * worldLayout.voxelSize,
-    centerWorldZ: worldLayout.mapWorldDepth / 2
-      - (offsetZ + worldLayout.chunkCellsZ * 0.5) * worldLayout.voxelSize,
+    centerWorldZ: -worldLayout.mapWorldDepth / 2
+      + (offsetZ + worldLayout.chunkCellsZ * 0.5) * worldLayout.voxelSize,
   });
 }
 
@@ -93,7 +93,7 @@ export function worldToVoxel(worldLayout, worldX, worldZ) {
       worldLayout.totalCellsX,
     ),
     z: clamp(
-      (worldLayout.mapWorldDepth / 2 - worldZ) / worldLayout.voxelSize,
+      (worldZ + worldLayout.mapWorldDepth / 2) / worldLayout.voxelSize,
       0,
       worldLayout.totalCellsZ,
     ),
