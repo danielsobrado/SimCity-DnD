@@ -14,6 +14,7 @@ import { TileMap } from './editor/TileMap.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
 import { GpuVoxelChunk } from './editor/voxel/GpuVoxelChunk.js';
 import { VoxelPrototypeUi } from './editor/voxel/VoxelPrototypeUi.js';
+import { VoxelStampStore } from './editor/voxel/VoxelStampStore.js';
 
 async function startEditor() {
   const config = loadEditorConfig();
@@ -34,6 +35,10 @@ async function startEditor() {
     height: config.map.height,
   });
   const objectMap = new ObjectMap({ tileMap, objectCatalog: OBJECT_CATALOG });
+  const voxelStampStore = new VoxelStampStore({
+    cells: config.voxelPrototype.cells,
+    maxStamps: config.voxelPrototype.maxStamps,
+  });
 
   const ui = new EditorUi({
     root,
@@ -87,6 +92,7 @@ async function startEditor() {
     brushSizes: config.brush.sizes,
     defaultBrushSize: config.brush.defaultSize,
     terrainConfig: config.terrain,
+    voxelStampStore,
   });
 
   ui.bind(controller);
@@ -102,8 +108,14 @@ async function startEditor() {
     terrainView,
     config: config.voxelPrototype,
     mapConfig: config.map,
+    stampStore: voxelStampStore,
   });
-  const voxelPrototypeUi = new VoxelPrototypeUi({ root, prototype: voxelPrototype });
+  const voxelPrototypeUi = new VoxelPrototypeUi({
+    root,
+    prototype: voxelPrototype,
+    controller,
+    stampStore: voxelStampStore,
+  });
   const voxelStatus = await voxelPrototype.initialize();
   voxelPrototypeUi.render();
   if (voxelStatus.code === 'failed') {
