@@ -83,7 +83,7 @@ function sampleHeight(page, localX, localZ, chunkSize) {
   return north + (south - north) * tz;
 }
 
-function findTrample(worldX, worldZ, boulders, radius, falloff) {
+function findTrample(worldX, worldZ, boulders, defaultRadius, falloff) {
   let strongest = 0;
   let directionX = 1;
   let directionZ = 0;
@@ -91,6 +91,7 @@ function findTrample(worldX, worldZ, boulders, radius, falloff) {
     const deltaX = worldX - boulder.x;
     const deltaZ = worldZ - boulder.z;
     const distance = Math.hypot(deltaX, deltaZ);
+    const radius = boulder.radius ?? defaultRadius;
     const influence = 1 - Math.min(1, Math.max(0, (distance - radius) / Math.max(0.001, falloff)));
     if (influence <= strongest) continue;
     strongest = influence;
@@ -102,12 +103,12 @@ function findTrample(worldX, worldZ, boulders, radius, falloff) {
   return { directionX, directionZ, influence: strongest };
 }
 
-function collectBoulders(objectMap, tileSize) {
+function collectPlacedBoulders(objectMap, tileSize, radius) {
   return objectMap.list()
     .filter((object) => object.definitionKey === 'boulder')
     .map((object) => {
       const world = cellCenterToWorld(object.x, object.z, tileSize);
-      return { x: world.x, z: world.z };
+      return { x: world.x, z: world.z, radius };
     });
 }
 
@@ -141,7 +142,7 @@ export class StylizedGrassSlot {
     this.lastObjectSignature = '';
   }
 
-  update(timestamp, focusChunk, objectSignature) {
+  update(timestamp, focusChunk, objectSignature, streamedRocks) {
     this.time.value = timestamp / 1000;
     const descriptor = this.terrainSlot.descriptor;
     const withinRadius = descriptor && focusChunk
@@ -158,14 +159,14 @@ export class StylizedGrassSlot {
     if (this.lastKey !== descriptor.key
         || this.lastRevision !== this.terrainSlot.pageRevision
         || this.lastObjectSignature !== objectSignature) {
-      this.rebuild(this.terrainSlot.page, descriptor);
+      this.rebuild(this.terrainSlot.page, descriptor, streamedRocks);
       this.lastKey = descriptor.key;
       this.lastRevision = this.terrainSlot.pageRevision;
       this.lastObjectSignature = objectSignature;
     }
   }
 
-  rebuild(page, descriptor) {
+  rebuild(page, descriptor, streamedRocks) {
     const baseAttribute = this.geometry.getAttribute('instanceBase');
     const parameterAttribute = this.geometry.getAttribute('instanceParams');
     const trampleAttribute = this.geometry.getAttribute('instanceTrample');
@@ -173,7 +174,10 @@ export class StylizedGrassSlot {
     const parameters = parameterAttribute.array;
     const trample = trampleAttribute.array;
     const eligible = new Set(this.config.grass.tileIds);
-    const boulders = collectBoulders(this.objectMap, this.tileSize);
+    const boulders = [
+      ...collectPlacedBoulders(this.objectMap, this.tileSize, this.config.rocks.radius),
+      ...streamedRocks,
+    ];
     let count = 0;
 
     for (let localZ = 0; localZ < this.chunkSize; localZ += 1) {
@@ -232,7 +236,6 @@ export class StylizedGrassSlot {
     baseAttribute.needsUpdate = true;
     parameterAttribute.needsUpdate = true;
     trampleAttribute.needsUpdate = true;
-    this.geometry.computeBoundingSphere();
   }
 
   dispose() {
