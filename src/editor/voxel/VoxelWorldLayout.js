@@ -1,10 +1,6 @@
 import { createVoxelChunkLayout } from './VoxelChunkLayout.js';
 import { VOXEL_MAX_RESIDENT_CHUNKS } from './voxelConstants.js';
 
-function clamp(value, minimum, maximum) {
-  return Math.max(minimum, Math.min(maximum, value));
-}
-
 function assertStreamingConfig(config) {
   if (!Number.isInteger(config?.streamRadius) || config.streamRadius < 0) {
     throw new Error('Voxel prototype streamRadius must be a non-negative integer.');
@@ -16,16 +12,17 @@ function assertStreamingConfig(config) {
       `Voxel prototype slotCount must be within 1–${VOXEL_MAX_RESIDENT_CHUNKS}.`,
     );
   }
+  const requiredSlots = (config.streamRadius * 2 + 1) ** 2;
+  if (config.slotCount < requiredSlots) {
+    throw new Error(
+      `Voxel prototype slotCount must be at least ${requiredSlots} for streamRadius ${config.streamRadius}.`,
+    );
+  }
 }
 
 export function createVoxelChunkDescriptor(worldLayout, chunkX, chunkZ) {
-  if (!Number.isInteger(chunkX)
-      || !Number.isInteger(chunkZ)
-      || chunkX < 0
-      || chunkZ < 0
-      || chunkX >= worldLayout.chunksX
-      || chunkZ >= worldLayout.chunksZ) {
-    throw new Error(`Voxel chunk coordinate is outside the world: ${chunkX}:${chunkZ}.`);
+  if (!Number.isSafeInteger(chunkX) || !Number.isSafeInteger(chunkZ)) {
+    throw new Error(`Voxel chunk coordinate is invalid: ${chunkX}:${chunkZ}.`);
   }
 
   const offsetX = chunkX * worldLayout.chunkCellsX;
@@ -40,106 +37,72 @@ export function createVoxelChunkDescriptor(worldLayout, chunkX, chunkZ) {
     maxX: offsetX + worldLayout.chunkCellsX,
     minZ: offsetZ,
     maxZ: offsetZ + worldLayout.chunkCellsZ,
-    centerWorldX: -worldLayout.mapWorldWidth / 2
-      + (offsetX + worldLayout.chunkCellsX * 0.5) * worldLayout.voxelSize,
-    centerWorldZ: -worldLayout.mapWorldDepth / 2
-      + (offsetZ + worldLayout.chunkCellsZ * 0.5) * worldLayout.voxelSize,
+    centerWorldX: (offsetX + worldLayout.chunkCellsX * 0.5) * worldLayout.voxelSize,
+    centerWorldZ: -(offsetZ + worldLayout.chunkCellsZ * 0.5) * worldLayout.voxelSize,
   });
 }
 
 export function createVoxelWorldLayout(config, mapConfig) {
   assertStreamingConfig(config);
   const chunkLayout = createVoxelChunkLayout(config, mapConfig);
-  const mapWorldWidth = mapConfig.width * mapConfig.tileSize;
-  const mapWorldDepth = mapConfig.height * mapConfig.tileSize;
-  const chunksX = Math.ceil(mapWorldWidth / chunkLayout.chunkWorldWidth);
-  const chunksZ = Math.ceil(mapWorldDepth / chunkLayout.chunkWorldDepth);
-  const worldChunkCount = chunksX * chunksZ;
-  const requestedWindow = (config.streamRadius * 2 + 1) ** 2;
-  const requiredSlots = Math.min(requestedWindow, worldChunkCount);
-  if (config.slotCount < requiredSlots) {
-    throw new Error(
-      `Voxel prototype slotCount must be at least ${requiredSlots} for streamRadius ${config.streamRadius}.`,
-    );
-  }
-
   return Object.freeze({
     ...chunkLayout,
-    chunksX,
-    chunksZ,
-    worldChunkCount,
+    unboundedXZ: true,
+    chunksX: Number.POSITIVE_INFINITY,
+    chunksZ: Number.POSITIVE_INFINITY,
+    worldChunkCount: Number.POSITIVE_INFINITY,
     slotCount: config.slotCount,
     streamRadius: config.streamRadius,
     chunkCellsX: chunkLayout.cellsX,
     chunkCellsY: chunkLayout.cellsY,
     chunkCellsZ: chunkLayout.cellsZ,
-    totalCellsX: chunksX * chunkLayout.cellsX,
+    totalCellsX: Number.POSITIVE_INFINITY,
     totalCellsY: chunkLayout.cellsY,
-    totalCellsZ: chunksZ * chunkLayout.cellsZ,
-    mapWorldWidth,
-    mapWorldDepth,
-    worldWidth: chunksX * chunkLayout.chunkWorldWidth,
-    worldDepth: chunksZ * chunkLayout.chunkWorldDepth,
-    originX: (mapConfig.width - 1) / 2,
-    originZ: (mapConfig.height - 1) / 2,
+    totalCellsZ: Number.POSITIVE_INFINITY,
+    worldWidth: Number.POSITIVE_INFINITY,
+    worldDepth: Number.POSITIVE_INFINITY,
+    originX: 0,
+    originZ: 0,
   });
 }
 
 export function worldToVoxel(worldLayout, worldX, worldZ) {
+  if (!Number.isFinite(worldX) || !Number.isFinite(worldZ)) {
+    throw new Error('Voxel world position must be finite.');
+  }
   return Object.freeze({
-    x: clamp(
-      (worldX + worldLayout.mapWorldWidth / 2) / worldLayout.voxelSize,
-      0,
-      worldLayout.totalCellsX,
-    ),
-    z: clamp(
-      (worldZ + worldLayout.mapWorldDepth / 2) / worldLayout.voxelSize,
-      0,
-      worldLayout.totalCellsZ,
-    ),
+    x: worldX / worldLayout.voxelSize,
+    z: -worldZ / worldLayout.voxelSize,
   });
 }
 
 export function worldToVoxelChunk(worldLayout, worldX, worldZ) {
   const voxel = worldToVoxel(worldLayout, worldX, worldZ);
   return Object.freeze({
-    chunkX: clamp(
-      Math.floor(voxel.x / worldLayout.chunkCellsX),
-      0,
-      worldLayout.chunksX - 1,
-    ),
-    chunkZ: clamp(
-      Math.floor(voxel.z / worldLayout.chunkCellsZ),
-      0,
-      worldLayout.chunksZ - 1,
-    ),
+    chunkX: Math.floor(voxel.x / worldLayout.chunkCellsX),
+    chunkZ: Math.floor(voxel.z / worldLayout.chunkCellsZ),
   });
 }
 
 export function selectResidentChunkDescriptors(worldLayout, focusWorld) {
   const focusChunk = worldToVoxelChunk(worldLayout, focusWorld.x, focusWorld.z);
   const descriptors = [];
-  for (let chunkZ = 0; chunkZ < worldLayout.chunksZ; chunkZ += 1) {
-    for (let chunkX = 0; chunkX < worldLayout.chunksX; chunkX += 1) {
-      descriptors.push(createVoxelChunkDescriptor(worldLayout, chunkX, chunkZ));
+  for (let offsetZ = -worldLayout.streamRadius; offsetZ <= worldLayout.streamRadius; offsetZ += 1) {
+    for (let offsetX = -worldLayout.streamRadius; offsetX <= worldLayout.streamRadius; offsetX += 1) {
+      descriptors.push(createVoxelChunkDescriptor(
+        worldLayout,
+        focusChunk.chunkX + offsetX,
+        focusChunk.chunkZ + offsetZ,
+      ));
     }
   }
 
   descriptors.sort((left, right) => {
-    const leftChebyshev = Math.max(
-      Math.abs(left.chunkX - focusChunk.chunkX),
-      Math.abs(left.chunkZ - focusChunk.chunkZ),
-    );
-    const rightChebyshev = Math.max(
-      Math.abs(right.chunkX - focusChunk.chunkX),
-      Math.abs(right.chunkZ - focusChunk.chunkZ),
-    );
     const leftDistance = (left.chunkX - focusChunk.chunkX) ** 2
       + (left.chunkZ - focusChunk.chunkZ) ** 2;
     const rightDistance = (right.chunkX - focusChunk.chunkX) ** 2
       + (right.chunkZ - focusChunk.chunkZ) ** 2;
-    return leftChebyshev - rightChebyshev
-      || leftDistance - rightDistance
+    return leftDistance - rightDistance
       || left.chunkZ - right.chunkZ
       || left.chunkX - right.chunkX;
   });
