@@ -78,6 +78,10 @@ export function createVoxelWorldLayout(config, mapConfig) {
     totalCellsZ: chunksZ * chunkLayout.cellsZ,
     mapWorldWidth,
     mapWorldDepth,
+    worldWidth: chunksX * chunkLayout.chunkWorldWidth,
+    worldDepth: chunksZ * chunkLayout.chunkWorldDepth,
+    originX: (mapConfig.width - 1) / 2,
+    originZ: (mapConfig.height - 1) / 2,
   });
 }
 
@@ -117,21 +121,25 @@ export function selectResidentChunkDescriptors(worldLayout, focusWorld) {
   const descriptors = [];
   for (let chunkZ = 0; chunkZ < worldLayout.chunksZ; chunkZ += 1) {
     for (let chunkX = 0; chunkX < worldLayout.chunksX; chunkX += 1) {
-      const deltaX = chunkX - focusChunk.chunkX;
-      const deltaZ = chunkZ - focusChunk.chunkZ;
-      const chebyshev = Math.max(Math.abs(deltaX), Math.abs(deltaZ));
-      if (chebyshev <= worldLayout.streamRadius) {
-        descriptors.push(createVoxelChunkDescriptor(worldLayout, chunkX, chunkZ));
-      }
+      descriptors.push(createVoxelChunkDescriptor(worldLayout, chunkX, chunkZ));
     }
   }
 
   descriptors.sort((left, right) => {
+    const leftChebyshev = Math.max(
+      Math.abs(left.chunkX - focusChunk.chunkX),
+      Math.abs(left.chunkZ - focusChunk.chunkZ),
+    );
+    const rightChebyshev = Math.max(
+      Math.abs(right.chunkX - focusChunk.chunkX),
+      Math.abs(right.chunkZ - focusChunk.chunkZ),
+    );
     const leftDistance = (left.chunkX - focusChunk.chunkX) ** 2
       + (left.chunkZ - focusChunk.chunkZ) ** 2;
     const rightDistance = (right.chunkX - focusChunk.chunkX) ** 2
       + (right.chunkZ - focusChunk.chunkZ) ** 2;
-    return leftDistance - rightDistance
+    return leftChebyshev - rightChebyshev
+      || leftDistance - rightDistance
       || left.chunkZ - right.chunkZ
       || left.chunkX - right.chunkX;
   });
