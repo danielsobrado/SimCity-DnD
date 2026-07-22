@@ -1,4 +1,5 @@
 import './styles.css';
+import './editor/performance/frameRateDisplay.css';
 import { loadEditorConfig } from './config/loadEditorConfig.js';
 import { installObjectAssets } from './editor/assets/installObjectAssets.js';
 import { EditorCamera } from './editor/EditorCamera.js';
@@ -8,6 +9,9 @@ import { ObjectMap } from './editor/ObjectMap.js';
 import { ObjectView } from './editor/ObjectView.js';
 import { OBJECT_CATALOG } from './editor/objectCatalog.js';
 import { OBJECT_RENDER_CATALOG } from './editor/objectRenderCatalog.js';
+import { FrameRateDisplay } from './editor/performance/FrameRateDisplay.js';
+import { FrameRateMeter } from './editor/performance/FrameRateMeter.js';
+import { FRAME_RATE_DISPLAY_INTERVAL_MS } from './editor/performance/frameRateConstants.js';
 import { TerrainAwareEditorController } from './editor/TerrainAwareEditorController.js';
 import { TerrainView } from './editor/TerrainView.js';
 import { TileMap } from './editor/TileMap.js';
@@ -56,6 +60,8 @@ async function startEditor() {
     objectCatalog: OBJECT_CATALOG,
     objectMap,
   });
+  const frameRateDisplay = new FrameRateDisplay({ root });
+  const frameRateMeter = new FrameRateMeter();
 
   const terrainView = new TerrainView({
     container: ui.viewport,
@@ -136,10 +142,29 @@ async function startEditor() {
   resizeObserver.observe(ui.viewport);
 
   let active = true;
-  terrainView.setAnimationLoop(() => {
+  let nextFrameRateDisplayAt = 0;
+  const onVisibilityChange = () => {
+    if (!document.hidden) {
+      return;
+    }
+    frameRateMeter.reset();
+    frameRateDisplay.update(null);
+    nextFrameRateDisplayAt = 0;
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+
+  terrainView.setAnimationLoop((timestamp) => {
     if (!active) {
       return;
     }
+
+    const frameTimestamp = Number.isFinite(timestamp) ? timestamp : performance.now();
+    const averageFps = frameRateMeter.record(frameTimestamp);
+    if (frameTimestamp >= nextFrameRateDisplayAt) {
+      frameRateDisplay.update(averageFps);
+      nextFrameRateDisplayAt = frameTimestamp + FRAME_RATE_DISPLAY_INTERVAL_MS;
+    }
+
     editorCamera.update();
     voxelPrototype.update();
     terrainView.render(editorCamera.camera);
@@ -147,6 +172,7 @@ async function startEditor() {
 
   window.addEventListener('pagehide', () => {
     active = false;
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     resizeObserver.disconnect();
     voxelPrototypeUi.dispose();
     voxelPrototype.dispose();
@@ -154,6 +180,7 @@ async function startEditor() {
     controller.dispose();
     editorCamera.dispose();
     objectView.dispose();
+    frameRateDisplay.dispose();
     terrainView.dispose();
   }, { once: true });
 }

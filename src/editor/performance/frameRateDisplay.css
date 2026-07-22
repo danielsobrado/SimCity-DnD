@@ -1,0 +1,35 @@
+.sidebar-title-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fps-average {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+  align-items: baseline;
+  padding: 4px 7px;
+  border: 1px solid #405247;
+  border-radius: 6px;
+  background: #111713;
+  color: #93a397;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.fps-average__value {
+  min-width: 4ch;
+  color: #d4b65e;
+  font-size: 13px;
+  font-weight: 750;
+  text-align: right;
+}
+
+.fps-average__label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

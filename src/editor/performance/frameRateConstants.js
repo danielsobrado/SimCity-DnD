@@ -1,0 +1,4 @@
+export const FRAME_RATE_WINDOW_MS = 2000;
+export const FRAME_RATE_MIN_SAMPLE_MS = 500;
+export const FRAME_RATE_DISPLAY_INTERVAL_MS = 250;
+export const FRAME_RATE_DECIMAL_PLACES = 1;
