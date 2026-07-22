@@ -45,6 +45,14 @@ test('reuses a fixed slot pool and regenerates only changed assignments or stamp
   assert.match(source, /Array\.from\([\s\S]*layout\.slotCount/);
 });
 
+test('serializes reassignment until active GPU rebuilds finish', async () => {
+  const [, source] = await readSources();
+
+  assert.match(source, /pendingFocusWorld/);
+  assert.match(source, /slot\.chunk\.getStatus\(\)\.rebuilding/);
+  assert.match(source, /this\.pendingFocusWorld && !rebuilding/);
+});
+
 test('does not introduce GPU-to-CPU readbacks', async () => {
   const sources = (await readSources()).join('\n');
 
