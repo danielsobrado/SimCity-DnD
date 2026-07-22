@@ -27,8 +27,8 @@ class FakeChunkWorker {
   }
 }
 
-function createStore() {
-  const generator = new ProceduralWorldGenerator({ seed: 73 });
+function createStore(seed = 73) {
+  const generator = new ProceduralWorldGenerator({ seed });
   const chunkWorker = new FakeChunkWorker({ chunkSize: 4, generator });
   return {
     chunkWorker,
@@ -77,6 +77,47 @@ test('sparse overrides are applied after worker generation', async () => {
   assert.equal(page.tiles[5], 9);
   assert.equal(page.heights[12], 18.5);
   store.dispose();
+});
+
+test('dense modified chunks use binary encoding and round trip', () => {
+  const { store } = createStore();
+  for (let z = 0; z < 4; z += 1) {
+    for (let x = 0; x < 4; x += 1) {
+      store.setTile(x, z, 9, { silent: true });
+    }
+  }
+  for (let z = 0; z <= 4; z += 1) {
+    for (let x = 0; x <= 4; x += 1) {
+      store.setHeight(x, z, 100 + z * 5 + x, { silent: true });
+    }
+  }
+
+  const document = store.toDocument();
+  assert.equal(document.chunks.length, 1);
+  assert.equal(document.chunks[0].encoding, 'base64-le-v1');
+  assert.equal(typeof document.chunks[0].tileData, 'string');
+  assert.equal(typeof document.chunks[0].heightData, 'string');
+  assert.equal(document.chunks[0].tiles, undefined);
+
+  const { store: restored } = createStore();
+  restored.loadDocument(document);
+  assert.equal(restored.getTile(3, 3), 9);
+  assert.equal(restored.getHeight(4, 4), 124);
+  store.dispose();
+  restored.dispose();
+});
+
+test('native documents reject a mismatched procedural generator', () => {
+  const { store } = createStore();
+  store.setTile(0, 0, 9);
+  const document = store.toDocument();
+  const { store: mismatched } = createStore(74);
+  assert.throws(
+    () => mismatched.loadDocument(document),
+    /generator seed does not match/,
+  );
+  store.dispose();
+  mismatched.dispose();
 });
 
 test('legacy sparse height documents keep implicit vertices flat', () => {
