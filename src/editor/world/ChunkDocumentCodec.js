@@ -82,7 +82,8 @@ function decodeHeights(encoded, vertexCount) {
 export function encodeChunkDocument(chunk, chunkSize) {
   const cellCount = chunkSize * chunkSize;
   const vertexCount = (chunkSize + 1) * (chunkSize + 1);
-  const denseTiles = (chunk.tiles?.length ?? 0) > cellCount * 0.5;
+  const containsReservedTile = (chunk.tiles ?? []).some(([, value]) => value === TILE_SENTINEL);
+  const denseTiles = !containsReservedTile && (chunk.tiles?.length ?? 0) > cellCount * 0.5;
   const denseHeights = (chunk.heights?.length ?? 0) > vertexCount * 0.5;
   return {
     x: chunk.x,
