@@ -43,34 +43,38 @@ function stamp(center, radius = 2.5) {
   };
 }
 
-test('derives a map-scale voxel world and fixed resident slot count', () => {
+test('derives an unbounded voxel world with a fixed resident slot count', () => {
   const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
 
-  assert.deepEqual([layout.chunksX, layout.chunksZ], [29, 29]);
-  assert.deepEqual([layout.totalCellsX, layout.totalCellsY, layout.totalCellsZ], [696, 16, 696]);
-  assert.equal(layout.worldChunkCount, 841);
+  assert.equal(layout.unboundedXZ, true);
+  assert.equal(layout.chunksX, Number.POSITIVE_INFINITY);
+  assert.equal(layout.chunksZ, Number.POSITIVE_INFINITY);
+  assert.equal(layout.totalCellsX, Number.POSITIVE_INFINITY);
+  assert.equal(layout.totalCellsY, 16);
+  assert.equal(layout.totalCellsZ, Number.POSITIVE_INFINITY);
+  assert.equal(layout.worldChunkCount, Number.POSITIVE_INFINITY);
   assert.equal(layout.slotCount, 9);
   assert.equal(layout.sampleHalo, 1);
 });
 
-test('selects the nearest deterministic chunk window around the camera', () => {
+test('selects the nearest deterministic chunk window around the world origin', () => {
   const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
   const selection = selectResidentChunkDescriptors(layout, { x: 0, z: 0 });
 
-  assert.deepEqual(selection.focusChunk, { chunkX: 14, chunkZ: 14 });
+  assert.deepEqual(selection.focusChunk, { chunkX: 0, chunkZ: 0 });
   assert.equal(selection.descriptors.length, 9);
-  assert.equal(selection.descriptors[0].key, '14:14');
+  assert.equal(selection.descriptors[0].key, '0:0');
   assert.deepEqual(
     selection.descriptors.map((descriptor) => descriptor.key),
-    ['14:14', '14:13', '13:14', '15:14', '14:15', '13:13', '15:13', '13:15', '15:15'],
+    ['0:0', '0:-1', '-1:0', '1:0', '0:1', '-1:-1', '1:-1', '-1:1', '1:1'],
   );
 });
 
-test('keeps the slot pool full at map edges', () => {
+test('keeps the slot pool full for distant negative coordinates', () => {
   const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
-  const selection = selectResidentChunkDescriptors(layout, { x: -512, z: 512 });
+  const selection = selectResidentChunkDescriptors(layout, { x: -1080, z: 720 });
 
-  assert.deepEqual(selection.focusChunk, { chunkX: 0, chunkZ: 28 });
+  assert.deepEqual(selection.focusChunk, { chunkX: -30, chunkZ: -20 });
   assert.equal(selection.descriptors.length, 9);
   assert.equal(new Set(selection.descriptors.map((descriptor) => descriptor.key)).size, 9);
 });
@@ -93,25 +97,26 @@ test('adjacent chunks share scalar samples and world-space border positions', ()
     toGlobalVoxelSample(far, { x: 10, y: 8, z: 0 }),
   );
   assert.equal(left.centerWorldX + halfWidth, right.centerWorldX - halfWidth);
-  assert.equal(near.centerWorldZ + halfDepth, far.centerWorldZ - halfDepth);
+  assert.equal(near.centerWorldZ - halfDepth, far.centerWorldZ + halfDepth);
 });
 
 test('filters a border-crossing stamp into both affected chunks with local centers', () => {
   const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
-  const left = createVoxelChunkDescriptor(layout, 0, 0);
-  const right = createVoxelChunkDescriptor(layout, 1, 0);
+  const left = createVoxelChunkDescriptor(layout, -1, 0);
+  const right = createVoxelChunkDescriptor(layout, 0, 0);
   const distant = createVoxelChunkDescriptor(layout, 3, 3);
-  const stamps = [stamp([24, 7, 12], 3)];
+  const stamps = [stamp([0, 7, 12], 3)];
 
   assert.deepEqual(selectVoxelStampsForChunk(stamps, left, layout)[0].center, [24, 7, 12]);
   assert.deepEqual(selectVoxelStampsForChunk(stamps, right, layout)[0].center, [0, 7, 12]);
   assert.equal(selectVoxelStampsForChunk(stamps, distant, layout).length, 0);
 });
 
-test('maps world positions to stable voxel chunk coordinates', () => {
+test('maps world positions to stable positive and negative voxel chunks', () => {
   const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
-  assert.deepEqual(worldToVoxelChunk(layout, 0, 0), { chunkX: 14, chunkZ: 14 });
-  assert.deepEqual(worldToVoxelChunk(layout, -512, 512), { chunkX: 0, chunkZ: 28 });
+  assert.deepEqual(worldToVoxelChunk(layout, 0, 0), { chunkX: 0, chunkZ: 0 });
+  assert.deepEqual(worldToVoxelChunk(layout, -512, 512), { chunkX: -15, chunkZ: -15 });
+  assert.deepEqual(worldToVoxelChunk(layout, 512, -512), { chunkX: 14, chunkZ: 14 });
 });
 
 test('requires enough slots for the configured streaming radius', () => {
