@@ -1,14 +1,18 @@
 import * as THREE from 'three/webgpu';
 import {
+  abs,
   attribute,
+  cameraPosition,
   clamp,
   cos,
   dot,
   float,
   max,
   mix,
+  normalize,
   oneMinus,
   positionLocal,
+  positionWorld,
   pow,
   sin,
   texture,
@@ -27,6 +31,7 @@ export function createStylizedGrassMaterial({
   chunkCenter,
   chunkWorldSize,
   time,
+  sunDirection,
   config,
 }) {
   const base = attribute('instanceBase', 'vec3');
@@ -78,6 +83,7 @@ export function createStylizedGrassMaterial({
 
   const finalXZ = base.xz.add(widthOffset).add(windOffset).add(rockOffset);
   const finalPosition = vec3(finalXZ.x, base.y.add(bladeHeight), finalXZ.y);
+  const worldPosition = positionWorld;
 
   const gradient = pow(clamp(
     normalizedHeight.sub(config.color.gradientStart)
@@ -101,10 +107,21 @@ export function createStylizedGrassMaterial({
   const bladeColor = mix(variedColor, dirtColor, dirt.mul(config.dirt.bladeBlend))
     .mul(config.color.brightness);
 
+  const viewDirection = normalize(cameraPosition.sub(worldPosition));
+  const lightDirection = normalize(sunDirection);
+  const backlit = pow(max(dot(viewDirection, lightDirection.negate()), 0), config.translucency.power);
+  const tipMask = mix(float(1), normalizedHeight.mul(shrink), config.translucency.tipBias);
+  const edgeMask = oneMinus(abs(dot(vec3(0, 1, 0), lightDirection)));
+  const translucency = colorNode(config.translucency.color)
+    .mul(config.translucency.strength)
+    .mul(backlit)
+    .mul(tipMask)
+    .mul(edgeMask);
+
   const material = new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide });
   material.positionNode = finalPosition;
   material.normalNode = vec3(0, 1, 0);
-  material.colorNode = bladeColor;
+  material.colorNode = bladeColor.add(translucency);
   material.depthWrite = true;
   material.transparent = false;
   return material;

@@ -3,7 +3,8 @@
 ## stylized-components
 
 The stylized grass, dirt/path blending, flower palette, pine foliage, bark treatment,
-rock-trampling behavior, sky palette, and related assets are adapted from:
+rock-trampling behavior, sky palette, anime water surface, blade translucency, and
+related assets are adapted from:
 
 - Project: `cortiz2894/stylized-components`
 - Author: Christian Ortiz (Cortiz)

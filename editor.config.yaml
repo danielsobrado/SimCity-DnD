@@ -62,19 +62,22 @@ stylizedSurface:
       gradient: /assets/textures/flower3/flowersGradient.png
   grass:
     residentRadius: 1
-    bladesPerCell: 6
+    # Upstream GrassField demo uses 300 blades/u² on a ~15×15 patch.
+    # With tileSize 2, bladesPerCell ≈ density × 4. Streamed chunks can't
+    # afford 300/u², so this targets ~12/u² (48/cell) with matching blade size.
+    bladesPerCell: 48
     tileIds: [0, 1, 4]
-    minWidth: 0.055
-    maxWidth: 0.085
-    minLength: 0.28
-    maxLength: 0.55
+    minWidth: 0.06
+    maxWidth: 0.06
+    minLength: 0.15
+    maxLength: 0.25
   wind:
     direction: [1, 0]
-    strength: 0.3
-    speed: 1.2
-    frequency: 0.4
-    turbulence: 0.3
-    lean: 0.5
+    strength: 0.1
+    speed: 1.3
+    frequency: 0.47
+    turbulence: 0.04
+    lean: 0.05
   color:
     bottom: '#4f7c13'
     top: '#79a01c'
@@ -82,6 +85,11 @@ stylizedSurface:
     gradientStart: 0.15
     gradientEnd: 1.0
     gradientPower: 1.6
+  translucency:
+    color: '#c1e54d'
+    strength: 2.5
+    power: 6.4
+    tipBias: 1.0
   patch:
     lush: '#6f9a2a'
     dry: '#b8a94e'
@@ -91,35 +99,36 @@ stylizedSurface:
   dirt:
     color: '#ac956c'
     scale: 0.4
-    coverage: 0.27
+    coverage: 0.12
     softness: 0.06
     warp: 0.2
-    bladeCut: 1.0
-    bladeBlend: 0.8
+    bladeCut: 0.85
+    bladeBlend: 0.65
   path:
     tileId: 3
     blendCells: 2.5
   rocks:
     enabled: true
     residentRadius: 1
-    perChunk: 6
+    perChunk: 5
     tileIds: [0, 1, 5]
     minScale: 0.65
-    maxScale: 1.35
-    radius: 1.5
+    maxScale: 1.2
+    radius: 1.8
     falloff: 0.7
     flatten: 0.85
     bend: 0.25
   flowers:
     enabled: true
     residentRadius: 1
-    perChunk: 180
-    minSize: 0.35
-    maxSize: 0.65
-    dirtMax: 0.15
+    perChunk: 480
+    tileIds: [0, 1, 4]
+    minSize: 0.45
+    maxSize: 0.6
+    dirtMax: 0.2
     windStrength: 0.15
     windLean: 0.25
-    bendAmplitude: 0.12
+    bendAmplitude: 0.2
     bendFrequency: 3.0
     brightness: 1.0
     colorR: '#b084c7'
@@ -129,10 +138,11 @@ stylizedSurface:
   trees:
     enabled: true
     residentRadius: 1
-    perChunk: 14
+    perChunk: 12
+    clearRadius: 3.5
     tileIds: [1]
-    minScale: 0.8
-    maxScale: 1.2
+    minScale: 0.85
+    maxScale: 1.15
     leafBottom: '#1c3b23'
     leafTop: '#5c8338'
     brightness: 1.05
@@ -150,6 +160,28 @@ stylizedSurface:
     barkBrightness: 1.55
     barkAoStrength: 0.45
     barkRelief: 1.0
+  water:
+    enabled: true
+    tileId: 2
+    heightOffset: 0.12
+    scale: 0.23
+    cellSmoothness: 0.46
+    edgeThreshold: 0.09
+    edgeSoftness: 0.10
+    flowX: 0.07
+    flowZ: -0.23
+    cellSpeed: 0.55
+    noiseScale: 0.87
+    noiseFlowSpeed: 0.11
+    distortAmount: 0.26
+    deepColor: '#27a3d8'
+    midColor: '#59c0e8'
+    midPos: 0.31
+    highlightColor: '#ffffff'
+    opacity: 1.0
+    deepOpacity: 0.37
+    fadeDistance: 275
+    fadeStrength: 1.3
   ground:
     variationColor: '#c4a77d'
     variationScale: 1.24

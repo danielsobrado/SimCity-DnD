@@ -19,7 +19,7 @@ function colorNode(value) {
   return vec3(color.r, color.g, color.b);
 }
 
-export function createStylizedLeafMaterial({ source, bounds, time, config }) {
+export function createStylizedLeafMaterial({ source, leafMap, bounds, time, config }) {
   const normalizedHeight = clamp(
     positionLocal.y.sub(bounds.minY).div(Math.max(0.001, bounds.maxY - bounds.minY)),
     0,
@@ -65,9 +65,10 @@ export function createStylizedLeafMaterial({ source, bounds, time, config }) {
   const material = new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide });
   material.positionNode = finalPosition;
   material.colorNode = leafColor;
-  if (source.map) {
-    material.opacityNode = texture(source.map, uv()).a;
-    material.alphaTest = source.alphaTest > 0 ? source.alphaTest : 0.6;
+  const map = leafMap ?? source?.map ?? null;
+  if (map) {
+    material.opacityNode = texture(map, uv()).a;
+    material.alphaTest = source?.alphaTest > 0 ? source.alphaTest : 0.5;
   }
   material.transparent = false;
   return material;

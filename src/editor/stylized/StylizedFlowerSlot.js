@@ -1,6 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { uniform } from 'three/tsl';
+import { PerfCounters } from '../performance/qa/PerfCounters.js';
 import { createStylizedFlowerMaterial } from './StylizedFlowerMaterial.js';
+import { sampleHeight, scatterRandom01 } from './scatterMath.js';
 
 function createCrossGeometry(maxInstances) {
   const positions = new Float32Array([
@@ -26,35 +28,6 @@ function createCrossGeometry(maxInstances) {
   );
   geometry.instanceCount = 0;
   return geometry;
-}
-
-function hash32(value) {
-  let result = value | 0;
-  result = Math.imul(result ^ (result >>> 16), 0x45d9f3b);
-  result = Math.imul(result ^ (result >>> 16), 0x45d9f3b);
-  return (result ^ (result >>> 16)) >>> 0;
-}
-
-function random01(chunkX, chunkZ, index, channel) {
-  const seed = Math.imul(chunkX, 73856093)
-    ^ Math.imul(chunkZ, 19349663)
-    ^ Math.imul(index + 1, 83492791)
-    ^ Math.imul(channel + 1, 1597334677);
-  return hash32(seed) / 0xffffffff;
-}
-
-function sampleHeight(page, localX, localZ, chunkSize) {
-  const x0 = Math.floor(localX);
-  const z0 = Math.floor(localZ);
-  const x1 = Math.min(chunkSize, x0 + 1);
-  const z1 = Math.min(chunkSize, z0 + 1);
-  const tx = localX - x0;
-  const tz = localZ - z0;
-  const vertexSize = chunkSize + 1;
-  const value = (x, z) => page.heights[z * vertexSize + x];
-  const north = value(x0, z0) + (value(x1, z0) - value(x0, z0)) * tx;
-  const south = value(x0, z1) + (value(x1, z1) - value(x0, z1)) * tx;
-  return north + (south - north) * tz;
 }
 
 export class StylizedFlowerSlot {
@@ -110,16 +83,17 @@ export class StylizedFlowerSlot {
   }
 
   rebuild(page, descriptor) {
+    PerfCounters.inc('flowerRebuilds');
     const baseAttribute = this.geometry.getAttribute('instanceBase');
     const parameterAttribute = this.geometry.getAttribute('instanceParams');
     const base = baseAttribute.array;
     const parameters = parameterAttribute.array;
-    const eligible = new Set(this.config.grass.tileIds);
+    const eligible = new Set(this.config.flowers.tileIds);
     let count = 0;
 
     for (let index = this.variantIndex; index < this.config.flowers.perChunk; index += 2) {
-      const localX = random01(descriptor.chunkX, descriptor.chunkZ, index, 0) * this.chunkSize;
-      const localZ = random01(descriptor.chunkX, descriptor.chunkZ, index, 1) * this.chunkSize;
+      const localX = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 0) * this.chunkSize;
+      const localZ = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 1) * this.chunkSize;
       const cellX = Math.min(this.chunkSize - 1, Math.floor(localX));
       const cellZ = Math.min(this.chunkSize - 1, Math.floor(localZ));
       const cellIndex = cellZ * this.chunkSize + cellX;
@@ -132,11 +106,11 @@ export class StylizedFlowerSlot {
       base[baseOffset + 1] = height;
       base[baseOffset + 2] = localWorldZ;
       const parameterOffset = count * 4;
-      parameters[parameterOffset] = random01(descriptor.chunkX, descriptor.chunkZ, index, 2) * Math.PI * 2;
+      parameters[parameterOffset] = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 2) * Math.PI * 2;
       parameters[parameterOffset + 1] = this.config.flowers.minSize
-        + random01(descriptor.chunkX, descriptor.chunkZ, index, 3)
+        + scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 3)
           * (this.config.flowers.maxSize - this.config.flowers.minSize);
-      parameters[parameterOffset + 2] = random01(descriptor.chunkX, descriptor.chunkZ, index, 4);
+      parameters[parameterOffset + 2] = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 4);
       parameters[parameterOffset + 3] = this.variantIndex;
       count += 1;
     }

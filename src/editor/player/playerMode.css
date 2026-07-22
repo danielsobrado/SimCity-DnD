@@ -86,3 +86,12 @@
 [data-view-mode='player'] .toast {
   display: none;
 }
+
+[data-awaiting-spawn='true'] [data-role='viewport'] {
+  cursor: crosshair;
+}
+
+[data-view-mode='player-spawn'] .statusbar,
+[data-view-mode='player-spawn'] .toast {
+  display: none;
+}

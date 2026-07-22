@@ -1,83 +1,24 @@
 import * as THREE from 'three/webgpu';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { uniform } from 'three/tsl';
+import { PerfCounters } from '../performance/qa/PerfCounters.js';
 import { cellCenterToWorld, parseChunkKey } from '../world/WorldCoordinates.js';
+import { materialList, normalizeBaseUrl, resolveAssetUrl } from '../assets/assetUrl.js';
+import {
+  extractPrototypeParts,
+  findPrototypeRoots,
+} from './StylizedTreePrototypes.js';
 import {
   createStylizedLeafMaterial,
   createStylizedTrunkMaterial,
 } from './StylizedTreeMaterials.js';
-
-function normalizeBaseUrl(baseUrl) {
-  const value = typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl : '/';
-  return value.endsWith('/') ? value : `${value}/`;
-}
-
-function hash32(value) {
-  let result = value | 0;
-  result = Math.imul(result ^ (result >>> 16), 0x45d9f3b);
-  result = Math.imul(result ^ (result >>> 16), 0x45d9f3b);
-  return (result ^ (result >>> 16)) >>> 0;
-}
-
-function random01(chunkX, chunkZ, index, channel) {
-  const seed = Math.imul(chunkX, 73856093)
-    ^ Math.imul(chunkZ, 19349663)
-    ^ Math.imul(index + 1, 83492791)
-    ^ Math.imul(channel + 1, 1597334677);
-  return hash32(seed) / 0xffffffff;
-}
-
-function materialList(mesh) {
-  return Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-}
-
-function meshKind(mesh, config) {
-  const names = materialList(mesh).map((material) => material?.name);
-  if (names.includes(config.assets.leafMaterial)) return 'leaf';
-  if (names.includes(config.assets.trunkMaterial)) return 'trunk';
-  return null;
-}
-
-function subtreeKinds(root, config) {
-  let hasLeaf = false;
-  let hasTrunk = false;
-  root.traverse((node) => {
-    if (!node.isMesh) return;
-    const kind = meshKind(node, config);
-    hasLeaf ||= kind === 'leaf';
-    hasTrunk ||= kind === 'trunk';
-  });
-  return { hasLeaf, hasTrunk };
-}
-
-function findPrototypeRoots(root, config) {
-  const kinds = subtreeKinds(root, config);
-  if (!kinds.hasLeaf || !kinds.hasTrunk) return [];
-  const nested = root.children.flatMap((child) => findPrototypeRoots(child, config));
-  return nested.length > 0 ? nested : [root];
-}
-
-function cloneGeometryRelativeToRoot(mesh, root) {
-  const inverseRoot = root.matrixWorld.clone().invert();
-  const relative = inverseRoot.multiply(mesh.matrixWorld);
-  const geometry = mesh.geometry.clone();
-  geometry.applyMatrix4(relative);
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
-  geometry.computeVertexNormals();
-  return geometry;
-}
+import {
+  instanceCapacity,
+  overlaps,
+  scatterRandom01,
+} from './scatterMath.js';
 
 function firstMaterial(mesh, name) {
   return materialList(mesh).find((material) => material?.name === name) ?? materialList(mesh)[0];
-}
-
-function disposeScene(scene) {
-  scene.traverse((node) => {
-    if (!node.isMesh) return;
-    node.geometry?.dispose();
-    materialList(node).forEach((material) => material?.dispose());
-  });
 }
 
 function configureBarkTexture(texture, colorSpace) {
@@ -89,24 +30,24 @@ function configureBarkTexture(texture, colorSpace) {
 }
 
 export class StylizedTreeView {
-  constructor({ terrainView, config, baseUrl = '/', loader = new GLTFLoader() }) {
+  constructor({ terrainView, config, baseUrl = '/' }) {
     this.terrainView = terrainView;
     this.config = config;
     this.baseUrl = normalizeBaseUrl(baseUrl);
-    this.loader = loader;
     this.textureLoader = new THREE.TextureLoader();
     this.time = uniform(0);
     this.prototypes = [];
     this.renderers = [];
     this.textures = [];
-    this.sourceScene = null;
     this.lastUpdateKey = null;
     this.disposed = false;
-    this.ready = this.load();
+    this.root = new THREE.Group();
+    this.root.name = 'stylized-trees';
+    terrainView.scene.add(this.root);
   }
 
   resolveUrl(path) {
-    return `${this.baseUrl}${path.replace(/^\/+/, '')}`;
+    return resolveAssetUrl(this.baseUrl, path);
   }
 
   async loadBarkTextures() {
@@ -122,55 +63,54 @@ export class StylizedTreeView {
     return { color, ao, height };
   }
 
-  async load() {
-    if (!this.config.trees.enabled) return;
-    const [gltf, barkTextures] = await Promise.all([
-      this.loader.loadAsync(this.resolveUrl(this.config.assets.scene)),
-      this.loadBarkTextures(),
-    ]);
-    if (this.disposed) {
-      disposeScene(gltf.scene);
-      return;
-    }
-    this.sourceScene = gltf.scene;
-    gltf.scene.updateMatrixWorld(true);
-    const roots = gltf.scene.children.flatMap((child) => findPrototypeRoots(child, this.config));
+  async buildFromScene(scene) {
+    if (!this.config.trees.enabled || !scene || this.disposed) return;
+    const barkTextures = await this.loadBarkTextures();
+    if (this.disposed) return;
+    scene.updateMatrixWorld(true);
+    const roots = scene.children.flatMap((child) => findPrototypeRoots(child, this.config));
     if (roots.length === 0) {
       throw new Error('No pine prototype contains both configured trunk and leaf materials.');
     }
 
     for (const root of roots) {
-      const parts = [];
-      root.traverse((node) => {
-        if (!node.isMesh) return;
-        const kind = meshKind(node, this.config);
-        if (!kind) return;
-        const geometry = cloneGeometryRelativeToRoot(node, root);
+      const baked = extractPrototypeParts(root, this.config);
+      if (!baked) continue;
+      const parts = baked.map((part) => {
         const source = firstMaterial(
-          node,
-          kind === 'leaf' ? this.config.assets.leafMaterial : this.config.assets.trunkMaterial,
+          part.source,
+          part.kind === 'leaf' ? this.config.assets.leafMaterial : this.config.assets.trunkMaterial,
         );
-        const material = kind === 'leaf'
+        let leafMap = null;
+        if (part.kind === 'leaf' && source?.map) {
+          leafMap = source.map.clone();
+          leafMap.needsUpdate = true;
+          this.textures.push(leafMap);
+        }
+        const material = part.kind === 'leaf'
           ? createStylizedLeafMaterial({
             source,
+            leafMap,
             bounds: {
-              minY: geometry.boundingBox.min.y,
-              maxY: geometry.boundingBox.max.y,
+              minY: part.geometry.boundingBox.min.y,
+              maxY: part.geometry.boundingBox.max.y,
             },
             time: this.time,
             config: this.config,
           })
           : createStylizedTrunkMaterial({ textures: barkTextures, config: this.config });
-        parts.push({ geometry, material, kind });
+        return { geometry: part.geometry, material, kind: part.kind };
       });
       if (parts.length > 0) this.prototypes.push(parts);
     }
     if (this.prototypes.length === 0) {
-      throw new Error('Pine prototype extraction produced no renderable parts.');
+      throw new Error('Pine prototype extraction produced no upright renderable parts.');
     }
 
-    const chunkCount = (this.config.trees.residentRadius * 2 + 1) ** 2;
-    const capacity = Math.ceil(chunkCount * this.config.trees.perChunk / this.prototypes.length) + 8;
+    const capacity = instanceCapacity({
+      residentRadius: this.config.trees.residentRadius,
+      perChunk: this.config.trees.perChunk,
+    });
     this.renderers = this.prototypes.map((parts, prototypeIndex) => parts.map((part, partIndex) => {
       const mesh = new THREE.InstancedMesh(part.geometry, part.material, capacity);
       mesh.count = 0;
@@ -178,27 +118,31 @@ export class StylizedTreeView {
       mesh.castShadow = part.kind === 'trunk';
       mesh.receiveShadow = true;
       mesh.name = `stylized-pine-${prototypeIndex}-${partIndex}`;
-      this.terrainView.scene.add(mesh);
+      this.root.add(mesh);
       return mesh;
     }));
   }
 
-  update(timestamp) {
+  update(timestamp, rockPlacements = [], rockSignature = '') {
     this.time.value = timestamp / 1000;
     if (this.disposed || this.renderers.length === 0 || !this.terrainView.focusChunkKey) return;
     const focus = parseChunkKey(this.terrainView.focusChunkKey);
     const origin = this.terrainView.floatingOrigin.getState();
-    const updateKey = `${focus.chunkX}:${focus.chunkZ}:${origin.x}:${origin.z}:${this.terrainView.worldStore.revision}`;
+    this.root.position.set(-origin.x, 0, -origin.z);
+    const updateKey = `${focus.chunkX}:${focus.chunkZ}:${this.terrainView.worldStore.revision}:${rockSignature}`;
     if (updateKey === this.lastUpdateKey) return;
     this.lastUpdateKey = updateKey;
-    this.rebuild(focus);
+    this.rebuild(focus, rockPlacements);
   }
 
-  rebuild(focus) {
+  rebuild(focus, rockPlacements = []) {
+    PerfCounters.inc('treeRebuilds');
     const matrices = this.prototypes.map(() => []);
     const tileIds = new Set(this.config.trees.tileIds);
     const chunkSize = this.terrainView.worldStore.chunkSize;
     const tileSize = this.terrainView.worldStore.tileSize;
+    const clearRadius = this.config.trees.clearRadius ?? tileSize;
+    const placedTrees = [];
     const dummy = new THREE.Object3D();
 
     for (let chunkZ = focus.chunkZ - this.config.trees.residentRadius;
@@ -208,26 +152,28 @@ export class StylizedTreeView {
         chunkX <= focus.chunkX + this.config.trees.residentRadius;
         chunkX += 1) {
         for (let index = 0; index < this.config.trees.perChunk; index += 1) {
-          const cellX = chunkX * chunkSize + Math.floor(random01(chunkX, chunkZ, index, 0) * chunkSize);
-          const cellZ = chunkZ * chunkSize + Math.floor(random01(chunkX, chunkZ, index, 1) * chunkSize);
+          const cellX = chunkX * chunkSize + Math.floor(scatterRandom01(chunkX, chunkZ, index, 0) * chunkSize);
+          const cellZ = chunkZ * chunkSize + Math.floor(scatterRandom01(chunkX, chunkZ, index, 1) * chunkSize);
           if (!tileIds.has(this.terrainView.tileMap.get(cellX, cellZ))) continue;
           const canonical = cellCenterToWorld(cellX, cellZ, tileSize);
-          const jitterX = (random01(chunkX, chunkZ, index, 2) - 0.5) * tileSize;
-          const jitterZ = (random01(chunkX, chunkZ, index, 3) - 0.5) * tileSize;
+          const jitterX = (scatterRandom01(chunkX, chunkZ, index, 2) - 0.5) * tileSize;
+          const jitterZ = (scatterRandom01(chunkX, chunkZ, index, 3) - 0.5) * tileSize;
           const canonicalX = canonical.x + jitterX;
           const canonicalZ = canonical.z + jitterZ;
-          const render = this.terrainView.floatingOrigin.toRender(canonicalX, canonicalZ);
+          if (overlaps(canonicalX, canonicalZ, rockPlacements, clearRadius)) continue;
+          if (overlaps(canonicalX, canonicalZ, placedTrees, clearRadius)) continue;
           const height = this.terrainView.getCanonicalHeight(canonicalX, canonicalZ);
-          const prototypeIndex = Math.floor(random01(chunkX, chunkZ, index, 4) * this.prototypes.length)
+          const prototypeIndex = Math.floor(scatterRandom01(chunkX, chunkZ, index, 4) * this.prototypes.length)
             % this.prototypes.length;
           const scale = this.config.trees.minScale
-            + random01(chunkX, chunkZ, index, 5)
+            + scatterRandom01(chunkX, chunkZ, index, 5)
               * (this.config.trees.maxScale - this.config.trees.minScale);
-          dummy.position.set(render.x, height, render.z);
-          dummy.rotation.set(0, random01(chunkX, chunkZ, index, 6) * Math.PI * 2, 0);
+          dummy.position.set(canonicalX, height, canonicalZ);
+          dummy.rotation.set(0, scatterRandom01(chunkX, chunkZ, index, 6) * Math.PI * 2, 0);
           dummy.scale.setScalar(scale);
           dummy.updateMatrix();
           matrices[prototypeIndex].push(dummy.matrix.clone());
+          placedTrees.push({ x: canonicalX, z: canonicalZ, radius: clearRadius });
         }
       }
     }
@@ -235,8 +181,8 @@ export class StylizedTreeView {
     this.renderers.forEach((parts, prototypeIndex) => {
       const values = matrices[prototypeIndex];
       for (const mesh of parts) {
-        mesh.count = Math.min(values.length, mesh.instanceMatrix.count);
-        for (let index = 0; index < mesh.count; index += 1) {
+        mesh.count = values.length;
+        for (let index = 0; index < values.length; index += 1) {
           mesh.setMatrixAt(index, values[index]);
         }
         mesh.instanceMatrix.needsUpdate = true;
@@ -247,17 +193,22 @@ export class StylizedTreeView {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.terrainView.scene.remove(this.root);
     for (const parts of this.renderers) {
       for (const mesh of parts) {
-        this.terrainView.scene.remove(mesh);
+        this.root.remove(mesh);
         mesh.dispose();
       }
     }
     this.renderers.length = 0;
+    for (const parts of this.prototypes) {
+      for (const part of parts) {
+        part.geometry?.dispose();
+        part.material?.dispose();
+      }
+    }
     this.prototypes.length = 0;
     this.textures.forEach((texture) => texture.dispose());
     this.textures.length = 0;
-    if (this.sourceScene) disposeScene(this.sourceScene);
-    this.sourceScene = null;
   }
 }

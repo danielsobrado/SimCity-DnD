@@ -50,9 +50,9 @@ const STATUS_FAILED = 'failed';
 
 function createBounds(layout, descriptor) {
   const box = new THREE.BoxGeometry(
-    layout.worldWidth / layout.chunksX,
+    layout.chunkCellsX * layout.voxelSize,
     layout.worldHeight,
-    layout.worldDepth / layout.chunksZ,
+    layout.chunkCellsZ * layout.voxelSize,
   );
   const geometry = new THREE.EdgesGeometry(box);
   box.dispose();
@@ -72,14 +72,17 @@ function createBaseFieldFunction(layout, descriptor) {
   const phase = layout.seed * 0.173;
   const frequency = layout.surfaceFrequency;
   const amplitude = layout.surfaceAmplitude;
+  // Unbounded worlds use Infinity for totalCells*; WGSL rejects Infinity.0 literals.
+  const centerX = Number.isFinite(layout.totalCellsX) ? layout.totalCellsX * 0.5 : 0;
+  const centerZ = Number.isFinite(layout.totalCellsZ) ? layout.totalCellsZ * 0.5 : 0;
 
   return Fn(([samplePosition]) => {
     const worldX = samplePosition.x
       .add(descriptor.offsetX)
-      .sub(layout.totalCellsX * 0.5);
+      .sub(centerX);
     const worldZ = samplePosition.z
       .add(descriptor.offsetZ)
-      .sub(layout.totalCellsZ * 0.5);
+      .sub(centerZ);
     const surfaceHeight = float(layout.baseHeight)
       .add(sin(worldX.mul(frequency).add(phase)).mul(amplitude))
       .add(cos(worldZ.mul(frequency * 0.83).sub(phase * 0.7)).mul(amplitude * 0.65))

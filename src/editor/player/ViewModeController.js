@@ -1,3 +1,4 @@
+import { PRIMARY_POINTER_BUTTON } from '../constants.js';
 import {
   PLAYER_MODE_EDIT,
   PLAYER_MODE_WALK,
@@ -5,14 +6,27 @@ import {
 } from './playerConstants.js';
 
 export class ViewModeController {
-  constructor({ editorCamera, playerController }) {
+  constructor({ editorCamera, playerController, terrainView }) {
     this.editorCamera = editorCamera;
     this.playerController = playerController;
+    this.terrainView = terrainView;
+    this.canvas = terrainView.renderer.domElement;
     this.mode = PLAYER_MODE_EDIT;
+    this.awaitingSpawn = false;
+    this.spacePressed = false;
     this.listeners = new Set();
     this.unsubscribePlayer = playerController.subscribe(() => this.emit());
     this.editorCamera.setEnabled(true);
     this.playerController.setEnabled(false);
+
+    this.boundHandlers = {
+      pointerDown: (event) => this.onSpawnPointerDown(event),
+      keyDown: (event) => this.onSpawnKeyDown(event),
+      keyUp: (event) => this.onSpawnKeyUp(event),
+    };
+    this.canvas.addEventListener('pointerdown', this.boundHandlers.pointerDown, true);
+    window.addEventListener('keydown', this.boundHandlers.keyDown, true);
+    window.addEventListener('keyup', this.boundHandlers.keyUp, true);
   }
 
   get camera() {
@@ -24,6 +38,7 @@ export class ViewModeController {
   getState() {
     return Object.freeze({
       mode: this.mode,
+      awaitingSpawn: this.awaitingSpawn,
       player: this.playerController.getStatus(),
     });
   }
@@ -34,31 +49,111 @@ export class ViewModeController {
     return () => this.listeners.delete(listener);
   }
 
-  setMode(mode, { requestPointerLock = false } = {}) {
-    if (!PLAYER_MODES.includes(mode) || mode === this.mode) {
-      if (mode === PLAYER_MODE_WALK && requestPointerLock) {
-        this.playerController.requestPointerLock();
-      }
+  setMode(mode, { requestPointerLock = false, spawn = null } = {}) {
+    if (!PLAYER_MODES.includes(mode)) {
       return;
     }
 
     if (mode === PLAYER_MODE_WALK) {
-      const spawn = this.editorCamera.getFocusWorld();
-      this.mode = PLAYER_MODE_WALK;
-      this.editorCamera.setEnabled(false);
-      this.playerController.setEnabled(true, spawn);
-      if (requestPointerLock) {
-        this.playerController.requestPointerLock();
+      if (this.mode === PLAYER_MODE_WALK) {
+        if (requestPointerLock) {
+          this.playerController.requestPointerLock();
+        }
+        return;
       }
-    } else {
-      const focus = this.playerController.getFocusWorld();
-      this.mode = PLAYER_MODE_EDIT;
-      this.playerController.setEnabled(false);
-      this.editorCamera.setEnabled(true);
-      this.editorCamera.focusWorld(focus.x, focus.z);
+
+      if (spawn) {
+        this.enterWalkMode(spawn, { requestPointerLock });
+        return;
+      }
+
+      if (this.awaitingSpawn) {
+        return;
+      }
+
+      this.beginSpawnSelection();
+      return;
     }
 
+    this.cancelSpawnSelection();
+    if (this.mode === PLAYER_MODE_EDIT) {
+      return;
+    }
+
+    const focus = this.playerController.getFocusWorld();
+    this.mode = PLAYER_MODE_EDIT;
+    this.playerController.setEnabled(false);
+    this.editorCamera.setEnabled(true);
+    this.editorCamera.focusWorld(focus.x, focus.z);
     this.emit();
+  }
+
+  beginSpawnSelection() {
+    this.awaitingSpawn = true;
+    this.spacePressed = false;
+    this.emit();
+  }
+
+  cancelSpawnSelection() {
+    if (!this.awaitingSpawn) {
+      return;
+    }
+    this.awaitingSpawn = false;
+    this.spacePressed = false;
+    this.emit();
+  }
+
+  enterWalkMode(spawn, { requestPointerLock = false } = {}) {
+    this.awaitingSpawn = false;
+    this.spacePressed = false;
+    this.mode = PLAYER_MODE_WALK;
+    this.editorCamera.setEnabled(false);
+    this.playerController.setEnabled(true, spawn);
+    if (requestPointerLock) {
+      this.playerController.requestPointerLock();
+    }
+    this.emit();
+  }
+
+  onSpawnPointerDown(event) {
+    if (!this.awaitingSpawn || event.button !== PRIMARY_POINTER_BUTTON || this.spacePressed) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const spawn = this.terrainView.pickWorld(
+      event.clientX,
+      event.clientY,
+      this.editorCamera.camera,
+    );
+    if (!spawn) {
+      return;
+    }
+
+    this.enterWalkMode(spawn, { requestPointerLock: true });
+  }
+
+  onSpawnKeyDown(event) {
+    if (event.code === 'Space') {
+      this.spacePressed = true;
+    }
+
+    if (!this.awaitingSpawn) {
+      return;
+    }
+
+    if (event.code === 'Escape') {
+      event.preventDefault();
+      this.cancelSpawnSelection();
+    }
+  }
+
+  onSpawnKeyUp(event) {
+    if (event.code === 'Space') {
+      this.spacePressed = false;
+    }
   }
 
   resize(width, height) {
@@ -93,6 +188,9 @@ export class ViewModeController {
   }
 
   dispose() {
+    this.canvas.removeEventListener('pointerdown', this.boundHandlers.pointerDown, true);
+    window.removeEventListener('keydown', this.boundHandlers.keyDown, true);
+    window.removeEventListener('keyup', this.boundHandlers.keyUp, true);
     this.unsubscribePlayer?.();
     this.playerController.dispose();
     this.listeners.clear();

@@ -27,6 +27,7 @@ export class PlayerController {
     this.yaw = 0;
     this.pitch = 0;
     this.enabled = false;
+    this.harnessActive = false;
     this.keys = new Set();
     this.jumpQueued = false;
     this.lastTimestamp = null;
@@ -64,11 +65,48 @@ export class PlayerController {
   getStatus() {
     return Object.freeze({
       enabled: this.enabled,
+      harnessActive: this.harnessActive,
       pointerLocked: this.pointerLocked,
       grounded: this.state.grounded,
       running: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'),
       position: Object.freeze({ x: this.state.x, y: this.state.y, z: this.state.z }),
+      yaw: this.yaw,
+      pitch: this.pitch,
     });
+  }
+
+  setHarnessActive(active) {
+    this.harnessActive = Boolean(active);
+    if (!this.harnessActive) {
+      this.resetInput();
+    }
+    this.emit();
+  }
+
+  setHarnessKeys(codes = []) {
+    this.keys = new Set(codes);
+    this.jumpQueued = this.keys.has('Space') && this.state.grounded;
+    this.emit();
+  }
+
+  setPose({ x, z, yaw = this.yaw, pitch = this.pitch } = {}) {
+    if (Number.isFinite(x) && Number.isFinite(z)) {
+      this.state = createPlayerState({
+        x,
+        z,
+        groundHeight: this.terrainView.getWorldHeight(x, z),
+        eyeHeight: this.config.eyeHeight,
+      });
+    }
+    if (Number.isFinite(yaw)) {
+      this.yaw = yaw;
+    }
+    if (Number.isFinite(pitch)) {
+      const maxPitch = THREE.MathUtils.degToRad(this.config.maxPitchDegrees);
+      this.pitch = THREE.MathUtils.clamp(pitch, -maxPitch, maxPitch);
+    }
+    this.applyCameraState();
+    this.emit();
   }
 
   subscribe(listener) {
@@ -126,7 +164,7 @@ export class PlayerController {
     }
     this.right.crossVectors(this.forward, this.up).normalize();
 
-    const acceptsMovement = this.pointerLocked;
+    const acceptsMovement = this.pointerLocked || this.harnessActive;
     this.state = stepPlayerPhysics({
       state: this.state,
       input: {
@@ -168,7 +206,7 @@ export class PlayerController {
   }
 
   onCanvasPointer(event) {
-    if (!this.enabled) {
+    if (!this.enabled || this.harnessActive) {
       return;
     }
     event.preventDefault();
@@ -179,7 +217,7 @@ export class PlayerController {
   }
 
   onContextMenu(event) {
-    if (!this.enabled) {
+    if (!this.enabled || this.harnessActive) {
       return;
     }
     event.preventDefault();
@@ -187,7 +225,7 @@ export class PlayerController {
   }
 
   onKeyDown(event) {
-    if (!this.enabled || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+    if (!this.enabled || this.harnessActive || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
       return;
     }
     if (event.code !== 'Escape') {
@@ -204,7 +242,7 @@ export class PlayerController {
   }
 
   onKeyUp(event) {
-    if (!this.enabled) {
+    if (!this.enabled || this.harnessActive) {
       return;
     }
     if (event.code !== 'Escape') {
@@ -217,7 +255,7 @@ export class PlayerController {
   }
 
   onMouseMove(event) {
-    if (!this.enabled || !this.pointerLocked) {
+    if (!this.enabled || this.harnessActive || !this.pointerLocked) {
       return;
     }
     this.yaw -= event.movementX * this.config.mouseSensitivity;
@@ -228,6 +266,9 @@ export class PlayerController {
   }
 
   resetInput() {
+    if (this.harnessActive) {
+      return;
+    }
     this.keys.clear();
     this.jumpQueued = false;
   }

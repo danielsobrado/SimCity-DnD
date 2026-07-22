@@ -1,5 +1,6 @@
 import './styles.css';
 import './editor/performance/frameRateDisplay.css';
+import './editor/performance/qa/perfQa.css';
 import './editor/player/playerMode.css';
 import { loadEditorConfig } from './config/loadEditorConfig.js';
 import { installObjectAssets } from './editor/assets/installObjectAssets.js';
@@ -13,6 +14,8 @@ import { OBJECT_RENDER_CATALOG } from './editor/objectRenderCatalog.js';
 import { FrameRateDisplay } from './editor/performance/FrameRateDisplay.js';
 import { FrameRateMeter } from './editor/performance/FrameRateMeter.js';
 import { FRAME_RATE_DISPLAY_INTERVAL_MS } from './editor/performance/frameRateConstants.js';
+import { PerfCounters } from './editor/performance/qa/PerfCounters.js';
+import { PerfQaHarness } from './editor/performance/qa/PerfQaHarness.js';
 import { PlayerController } from './editor/player/PlayerController.js';
 import { ViewModeController } from './editor/player/ViewModeController.js';
 import { ViewModeUi } from './editor/player/ViewModeUi.js';
@@ -133,6 +136,7 @@ async function startEditor() {
   const viewModeController = new ViewModeController({
     editorCamera,
     playerController,
+    terrainView,
   });
 
   const controller = new TerrainAwareEditorController({
@@ -181,6 +185,27 @@ async function startEditor() {
     console.error('GPU voxel world failed to initialize.', voxelStatus.error);
   }
 
+  await stylizedSurface.ready;
+
+  const perfQa = PerfQaHarness.fromLocation({
+    viewModeController,
+    playerController,
+    terrainView,
+    stylizedSurface,
+    voxelPrototype,
+    editorConfig: config,
+  });
+  if (perfQa) {
+    perfQa.mount(root);
+    perfQa.publishApi();
+    if (perfQa.config.autostart) {
+      // Let the first streaming/render pass settle before scripted motion.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => perfQa.start());
+      });
+    }
+  }
+
   const resizeObserver = new ResizeObserver(([entry]) => {
     const { width, height } = entry.contentRect;
     terrainView.resize(width, height);
@@ -205,6 +230,7 @@ async function startEditor() {
     if (!active) return;
 
     const frameTimestamp = Number.isFinite(timestamp) ? timestamp : performance.now();
+    const profiling = perfQa?.beginFrame(frameTimestamp) ?? false;
     const averageFps = frameRateMeter.record(frameTimestamp);
     if (frameTimestamp >= nextFrameRateDisplayAt) {
       frameRateDisplay.update(averageFps);
@@ -212,13 +238,18 @@ async function startEditor() {
     }
 
     viewModeController.update(frameTimestamp);
+    if (profiling) perfQa.mark('player');
+
     let renderFocus = viewModeController.getFocusWorld();
     const rebase = terrainView.updateFloatingOrigin(renderFocus);
     if (rebase) {
+      PerfCounters.inc('floatingOriginSnaps');
       viewModeController.shiftWorld(rebase.shiftX, rebase.shiftZ);
       controller.refreshObjects();
       renderFocus = viewModeController.getFocusWorld();
     }
+    if (profiling) perfQa.mark('floatingOrigin');
+
     const canonicalFocus = floatingOrigin.toCanonical(renderFocus.x, renderFocus.z);
     const forcePredictiveRefresh = frameTimestamp >= nextPredictiveRefreshAt;
     if (forcePredictiveRefresh) {
@@ -231,20 +262,45 @@ async function startEditor() {
     ).catch((error) => {
       console.error('Terrain streaming update failed.', error);
     });
+    if (profiling) perfQa.mark('streaming');
+
     stylizedSurface.update(frameTimestamp, viewModeController.camera);
+    if (profiling) perfQa.mark('stylized');
+
     voxelPrototype.update(canonicalFocus);
+    if (profiling) perfQa.mark('voxel');
 
     if (frameTimestamp >= nextStreamingStatusAt) {
       ui.renderStreamingStatus(terrainView.getStreamingStatus());
       nextStreamingStatusAt = frameTimestamp + 250;
     }
     terrainView.render(viewModeController.camera);
+    if (profiling) {
+      perfQa.mark('render');
+      const voxelStatusLive = voxelPrototype.getStatus?.() ?? null;
+      perfQa.endFrame({
+        streaming: terrainView.getStreamingStatus(),
+        voxel: voxelStatusLive
+          ? {
+            ready: voxelStatusLive.ready,
+            rebuilding: voxelStatusLive.rebuilding,
+            residentChunkCount: voxelStatusLive.residentChunkCount,
+            focusChunk: voxelStatusLive.focusChunk,
+          }
+          : null,
+        originSnap: Boolean(rebase),
+        forcePredictiveRefresh,
+      });
+    } else if (perfQa) {
+      perfQa.endFrame();
+    }
   });
 
   window.addEventListener('pagehide', () => {
     active = false;
     document.removeEventListener('visibilitychange', onVisibilityChange);
     resizeObserver.disconnect();
+    perfQa?.dispose();
     voxelPrototypeUi.dispose();
     voxelPrototype.dispose();
     stylizedSurface.dispose();

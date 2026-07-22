@@ -10,6 +10,8 @@
     "generate:assets": "python scripts/generate-placeholder-models.py",
     "validate:assets": "node scripts/validate-assets.mjs",
     "test": "node --test",
+    "qa:perf": "node scripts/run-perf-qa.mjs",
+    "qa:perf:parse": "node scripts/parse-perf-qa.mjs tmp/perf-qa-latest.json",
     "verify": "npm run validate:assets && npm test && npm run build"
   },
   "dependencies": {

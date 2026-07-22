@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { uniform } from 'three/tsl';
+import { PerfCounters } from './performance/qa/PerfCounters.js';
 import { createTerrainMaterial } from './terrainMaterial.js';
 import { TILE_BY_ID, hexToRgbBytes } from './tileCatalog.js';
 import { cellCenterToWorld, worldToCell } from './world/WorldCoordinates.js';
@@ -114,6 +115,7 @@ function writeSurfaceMaskPixels(slot, page, worldStore, config) {
   const blendCells = Math.max(0.5, config.path.blendCells);
   const searchRadius = Math.ceil(blendCells + 1);
   const roadTileId = config.path.tileId;
+  const waterTileId = config.water?.tileId ?? 2;
   const grassTileIds = new Set(config.grass.tileIds);
 
   for (let localZ = 0; localZ < chunkSize; localZ += 1) {
@@ -134,7 +136,7 @@ function writeSurfaceMaskPixels(slot, page, worldStore, config) {
       const offset = cellIndex * 4;
       slot.surfaceMaskPixels[offset] = Math.round(pathInfluence * 255);
       slot.surfaceMaskPixels[offset + 1] = grassTileIds.has(page.tiles[cellIndex]) ? 255 : 0;
-      slot.surfaceMaskPixels[offset + 2] = 0;
+      slot.surfaceMaskPixels[offset + 2] = page.tiles[cellIndex] === waterTileId ? 255 : 0;
       slot.surfaceMaskPixels[offset + 3] = 255;
     }
   }
@@ -293,6 +295,7 @@ export class InfiniteTerrainView {
   }
 
   async assignSlot(slot, descriptor) {
+    PerfCounters.inc('terrainAssignSlots');
     slot.token += 1;
     const token = slot.token;
     slot.key = descriptor.key;
@@ -316,6 +319,7 @@ export class InfiniteTerrainView {
   }
 
   uploadPage(slot, page) {
+    PerfCounters.inc('terrainUploadPages');
     writeTilePixels(slot, page.tiles);
     writeSurfaceMaskPixels(slot, page, this.worldStore, this.stylizedConfig);
     slot.heightPixels.set(page.heights);
@@ -398,7 +402,7 @@ export class InfiniteTerrainView {
     // World-store notifications update resident slots directly.
   }
 
-  pickCell(clientX, clientY, camera) {
+  pickWorld(clientX, clientY, camera) {
     const bounds = this.renderer.domElement.getBoundingClientRect();
     if (bounds.width === 0 || bounds.height === 0) {
       return null;
@@ -417,7 +421,15 @@ export class InfiniteTerrainView {
         return null;
       }
     }
-    const canonical = this.floatingOrigin.toCanonical(this.pickPoint.x, this.pickPoint.z);
+    return Object.freeze({ x: this.pickPoint.x, z: this.pickPoint.z });
+  }
+
+  pickCell(clientX, clientY, camera) {
+    const world = this.pickWorld(clientX, clientY, camera);
+    if (!world) {
+      return null;
+    }
+    const canonical = this.floatingOrigin.toCanonical(world.x, world.z);
     return worldToCell(canonical.x, canonical.z, this.worldStore.tileSize);
   }
 

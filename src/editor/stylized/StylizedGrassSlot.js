@@ -1,7 +1,9 @@
 import * as THREE from 'three/webgpu';
 import { uniform } from 'three/tsl';
+import { PerfCounters } from '../performance/qa/PerfCounters.js';
 import { cellCenterToWorld } from '../world/WorldCoordinates.js';
 import { createStylizedGrassMaterial } from './StylizedGrassMaterial.js';
+import { cellSampleRandom01, sampleHeight } from './scatterMath.js';
 
 const BLADE_SEGMENTS = 3;
 const TWO_PI = Math.PI * 2;
@@ -53,36 +55,6 @@ function createBladeGeometry(maxInstances) {
   return geometry;
 }
 
-function hash32(value) {
-  let result = value | 0;
-  result = Math.imul(result ^ (result >>> 16), 0x45d9f3b);
-  result = Math.imul(result ^ (result >>> 16), 0x45d9f3b);
-  return (result ^ (result >>> 16)) >>> 0;
-}
-
-function random01(chunkX, chunkZ, cellIndex, sampleIndex, channel) {
-  const seed = Math.imul(chunkX, 73856093)
-    ^ Math.imul(chunkZ, 19349663)
-    ^ Math.imul(cellIndex + 1, 83492791)
-    ^ Math.imul(sampleIndex + 1, 2654435761)
-    ^ Math.imul(channel + 1, 1597334677);
-  return hash32(seed) / 0xffffffff;
-}
-
-function sampleHeight(page, localX, localZ, chunkSize) {
-  const x0 = Math.floor(localX);
-  const z0 = Math.floor(localZ);
-  const x1 = Math.min(chunkSize, x0 + 1);
-  const z1 = Math.min(chunkSize, z0 + 1);
-  const tx = localX - x0;
-  const tz = localZ - z0;
-  const vertexSize = chunkSize + 1;
-  const height = (x, z) => page.heights[z * vertexSize + x];
-  const north = height(x0, z0) + (height(x1, z0) - height(x0, z0)) * tx;
-  const south = height(x0, z1) + (height(x1, z1) - height(x0, z1)) * tx;
-  return north + (south - north) * tz;
-}
-
 function findTrample(worldX, worldZ, boulders, defaultRadius, falloff) {
   let strongest = 0;
   let directionX = 1;
@@ -113,26 +85,22 @@ function collectPlacedBoulders(objectMap, tileSize, radius) {
 }
 
 export class StylizedGrassSlot {
-  constructor({ terrainSlot, terrainView, objectMap, config }) {
+  constructor({ terrainSlot, terrainView, objectMap, config, sunDirection }) {
     this.terrainSlot = terrainSlot;
     this.terrainView = terrainView;
     this.objectMap = objectMap;
     this.config = config;
+    this.sunDirection = sunDirection;
     this.chunkSize = terrainView.worldStore.chunkSize;
     this.tileSize = terrainView.worldStore.tileSize;
     this.chunkWorldSize = this.chunkSize * this.tileSize;
-    this.maxInstances = this.chunkSize * this.chunkSize * config.grass.bladesPerCell;
+    this.bladesPerCell = config.grass.bladesPerCell;
+    this.maxInstances = this.chunkSize * this.chunkSize * this.bladesPerCell;
     this.chunkCenter = uniform(new THREE.Vector2());
     this.time = uniform(0);
-    this.geometry = createBladeGeometry(this.maxInstances);
-    this.material = createStylizedGrassMaterial({
-      surfaceMaskTexture: terrainSlot.surfaceMaskTexture,
-      chunkCenter: this.chunkCenter,
-      chunkWorldSize: this.chunkWorldSize,
-      time: this.time,
-      config,
-    });
-    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.geometry = null;
+    this.material = null;
+    this.mesh = new THREE.Mesh();
     this.mesh.frustumCulled = false;
     this.mesh.visible = false;
     this.mesh.name = `stylized-grass-${terrainSlot.slotIndex}`;
@@ -140,6 +108,22 @@ export class StylizedGrassSlot {
     this.lastKey = null;
     this.lastRevision = -1;
     this.lastObjectSignature = '';
+  }
+
+  ensureResources() {
+    if (this.geometry) return;
+    this.geometry = createBladeGeometry(this.maxInstances);
+    this.material = createStylizedGrassMaterial({
+      surfaceMaskTexture: this.terrainSlot.surfaceMaskTexture,
+      chunkCenter: this.chunkCenter,
+      chunkWorldSize: this.chunkWorldSize,
+      time: this.time,
+      sunDirection: this.sunDirection,
+      config: this.config,
+    });
+    this.mesh.geometry = this.geometry;
+    this.mesh.material = this.material;
+    this.mesh.receiveShadow = true;
   }
 
   update(timestamp, focusChunk, objectSignature, streamedRocks) {
@@ -154,6 +138,7 @@ export class StylizedGrassSlot {
     this.mesh.visible = Boolean(this.terrainSlot.mesh.visible && withinRadius);
     if (!this.mesh.visible || !descriptor || !this.terrainSlot.page) return;
 
+    this.ensureResources();
     this.mesh.position.copy(this.terrainSlot.mesh.position);
     this.chunkCenter.value.set(descriptor.centerWorldX, descriptor.centerWorldZ);
     if (this.lastKey !== descriptor.key
@@ -167,6 +152,7 @@ export class StylizedGrassSlot {
   }
 
   rebuild(page, descriptor, streamedRocks) {
+    PerfCounters.inc('grassRebuilds');
     const baseAttribute = this.geometry.getAttribute('instanceBase');
     const parameterAttribute = this.geometry.getAttribute('instanceParams');
     const trampleAttribute = this.geometry.getAttribute('instanceTrample');
@@ -184,9 +170,9 @@ export class StylizedGrassSlot {
       for (let localX = 0; localX < this.chunkSize; localX += 1) {
         const cellIndex = localZ * this.chunkSize + localX;
         if (!eligible.has(page.tiles[cellIndex])) continue;
-        for (let sampleIndex = 0; sampleIndex < this.config.grass.bladesPerCell; sampleIndex += 1) {
-          const jitterX = random01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 0);
-          const jitterZ = random01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 1);
+        for (let sampleIndex = 0; sampleIndex < this.bladesPerCell; sampleIndex += 1) {
+          const jitterX = cellSampleRandom01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 0);
+          const jitterZ = cellSampleRandom01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 1);
           const sampleX = localX + jitterX;
           const sampleZ = localZ + jitterZ;
           const localWorldX = -this.chunkWorldSize / 2 + sampleX * this.tileSize;
@@ -195,12 +181,12 @@ export class StylizedGrassSlot {
           const worldZ = descriptor.centerWorldZ + localWorldZ;
           const height = sampleHeight(page, sampleX, sampleZ, this.chunkSize);
           const width = this.config.grass.minWidth
-            + random01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 2)
+            + cellSampleRandom01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 2)
               * (this.config.grass.maxWidth - this.config.grass.minWidth);
           const length = this.config.grass.minLength
-            + random01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 3)
+            + cellSampleRandom01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 3)
               * (this.config.grass.maxLength - this.config.grass.minLength);
-          const angle = random01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 4) * TWO_PI;
+          const angle = cellSampleRandom01(descriptor.chunkX, descriptor.chunkZ, cellIndex, sampleIndex, 4) * TWO_PI;
           const rock = findTrample(
             worldX,
             worldZ,
@@ -217,7 +203,7 @@ export class StylizedGrassSlot {
           parameters[parameterOffset] = width;
           parameters[parameterOffset + 1] = length;
           parameters[parameterOffset + 2] = angle;
-          parameters[parameterOffset + 3] = random01(
+          parameters[parameterOffset + 3] = cellSampleRandom01(
             descriptor.chunkX,
             descriptor.chunkZ,
             cellIndex,
@@ -240,7 +226,7 @@ export class StylizedGrassSlot {
 
   dispose() {
     this.terrainView.scene.remove(this.mesh);
-    this.geometry.dispose();
-    this.material.dispose();
+    this.geometry?.dispose();
+    this.material?.dispose();
   }
 }

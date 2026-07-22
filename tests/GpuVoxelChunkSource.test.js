@@ -61,3 +61,15 @@ test('does not introduce GPU-to-CPU readbacks', async () => {
     /getArrayBufferAsync|mapAsync|readRenderTargetPixels|readRenderTargetPixelsAsync/,
   );
 });
+
+test('does not embed Infinity into TSL voxel field constants', async () => {
+  const [source] = await readSources();
+
+  // Unbounded layouts use Infinity for totalCells*; baking that into TSL emits
+  // invalid WGSL `Infinity.0`. Center offsets must be finite before Fn().
+  assert.match(source, /Number\.isFinite\(layout\.totalCellsX\)/);
+  assert.match(source, /Number\.isFinite\(layout\.totalCellsZ\)/);
+  assert.doesNotMatch(source, /\.sub\(\s*layout\.totalCellsX\s*\*\s*0\.5\s*\)/);
+  assert.doesNotMatch(source, /\.sub\(\s*layout\.totalCellsZ\s*\*\s*0\.5\s*\)/);
+  assert.match(source, /chunkCellsX\s*\*\s*layout\.voxelSize/);
+});

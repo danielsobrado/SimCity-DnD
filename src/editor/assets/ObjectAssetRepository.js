@@ -1,35 +1,6 @@
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { disposeScene, normalizeBaseUrl, resolveAssetUrl } from './assetUrl.js';
 import { extractStaticParts } from './glbParts.js';
-
-function normalizeBaseUrl(baseUrl) {
-  const value = typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl : '/';
-  return value.endsWith('/') ? value : `${value}/`;
-}
-
-function disposeScene(scene) {
-  const geometries = new Set();
-  const materials = new Set();
-  const textures = new Set();
-
-  scene.traverse((node) => {
-    if (!node.isMesh) {
-      return;
-    }
-    geometries.add(node.geometry);
-    for (const material of Array.isArray(node.material) ? node.material : [node.material]) {
-      materials.add(material);
-      for (const value of Object.values(material)) {
-        if (value?.isTexture) {
-          textures.add(value);
-        }
-      }
-    }
-  });
-
-  textures.forEach((texture) => texture.dispose());
-  geometries.forEach((geometry) => geometry.dispose());
-  materials.forEach((material) => material.dispose());
-}
 
 export class ObjectAssetRepository {
   constructor({ catalog, tileSize, loader = new GLTFLoader(), baseUrl = '/' }) {
@@ -44,7 +15,7 @@ export class ObjectAssetRepository {
   }
 
   resolveAssetUrl(assetPath) {
-    return `${this.baseUrl}${assetPath.replace(/^\/+/, '')}`;
+    return resolveAssetUrl(this.baseUrl, assetPath);
   }
 
   loadScene(assetPath) {

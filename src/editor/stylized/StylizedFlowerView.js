@@ -1,11 +1,7 @@
 import * as THREE from 'three/webgpu';
+import { normalizeBaseUrl, resolveAssetUrl } from '../assets/assetUrl.js';
 import { parseChunkKey } from '../world/WorldCoordinates.js';
 import { StylizedFlowerSlot } from './StylizedFlowerSlot.js';
-
-function normalizeBaseUrl(baseUrl) {
-  const value = typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl : '/';
-  return value.endsWith('/') ? value : `${value}/`;
-}
 
 function configureTexture(texture, colorSpace = THREE.NoColorSpace) {
   texture.colorSpace = colorSpace;
@@ -30,7 +26,7 @@ export class StylizedFlowerView {
   }
 
   resolveUrl(path) {
-    return `${this.baseUrl}${path.replace(/^\/+/, '')}`;
+    return resolveAssetUrl(this.baseUrl, path);
   }
 
   async loadTexture(path) {

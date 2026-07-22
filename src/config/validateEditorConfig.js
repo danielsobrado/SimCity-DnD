@@ -81,6 +81,7 @@ function validateStylizedSurface(config) {
   assertBoolean(config, ['stylizedSurface', 'rocks', 'enabled']);
   assertBoolean(config, ['stylizedSurface', 'flowers', 'enabled']);
   assertBoolean(config, ['stylizedSurface', 'trees', 'enabled']);
+  assertBoolean(config, ['stylizedSurface', 'water', 'enabled']);
   assertBoolean(config, ['stylizedSurface', 'sky', 'enabled']);
   assertBoolean(config, ['stylizedSurface', 'sky', 'shadows']);
 
@@ -95,6 +96,7 @@ function validateStylizedSurface(config) {
     ['stylizedSurface', 'color', 'brightness'],
     ['stylizedSurface', 'color', 'gradientEnd'],
     ['stylizedSurface', 'color', 'gradientPower'],
+    ['stylizedSurface', 'translucency', 'power'],
     ['stylizedSurface', 'patch', 'scale'],
     ['stylizedSurface', 'patch', 'bias'],
     ['stylizedSurface', 'dirt', 'scale'],
@@ -111,6 +113,7 @@ function validateStylizedSurface(config) {
     ['stylizedSurface', 'flowers', 'bendFrequency'],
     ['stylizedSurface', 'flowers', 'brightness'],
     ['stylizedSurface', 'trees', 'perChunk'],
+    ['stylizedSurface', 'trees', 'clearRadius'],
     ['stylizedSurface', 'trees', 'minScale'],
     ['stylizedSurface', 'trees', 'maxScale'],
     ['stylizedSurface', 'trees', 'brightness'],
@@ -119,6 +122,13 @@ function validateStylizedSurface(config) {
     ['stylizedSurface', 'trees', 'flutterSpeed'],
     ['stylizedSurface', 'trees', 'barkScale'],
     ['stylizedSurface', 'trees', 'barkBrightness'],
+    ['stylizedSurface', 'water', 'scale'],
+    ['stylizedSurface', 'water', 'cellSmoothness'],
+    ['stylizedSurface', 'water', 'edgeSoftness'],
+    ['stylizedSurface', 'water', 'cellSpeed'],
+    ['stylizedSurface', 'water', 'noiseScale'],
+    ['stylizedSurface', 'water', 'fadeDistance'],
+    ['stylizedSurface', 'water', 'fadeStrength'],
     ['stylizedSurface', 'ground', 'variationScale'],
     ['stylizedSurface', 'ground', 'grainScale'],
     ['stylizedSurface', 'sky', 'radius'],
@@ -143,6 +153,8 @@ function validateStylizedSurface(config) {
     ['stylizedSurface', 'wind', 'turbulence'],
     ['stylizedSurface', 'wind', 'lean'],
     ['stylizedSurface', 'color', 'gradientStart'],
+    ['stylizedSurface', 'translucency', 'strength'],
+    ['stylizedSurface', 'translucency', 'tipBias'],
     ['stylizedSurface', 'dirt', 'warp'],
     ['stylizedSurface', 'rocks', 'bend'],
     ['stylizedSurface', 'flowers', 'windStrength'],
@@ -152,6 +164,15 @@ function validateStylizedSurface(config) {
     ['stylizedSurface', 'trees', 'flutterAmplitude'],
     ['stylizedSurface', 'trees', 'dip'],
     ['stylizedSurface', 'trees', 'barkRelief'],
+    ['stylizedSurface', 'water', 'heightOffset'],
+    ['stylizedSurface', 'water', 'edgeThreshold'],
+    ['stylizedSurface', 'water', 'flowX'],
+    ['stylizedSurface', 'water', 'flowZ'],
+    ['stylizedSurface', 'water', 'noiseFlowSpeed'],
+    ['stylizedSurface', 'water', 'distortAmount'],
+    ['stylizedSurface', 'water', 'midPos'],
+    ['stylizedSurface', 'water', 'opacity'],
+    ['stylizedSurface', 'water', 'deepOpacity'],
     ['stylizedSurface', 'sky', 'horizonLine'],
     ['stylizedSurface', 'sky', 'sunElevation'],
     ['stylizedSurface', 'sky', 'sunAzimuth'],
@@ -180,7 +201,17 @@ function validateStylizedSurface(config) {
   }
   assertTileIds(surface.grass.tileIds, 'stylizedSurface.grass.tileIds');
   assertTileIds(surface.rocks.tileIds, 'stylizedSurface.rocks.tileIds');
+  assertTileIds(surface.flowers.tileIds, 'stylizedSurface.flowers.tileIds');
   assertTileIds(surface.trees.tileIds, 'stylizedSurface.trees.tileIds');
+  if (!Number.isInteger(surface.water.tileId) || surface.water.tileId < 0 || surface.water.tileId > 255) {
+    throw new Error('Invalid editor configuration: stylizedSurface.water.tileId must be a tile id.');
+  }
+  if (surface.water.midPos < 0 || surface.water.midPos > 1
+      || surface.water.opacity < 0 || surface.water.opacity > 1
+      || surface.water.deepOpacity < 0 || surface.water.deepOpacity > 1
+      || surface.translucency.tipBias < 0 || surface.translucency.tipBias > 1) {
+    throw new Error('Invalid editor configuration: stylized water/translucency blends must be within [0, 1].');
+  }
   if (!Array.isArray(surface.wind.direction)
       || surface.wind.direction.length !== 2
       || surface.wind.direction.some((value) => !Number.isFinite(value))) {

@@ -2,6 +2,7 @@ import {
   PLAYER_MODE_EDIT,
   PLAYER_MODE_WALK,
   PLAYER_POINTER_LOCK_MESSAGE,
+  PLAYER_SPAWN_PICK_MESSAGE,
 } from './playerConstants.js';
 
 export class ViewModeUi {
@@ -14,6 +15,7 @@ export class ViewModeUi {
       throw new Error('View mode UI requires the editor topbar and viewport.');
     }
 
+    this.viewport = viewport;
     this.switcher = document.createElement('div');
     this.switcher.className = 'view-mode-switcher';
     this.switcher.setAttribute('aria-label', 'Camera mode');
@@ -32,6 +34,7 @@ export class ViewModeUi {
     `;
     viewport.append(this.hud);
     this.help = this.hud.querySelector('[data-role="player-help"]');
+    this.crosshair = this.hud.querySelector('.player-crosshair');
 
     this.onClick = (event) => {
       const button = event.target.closest('[data-view-mode]');
@@ -47,14 +50,28 @@ export class ViewModeUi {
   }
 
   render(state) {
-    this.root.dataset.viewMode = state.mode;
+    const playerActive = state.mode === PLAYER_MODE_WALK || state.awaitingSpawn;
+    this.root.dataset.viewMode = state.awaitingSpawn
+      ? 'player-spawn'
+      : state.mode;
+    this.root.toggleAttribute('data-awaiting-spawn', state.awaitingSpawn);
+
     for (const button of this.switcher.querySelectorAll('[data-view-mode]')) {
-      button.classList.toggle('is-active', button.dataset.viewMode === state.mode);
+      const isPlayerButton = button.dataset.viewMode === PLAYER_MODE_WALK;
+      button.classList.toggle(
+        'is-active',
+        isPlayerButton ? playerActive : button.dataset.viewMode === state.mode && !state.awaitingSpawn,
+      );
     }
 
-    const playerMode = state.mode === PLAYER_MODE_WALK;
-    this.hud.hidden = !playerMode;
-    if (!playerMode) {
+    this.hud.hidden = !playerActive;
+    if (!playerActive) {
+      return;
+    }
+
+    this.crosshair.hidden = state.awaitingSpawn;
+    if (state.awaitingSpawn) {
+      this.help.textContent = PLAYER_SPAWN_PICK_MESSAGE;
       return;
     }
 
@@ -69,5 +86,6 @@ export class ViewModeUi {
     this.switcher.remove();
     this.hud.remove();
     delete this.root.dataset.viewMode;
+    this.root.removeAttribute('data-awaiting-spawn');
   }
 }
