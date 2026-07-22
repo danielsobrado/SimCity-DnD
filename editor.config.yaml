@@ -99,6 +99,11 @@ stylizedSurface:
     blendCells: 2.5
   rocks:
     enabled: true
+    residentRadius: 1
+    perChunk: 6
+    tileIds: [0, 1, 5]
+    minScale: 0.65
+    maxScale: 1.35
     radius: 1.5
     falloff: 0.7
     flatten: 0.85
