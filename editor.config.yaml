@@ -9,6 +9,15 @@ camera:
   minZoom: 0.3
   maxZoom: 6
   damping: 0.1
+player:
+  fovDegrees: 68
+  walkSpeed: 9
+  runMultiplier: 1.8
+  jumpSpeed: 8
+  gravity: 24
+  eyeHeight: 1.7
+  mouseSensitivity: 0.0022
+  maxPitchDegrees: 85
 renderer:
   antialias: true
   forceWebGL: false
@@ -21,16 +30,17 @@ terrain:
 voxelPrototype:
   enabled: true
   visible: true
-  chunkGrid: [2, 2]
+  streamRadius: 1
+  slotCount: 9
   cells: [24, 16, 24]
   voxelSize: 1.5
-  originCell: [280, 240]
   verticalOffset: 0.2
   baseHeight: 7
   surfaceAmplitude: 3
   surfaceFrequency: 0.28
   seed: 17
-  maxStamps: 64
+  maxStamps: 256
+  maxStampsPerChunk: 32
   defaultRadius: 2.5
   defaultStrength: 0.75
   defaultSmoothness: 0.65
