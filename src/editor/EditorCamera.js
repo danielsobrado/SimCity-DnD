@@ -52,6 +52,14 @@ export class EditorCamera {
     this.controls.update();
   }
 
+  shiftWorld(shiftX, shiftZ) {
+    this.camera.position.x -= shiftX;
+    this.camera.position.z -= shiftZ;
+    this.controls.target.x -= shiftX;
+    this.controls.target.z -= shiftZ;
+    this.controls.update();
+  }
+
   reset() {
     this.camera.position.set(150, 180, 150);
     this.camera.zoom = 1;

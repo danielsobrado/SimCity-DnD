@@ -3,6 +3,13 @@ const REQUIRED_POSITIVE_PATHS = Object.freeze([
   Object.freeze(['map', 'height']),
   Object.freeze(['map', 'tileSize']),
   Object.freeze(['map', 'chunkSize']),
+  Object.freeze(['world', 'chunkSize']),
+  Object.freeze(['world', 'prefetchSeconds']),
+  Object.freeze(['world', 'maxResidentChunks']),
+  Object.freeze(['world', 'maxCpuChunks']),
+  Object.freeze(['world', 'floatingOriginThreshold']),
+  Object.freeze(['world', 'minimapCells']),
+  Object.freeze(['world', 'heightScale']),
   Object.freeze(['camera', 'viewSize']),
   Object.freeze(['player', 'fovDegrees']),
   Object.freeze(['player', 'walkSpeed']),
@@ -39,6 +46,13 @@ function assertBoolean(config, path) {
   }
 }
 
+function assertNonNegativeInteger(config, path) {
+  const value = readPath(config, path);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`Invalid editor configuration: ${path.join('.')} must be a non-negative integer.`);
+  }
+}
+
 export function validateEditorConfig(config) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error('Invalid editor configuration: expected a YAML object.');
@@ -49,6 +63,34 @@ export function validateEditorConfig(config) {
   }
   for (const path of REQUIRED_BOOLEAN_PATHS) {
     assertBoolean(config, path);
+  }
+  assertNonNegativeInteger(config, ['world', 'loadRadius']);
+  assertNonNegativeInteger(config, ['world', 'unloadRadius']);
+
+  if (!Number.isSafeInteger(config.world.seed)) {
+    throw new Error('Invalid editor configuration: world.seed must be a safe integer.');
+  }
+  if (!Number.isInteger(config.world.generatorVersion) || config.world.generatorVersion < 1) {
+    throw new Error('Invalid editor configuration: world.generatorVersion must be a positive integer.');
+  }
+  if (!Number.isInteger(config.world.chunkSize)
+      || !Number.isInteger(config.world.maxResidentChunks)
+      || !Number.isInteger(config.world.maxCpuChunks)
+      || !Number.isInteger(config.world.minimapCells)) {
+    throw new Error('Invalid editor configuration: world chunk and cache sizes must be integers.');
+  }
+  if (config.world.loadRadius > config.world.unloadRadius) {
+    throw new Error('Invalid editor configuration: world.unloadRadius must cover world.loadRadius.');
+  }
+  const minimumResidentChunks = (config.world.unloadRadius * 2 + 1) ** 2;
+  if (config.world.maxResidentChunks < minimumResidentChunks) {
+    throw new Error(`Invalid editor configuration: world.maxResidentChunks must be at least ${minimumResidentChunks} for the unload window.`);
+  }
+  if (config.world.maxCpuChunks < config.world.maxResidentChunks) {
+    throw new Error('Invalid editor configuration: world.maxCpuChunks must cover resident GPU chunks.');
+  }
+  if (!Number.isFinite(config.world.seaLevel)) {
+    throw new Error('Invalid editor configuration: world.seaLevel must be finite.');
   }
 
   if (config.player.fovDegrees >= 180) {
@@ -75,11 +117,9 @@ export function validateEditorConfig(config) {
   if (!Array.isArray(config.brush?.sizes) || config.brush.sizes.length === 0) {
     throw new Error('Invalid editor configuration: brush.sizes must not be empty.');
   }
-
   if (config.brush.sizes.some((size) => !Number.isInteger(size) || size <= 0)) {
     throw new Error('Invalid editor configuration: brush.sizes must contain positive integers.');
   }
-
   if (!config.brush.sizes.includes(config.brush.defaultSize)) {
     throw new Error('Invalid editor configuration: brush.defaultSize must be listed in brush.sizes.');
   }

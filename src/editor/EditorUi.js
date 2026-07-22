@@ -29,13 +29,15 @@ export class EditorUi {
     this.controller = null;
     this.toastTimer = null;
     this.minimapQueued = false;
+    this.minimapCenter = { x: 0, z: 0 };
+    this.minimapCells = config.world?.minimapCells ?? MINIMAP_SIZE;
 
     root.innerHTML = `
       <div class="editor-shell">
         <aside class="sidebar" aria-label="World editor tools">
           <header class="sidebar-header">
             <h1>SimCity DnD</h1>
-            <p>Terrain and settlement editor</p>
+            <p>Infinite terrain and settlement editor</p>
           </header>
 
           <section class="panel">
@@ -92,17 +94,18 @@ export class EditorUi {
               <button class="action-button" type="button" data-action="load">Load</button>
               <button class="action-button" type="button" data-action="export">Export</button>
               <button class="action-button" type="button" data-action="import">Import</button>
-              <button class="action-button" type="button" data-action="new">Clear world</button>
+              <button class="action-button" type="button" data-action="new">Clear edits</button>
               <button class="action-button" type="button" data-action="camera">Reset view</button>
             </div>
             <input data-role="file-input" type="file" accept="application/json,.json" hidden />
           </section>
 
           <section class="panel">
-            <h2>World overview</h2>
+            <h2>Local overview</h2>
             <div class="minimap-frame">
               <canvas data-role="minimap" width="${MINIMAP_SIZE}" height="${MINIMAP_SIZE}"></canvas>
             </div>
+            <p class="panel-note">${this.minimapCells} × ${this.minimapCells} cells around the active view.</p>
           </section>
 
           <section class="panel">
@@ -125,8 +128,9 @@ export class EditorUi {
 
         <main class="viewport-shell" data-role="viewport">
           <div class="topbar">
-            <span>${tileMap.width} × ${tileMap.height} cells</span>
-            <span>${config.map.chunkSize} × ${config.map.chunkSize} cell chunks</span>
+            <span>Unbounded world</span>
+            <span>${config.world.chunkSize} × ${config.world.chunkSize} cell chunks</span>
+            <span data-role="streaming-status">Streaming —</span>
             <span data-role="object-count">0 objects</span>
           </div>
           <div class="toast" data-role="toast" aria-live="polite"></div>
@@ -156,6 +160,7 @@ export class EditorUi {
     this.hoverObject = root.querySelector('[data-role="hover-object"]');
     this.selection = root.querySelector('[data-role="selection"]');
     this.objectCount = root.querySelector('[data-role="object-count"]');
+    this.streamingStatus = root.querySelector('[data-role="streaming-status"]');
     this.selectedObject = root.querySelector('[data-role="selected-object"]');
     this.placementInfo = root.querySelector('[data-role="placement-info"]');
     this.fileInput = root.querySelector('[data-role="file-input"]');
@@ -167,83 +172,61 @@ export class EditorUi {
 
   bind(controller) {
     this.controller = controller;
-
     this.toolRow.addEventListener('click', (event) => {
       const button = event.target.closest('[data-tool]');
-      if (button) {
-        controller.selectTool(button.dataset.tool);
-      }
+      if (button) controller.selectTool(button.dataset.tool);
     });
-
     this.terrainModeRow.addEventListener('click', (event) => {
       const button = event.target.closest('[data-terrain-mode]');
-      if (button) {
-        controller.selectTerrainMode(button.dataset.terrainMode);
-      }
+      if (button) controller.selectTerrainMode(button.dataset.terrainMode);
     });
-
     this.palette.addEventListener('click', (event) => {
       const button = event.target.closest('[data-tile-id]');
-      if (button) {
-        controller.selectTile(Number(button.dataset.tileId));
-      }
+      if (button) controller.selectTile(Number(button.dataset.tileId));
     });
-
     this.objectPalette.addEventListener('click', (event) => {
       const button = event.target.closest('[data-object-key]');
-      if (button) {
-        controller.selectObjectDefinition(button.dataset.objectKey);
-      }
+      if (button) controller.selectObjectDefinition(button.dataset.objectKey);
     });
-
     this.brushRow.addEventListener('click', (event) => {
       const button = event.target.closest('[data-brush-size]');
-      if (button) {
-        controller.selectBrush(Number(button.dataset.brushSize));
-      }
+      if (button) controller.selectBrush(Number(button.dataset.brushSize));
     });
-
     this.root.addEventListener('click', (event) => {
       const button = event.target.closest('[data-action]');
-      if (button) {
-        this.handleAction(button.dataset.action);
-      }
+      if (button) this.handleAction(button.dataset.action);
     });
-
     this.fileInput.addEventListener('change', async () => {
       const [file] = this.fileInput.files;
       this.fileInput.value = '';
-      if (!file) {
-        return;
-      }
-
+      if (!file) return;
       try {
-        controller.loadDocument(await importMap(file));
+        controller.loadDocument(await importMap(file, { config: this.config }));
+        this.minimapCenter = controller.getFocusCell?.() ?? this.minimapCenter;
+        this.updateMinimap();
         this.showToast('World imported.');
       } catch (error) {
         this.showToast(error.message, true);
       }
     });
-
     this.minimap.addEventListener('click', (event) => {
       const bounds = this.minimap.getBoundingClientRect();
-      const x = Math.floor(((event.clientX - bounds.left) / bounds.width) * this.tileMap.width);
-      const z = Math.floor(((event.clientY - bounds.top) / bounds.height) * this.tileMap.height);
+      const normalizedX = (event.clientX - bounds.left) / bounds.width - 0.5;
+      const normalizedZ = (event.clientY - bounds.top) / bounds.height - 0.5;
       controller.focusCell(
-        Math.max(0, Math.min(this.tileMap.width - 1, x)),
-        Math.max(0, Math.min(this.tileMap.height - 1, z)),
+        Math.floor(this.minimapCenter.x + normalizedX * this.minimapCells),
+        Math.floor(this.minimapCenter.z + normalizedZ * this.minimapCells),
       );
+      this.minimapCenter = controller.getFocusCell?.() ?? this.minimapCenter;
+      this.queueMinimapUpdate();
     });
 
     controller.subscribe((state) => this.renderState(state));
     controller.subscribeHover((hover) => this.renderHover(hover));
     controller.subscribeNotice(({ message, isError }) => this.showToast(message, isError));
     controller.subscribeMap(({ final }) => {
-      if (final) {
-        this.queueMinimapUpdate();
-      }
+      if (final) this.queueMinimapUpdate();
     });
-
     this.updateMinimap();
   }
 
@@ -293,7 +276,6 @@ export class EditorUi {
     for (const button of this.brushRow.querySelectorAll('[data-brush-size]')) {
       button.classList.toggle('is-active', Number(button.dataset.brushSize) === state.brushSize);
     }
-
     this.root.querySelector('[data-action="undo"]').disabled = !state.canUndo;
     this.root.querySelector('[data-action="redo"]').disabled = !state.canRedo;
     this.root.querySelector('[data-action="move-selected"]').disabled = !state.selectedObject;
@@ -349,33 +331,35 @@ export class EditorUi {
     this.hoverObject.textContent = hover.objectDefinition?.label ?? 'Object —';
   }
 
+  renderStreamingStatus(status) {
+    if (!status || !this.streamingStatus) return;
+    this.streamingStatus.textContent = `${status.resident}/${status.capacity} terrain chunks · ${status.loading} loading · origin ${Math.round(status.origin.x)},${Math.round(status.origin.z)}`;
+    const focus = this.controller?.getFocusCell?.();
+    if (focus) {
+      const moved = Math.abs(focus.x - this.minimapCenter.x) > this.minimapCells * 0.2
+        || Math.abs(focus.z - this.minimapCenter.z) > this.minimapCells * 0.2;
+      if (moved) {
+        this.minimapCenter = focus;
+        this.queueMinimapUpdate();
+      }
+    }
+  }
+
   async handleAction(action) {
     try {
       switch (action) {
-        case 'undo':
-          this.controller.undo();
-          break;
-        case 'redo':
-          this.controller.redo();
-          break;
-        case 'rotate-placement':
-          this.controller.rotatePlacement();
-          break;
-        case 'move-selected':
-          this.controller.startMoveSelected();
-          break;
-        case 'rotate-selected':
-          this.controller.rotateSelected();
-          break;
-        case 'delete-selected':
-          this.controller.deleteSelected();
-          break;
+        case 'undo': this.controller.undo(); break;
+        case 'redo': this.controller.redo(); break;
+        case 'rotate-placement': this.controller.rotatePlacement(); break;
+        case 'move-selected': this.controller.startMoveSelected(); break;
+        case 'rotate-selected': this.controller.rotateSelected(); break;
+        case 'delete-selected': this.controller.deleteSelected(); break;
         case 'save':
-          saveToBrowser(this.config.storage.key, this.controller.toDocument());
+          await saveToBrowser(this.config.storage.key, this.controller.toDocument());
           this.showToast('World saved in this browser.');
           break;
         case 'load': {
-          const worldDocument = loadFromBrowser(this.config.storage.key);
+          const worldDocument = await loadFromBrowser(this.config.storage.key);
           if (!worldDocument) {
             this.showToast('No browser save exists yet.');
             return;
@@ -386,22 +370,17 @@ export class EditorUi {
         }
         case 'export':
           exportMap(this.controller.toDocument());
-          this.showToast('World exported as JSON.');
+          this.showToast('Sparse world exported as JSON.');
           break;
-        case 'import':
-          this.fileInput.click();
-          break;
+        case 'import': this.fileInput.click(); break;
         case 'new':
-          if (window.confirm('Clear all terrain edits and placed objects?')) {
+          if (window.confirm('Clear all terrain overrides, voxel stamps, and placed objects?')) {
             this.controller.clearWorld();
-            this.showToast('World cleared.');
+            this.showToast('World edits cleared. Procedural terrain remains.');
           }
           break;
-        case 'camera':
-          this.controller.resetCamera();
-          break;
-        default:
-          break;
+        case 'camera': this.controller.resetCamera(); break;
+        default: break;
       }
     } catch (error) {
       this.showToast(error.message, true);
@@ -409,9 +388,7 @@ export class EditorUi {
   }
 
   queueMinimapUpdate() {
-    if (this.minimapQueued) {
-      return;
-    }
+    if (this.minimapQueued) return;
     this.minimapQueued = true;
     requestAnimationFrame(() => {
       this.minimapQueued = false;
@@ -421,46 +398,49 @@ export class EditorUi {
 
   updateMinimap() {
     const context = this.minimap.getContext('2d', { alpha: false });
-    const image = context.createImageData(this.tileMap.width, this.tileMap.height);
+    const image = context.createImageData(MINIMAP_SIZE, MINIMAP_SIZE);
+    const minimumX = this.minimapCenter.x - Math.floor(this.minimapCells / 2);
+    const minimumZ = this.minimapCenter.z - Math.floor(this.minimapCells / 2);
 
-    for (let index = 0; index < this.tileMap.tileCount; index += 1) {
-      const tile = TILE_BY_ID.get(this.tileMap.tiles[index]);
-      const [red, green, blue] = hexToRgbBytes(tile.color);
-      const { x, z } = this.tileMap.coordinatesOf(index);
-      const height = this.heightField.getCellHeight(x, z) ?? 0;
-      const shade = clamp(
-        1 + height * MINIMAP_HEIGHT_SHADE,
-        MINIMAP_MINIMUM_SHADE,
-        MINIMAP_MAXIMUM_SHADE,
-      );
-      const offset = index * 4;
-      image.data[offset] = clamp(Math.round(red * shade), 0, 255);
-      image.data[offset + 1] = clamp(Math.round(green * shade), 0, 255);
-      image.data[offset + 2] = clamp(Math.round(blue * shade), 0, 255);
-      image.data[offset + 3] = 255;
+    for (let pixelZ = 0; pixelZ < MINIMAP_SIZE; pixelZ += 1) {
+      for (let pixelX = 0; pixelX < MINIMAP_SIZE; pixelX += 1) {
+        const x = minimumX + Math.floor(pixelX * this.minimapCells / MINIMAP_SIZE);
+        const z = minimumZ + Math.floor(pixelZ * this.minimapCells / MINIMAP_SIZE);
+        const tile = TILE_BY_ID.get(this.tileMap.get(x, z));
+        const [red, green, blue] = hexToRgbBytes(tile.color);
+        const height = this.heightField.getCellHeight(x, z) ?? 0;
+        const shade = clamp(
+          1 + height * MINIMAP_HEIGHT_SHADE,
+          MINIMAP_MINIMUM_SHADE,
+          MINIMAP_MAXIMUM_SHADE,
+        );
+        const offset = (pixelZ * MINIMAP_SIZE + pixelX) * 4;
+        image.data[offset] = clamp(Math.round(red * shade), 0, 255);
+        image.data[offset + 1] = clamp(Math.round(green * shade), 0, 255);
+        image.data[offset + 2] = clamp(Math.round(blue * shade), 0, 255);
+        image.data[offset + 3] = 255;
+      }
     }
 
-    const buffer = window.document.createElement('canvas');
-    buffer.width = this.tileMap.width;
-    buffer.height = this.tileMap.height;
-    buffer.getContext('2d').putImageData(image, 0, 0);
-
-    context.imageSmoothingEnabled = false;
-    context.clearRect(0, 0, this.minimap.width, this.minimap.height);
-    context.drawImage(buffer, 0, 0, this.minimap.width, this.minimap.height);
-
-    const scaleX = this.minimap.width / this.tileMap.width;
-    const scaleZ = this.minimap.height / this.tileMap.height;
+    context.putImageData(image, 0, 0);
+    const scale = MINIMAP_SIZE / this.minimapCells;
     for (const object of this.objectMap.list()) {
+      if (object.x < minimumX || object.z < minimumZ
+          || object.x >= minimumX + this.minimapCells
+          || object.z >= minimumZ + this.minimapCells) {
+        continue;
+      }
       const definition = this.objectByKey.get(object.definitionKey);
       context.fillStyle = definition.color;
       context.fillRect(
-        Math.floor(object.x * scaleX) - 1,
-        Math.floor(object.z * scaleZ) - 1,
-        Math.max(2, Math.ceil(definition.footprint.width * scaleX)),
-        Math.max(2, Math.ceil(definition.footprint.depth * scaleZ)),
+        Math.floor((object.x - minimumX) * scale) - 1,
+        Math.floor((object.z - minimumZ) * scale) - 1,
+        Math.max(2, Math.ceil(definition.footprint.width * scale)),
+        Math.max(2, Math.ceil(definition.footprint.depth * scale)),
       );
     }
+    context.strokeStyle = '#f0cf68';
+    context.strokeRect(MINIMAP_SIZE / 2 - 2, MINIMAP_SIZE / 2 - 2, 4, 4);
   }
 
   showToast(message, isError = false) {

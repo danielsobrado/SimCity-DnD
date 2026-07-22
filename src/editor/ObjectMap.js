@@ -12,8 +12,7 @@ export class ObjectMap {
     this.catalog = objectCatalog;
     this.definitionByKey = new Map(objectCatalog.map((definition) => [definition.key, definition]));
     this.objectsById = new Map();
-    this.occupancy = new Int32Array(tileMap.tileCount);
-    this.occupancy.fill(-1);
+    this.occupancy = new Map();
     this.nextId = 1;
   }
 
@@ -33,8 +32,8 @@ export class ObjectMap {
     if (!this.tileMap.inBounds(x, z)) {
       return null;
     }
-    const id = this.occupancy[this.tileMap.indexOf(x, z)];
-    return id === -1 ? null : this.getById(id);
+    const id = this.occupancy.get(this.tileMap.indexOf(x, z));
+    return id === undefined ? null : this.getById(id);
   }
 
   getDefinition(definitionKey) {
@@ -84,14 +83,13 @@ export class ObjectMap {
 
     for (const cell of cells) {
       if (!this.tileMap.inBounds(cell.x, cell.z)) {
-        return { valid: false, reason: 'Footprint is outside the map.', cells };
+        return { valid: false, reason: 'Footprint is outside the supported world range.', cells };
       }
-      const index = this.tileMap.indexOf(cell.x, cell.z);
-      const occupantId = this.occupancy[index];
-      if (occupantId !== -1 && occupantId !== ignoreObjectId) {
+      const occupantId = this.occupancy.get(this.tileMap.indexOf(cell.x, cell.z));
+      if (occupantId !== undefined && occupantId !== ignoreObjectId) {
         return { valid: false, reason: 'Footprint overlaps another object.', cells };
       }
-      if (!definition.allowedTileIds.includes(this.tileMap.tiles[index])) {
+      if (!definition.allowedTileIds.includes(this.tileMap.get(cell.x, cell.z))) {
         return { valid: false, reason: 'The terrain does not support this object.', cells };
       }
     }
@@ -137,7 +135,7 @@ export class ObjectMap {
       throw new Error(validation.reason);
     }
 
-    this.writeOccupancy(current, -1);
+    this.writeOccupancy(current, null);
     this.objectsById.set(numericId, next);
     this.writeOccupancy(next, numericId);
     return cloneObject(next);
@@ -149,7 +147,7 @@ export class ObjectMap {
     if (!object) {
       return null;
     }
-    this.writeOccupancy(object, -1);
+    this.writeOccupancy(object, null);
     this.objectsById.delete(numericId);
     return cloneObject(object);
   }
@@ -181,7 +179,6 @@ export class ObjectMap {
   applyChange(change, direction) {
     const target = direction === 'undo' ? change.before : change.after;
     const source = direction === 'undo' ? change.after : change.before;
-
     if (source) {
       this.remove(source.id);
     }
@@ -201,7 +198,7 @@ export class ObjectMap {
   clear() {
     const snapshots = this.list();
     this.objectsById.clear();
-    this.occupancy.fill(-1);
+    this.occupancy.clear();
     return snapshots;
   }
 
@@ -214,8 +211,7 @@ export class ObjectMap {
     const previousOccupancy = this.occupancy;
     const previousNextId = this.nextId;
     this.objectsById = new Map();
-    this.occupancy = new Int32Array(this.tileMap.tileCount);
-    this.occupancy.fill(-1);
+    this.occupancy = new Map();
     this.nextId = 1;
 
     try {
@@ -240,8 +236,14 @@ export class ObjectMap {
 
   writeOccupancy(object, value) {
     for (const cell of this.getCells(object.x, object.z, object.definitionKey, object.rotation)) {
-      if (this.tileMap.inBounds(cell.x, cell.z)) {
-        this.occupancy[this.tileMap.indexOf(cell.x, cell.z)] = value;
+      if (!this.tileMap.inBounds(cell.x, cell.z)) {
+        continue;
+      }
+      const key = this.tileMap.indexOf(cell.x, cell.z);
+      if (value === null) {
+        this.occupancy.delete(key);
+      } else {
+        this.occupancy.set(key, value);
       }
     }
   }

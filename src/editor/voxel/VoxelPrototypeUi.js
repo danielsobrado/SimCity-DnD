@@ -33,9 +33,9 @@ export class VoxelPrototypeUi {
         <button class="tool-button" type="button" data-voxel-operation="subtract">Dig</button>
         <button class="tool-button" type="button" data-voxel-operation="smooth">Smooth</button>
       </div>
-      <label class="panel-note">X <input data-role="voxel-x" type="number" step="0.25" /></label>
+      <label class="panel-note">Global X <input data-role="voxel-x" type="number" step="0.25" /></label>
       <label class="panel-note">Y <input data-role="voxel-y" type="number" step="0.25" /></label>
-      <label class="panel-note">Z <input data-role="voxel-z" type="number" step="0.25" /></label>
+      <label class="panel-note">Global Z <input data-role="voxel-z" type="number" step="0.25" /></label>
       <label class="panel-note">Radius <input data-role="voxel-radius" type="number" min="0.25" step="0.25" /></label>
       <label class="panel-note">Strength <input data-role="voxel-strength" type="number" min="0" max="1" step="0.05" /></label>
       <label class="panel-note">Blend <input data-role="voxel-smoothness" type="number" min="0.01" step="0.05" /></label>
@@ -61,15 +61,11 @@ export class VoxelPrototypeUi {
     this.status = this.panel.querySelector('[data-role="voxel-status"]');
 
     const { layout } = prototype;
-    this.xInput.min = 0;
-    this.xInput.max = layout.totalCellsX;
-    this.xInput.value = layout.totalCellsX / 2;
+    this.xInput.value = 0;
     this.yInput.min = 0;
     this.yInput.max = layout.totalCellsY;
     this.yInput.value = layout.baseHeight;
-    this.zInput.min = 0;
-    this.zInput.max = layout.totalCellsZ;
-    this.zInput.value = layout.totalCellsZ / 2;
+    this.zInput.value = 0;
     this.radiusInput.value = layout.defaultRadius;
     this.strengthInput.value = layout.defaultStrength;
     this.smoothnessInput.value = layout.defaultSmoothness;
@@ -80,9 +76,7 @@ export class VoxelPrototypeUi {
     };
     this.onOperation = (event) => {
       const button = event.target.closest('[data-voxel-operation]');
-      if (!button) {
-        return;
-      }
+      if (!button) return;
       this.operation = button.dataset.voxelOperation;
       this.render();
     };
@@ -113,13 +107,7 @@ export class VoxelPrototypeUi {
       this.controller.emitNotice('Move the cursor over the map first.', true);
       return;
     }
-
     const local = this.prototype.mapCellToVoxel(hoveredCell.x, hoveredCell.z);
-    if (!local) {
-      this.controller.emitNotice('The cursor is outside the voxel world.', true);
-      return;
-    }
-
     this.xInput.value = local.x.toFixed(2);
     this.zInput.value = local.z.toFixed(2);
   }
@@ -164,7 +152,7 @@ export class VoxelPrototypeUi {
       : 'Show streamed chunks';
     const rebuildLabel = state.rebuilding ? ' · rebuilding' : '';
     const focusLabel = state.focusChunk ? state.focusChunk.join(':') : '—';
-    this.status.textContent = `${state.residentChunkCount}/${state.chunkCount} GPU slots · focus ${focusLabel} · world ${state.worldChunkGrid.join('×')} chunks · ${state.stampCount}/${state.maxStamps} stamps${rebuildLabel} · zero readbacks`;
+    this.status.textContent = `${state.residentChunkCount}/${state.chunkCount} GPU slots · focus ${focusLabel} · unbounded world · ${state.stampCount}/${state.maxStamps} stamps${rebuildLabel} · zero readbacks`;
   }
 
   dispose() {

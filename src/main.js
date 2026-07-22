@@ -5,7 +5,7 @@ import { loadEditorConfig } from './config/loadEditorConfig.js';
 import { installObjectAssets } from './editor/assets/installObjectAssets.js';
 import { EditorCamera } from './editor/EditorCamera.js';
 import { EditorUi } from './editor/EditorUi.js';
-import { HeightField } from './editor/HeightField.js';
+import { InfiniteTerrainView } from './editor/InfiniteTerrainView.js';
 import { ObjectMap } from './editor/ObjectMap.js';
 import { ObjectView } from './editor/ObjectView.js';
 import { OBJECT_CATALOG } from './editor/objectCatalog.js';
@@ -17,13 +17,19 @@ import { PlayerController } from './editor/player/PlayerController.js';
 import { ViewModeController } from './editor/player/ViewModeController.js';
 import { ViewModeUi } from './editor/player/ViewModeUi.js';
 import { TerrainAwareEditorController } from './editor/TerrainAwareEditorController.js';
-import { TerrainView } from './editor/TerrainView.js';
-import { TileMap } from './editor/TileMap.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
 import { GpuVoxelWorld } from './editor/voxel/GpuVoxelWorld.js';
 import { VoxelPrototypeUi } from './editor/voxel/VoxelPrototypeUi.js';
 import { VoxelStampStore } from './editor/voxel/VoxelStampStore.js';
 import { createVoxelWorldLayout } from './editor/voxel/VoxelWorldLayout.js';
+import { ChunkedHeightField } from './editor/world/ChunkedHeightField.js';
+import { ChunkedTileMap } from './editor/world/ChunkedTileMap.js';
+import { FloatingOrigin } from './editor/world/FloatingOrigin.js';
+import { ProceduralWorldGenerator } from './editor/world/ProceduralWorldGenerator.js';
+import { WorkerBackedWorldStore } from './editor/world/WorkerBackedWorldStore.js';
+import { WorldChunkWorkerClient } from './editor/world/WorldChunkWorkerClient.js';
+
+const TERRAIN_PREFETCH_REFRESH_MS = 200;
 
 async function startEditor() {
   const config = loadEditorConfig();
@@ -33,26 +39,37 @@ async function startEditor() {
   }
 
   const root = document.querySelector('#app');
-  const tileMap = new TileMap({
-    width: config.map.width,
-    height: config.map.height,
+  const generator = new ProceduralWorldGenerator({
+    seed: config.world.seed,
+    version: config.world.generatorVersion,
+    heightScale: config.world.heightScale,
+    seaLevel: config.world.seaLevel,
+  });
+  const chunkWorker = new WorldChunkWorkerClient({
+    chunkSize: config.world.chunkSize,
+    generator,
+  });
+  const worldStore = new WorkerBackedWorldStore({
+    chunkWorker,
+    chunkSize: config.world.chunkSize,
     tileSize: config.map.tileSize,
-    defaultTileId: defaultTile.id,
+    cacheLimit: config.world.maxCpuChunks,
+    generator,
   });
-  const heightField = new HeightField({
-    width: config.map.width,
-    height: config.map.height,
-  });
+  const tileMap = new ChunkedTileMap({ worldStore, defaultTileId: defaultTile.id });
+  const heightField = new ChunkedHeightField({ worldStore });
   const objectMap = new ObjectMap({ tileMap, objectCatalog: OBJECT_CATALOG });
+  const floatingOrigin = new FloatingOrigin({
+    threshold: config.world.floatingOriginThreshold,
+    snapSize: config.world.chunkSize * config.map.tileSize,
+  });
+
   const voxelWorldLayout = createVoxelWorldLayout(config.voxelPrototype, config.map);
   const voxelStampStore = new VoxelStampStore({
-    cells: [
-      voxelWorldLayout.totalCellsX,
-      voxelWorldLayout.totalCellsY,
-      voxelWorldLayout.totalCellsZ,
-    ],
+    cells: [0, voxelWorldLayout.totalCellsY, 0],
     legacyCells: config.voxelPrototype.cells,
     maxStamps: config.voxelPrototype.maxStamps,
+    unboundedXZ: true,
   });
 
   const ui = new EditorUi({
@@ -67,11 +84,13 @@ async function startEditor() {
   const frameRateDisplay = new FrameRateDisplay({ root });
   const frameRateMeter = new FrameRateMeter();
 
-  const terrainView = new TerrainView({
+  const terrainView = new InfiniteTerrainView({
     container: ui.viewport,
     tileMap,
     heightField,
-    chunkSize: config.map.chunkSize,
+    worldStore,
+    floatingOrigin,
+    streamingConfig: config.world,
     rendererConfig: config.renderer,
   });
 
@@ -79,6 +98,7 @@ async function startEditor() {
     await terrainView.initialize();
   } catch (error) {
     terrainView.dispose();
+    worldStore.dispose();
     throw error;
   }
 
@@ -110,6 +130,7 @@ async function startEditor() {
   const controller = new TerrainAwareEditorController({
     tileMap,
     heightField,
+    worldStore,
     objectMap,
     terrainView,
     objectView,
@@ -120,6 +141,10 @@ async function startEditor() {
     terrainConfig: config.terrain,
     voxelStampStore,
   });
+  controller.focusProvider = () => {
+    const renderFocus = viewModeController.getFocusWorld();
+    return floatingOrigin.toCanonical(renderFocus.x, renderFocus.z);
+  };
 
   ui.bind(controller);
   const viewModeUi = new ViewModeUi({ root, controller: viewModeController });
@@ -142,7 +167,7 @@ async function startEditor() {
     controller,
     stampStore: voxelStampStore,
   });
-  const voxelStatus = await voxelPrototype.initialize(viewModeController.getFocusWorld());
+  const voxelStatus = await voxelPrototype.initialize({ x: 0, z: 0 });
   voxelPrototypeUi.render();
   if (voxelStatus.code === 'failed') {
     console.error('GPU voxel world failed to initialize.', voxelStatus.error);
@@ -157,20 +182,19 @@ async function startEditor() {
 
   let active = true;
   let nextFrameRateDisplayAt = 0;
+  let nextStreamingStatusAt = 0;
+  let nextPredictiveRefreshAt = 0;
   const onVisibilityChange = () => {
-    if (!document.hidden) {
-      return;
-    }
+    if (!document.hidden) return;
     frameRateMeter.reset();
     frameRateDisplay.update(null);
     nextFrameRateDisplayAt = 0;
+    nextPredictiveRefreshAt = 0;
   };
   document.addEventListener('visibilitychange', onVisibilityChange);
 
   terrainView.setAnimationLoop((timestamp) => {
-    if (!active) {
-      return;
-    }
+    if (!active) return;
 
     const frameTimestamp = Number.isFinite(timestamp) ? timestamp : performance.now();
     const averageFps = frameRateMeter.record(frameTimestamp);
@@ -180,7 +204,31 @@ async function startEditor() {
     }
 
     viewModeController.update(frameTimestamp);
-    voxelPrototype.update(viewModeController.getFocusWorld());
+    let renderFocus = viewModeController.getFocusWorld();
+    const rebase = terrainView.updateFloatingOrigin(renderFocus);
+    if (rebase) {
+      viewModeController.shiftWorld(rebase.shiftX, rebase.shiftZ);
+      controller.refreshObjects();
+      renderFocus = viewModeController.getFocusWorld();
+    }
+    const canonicalFocus = floatingOrigin.toCanonical(renderFocus.x, renderFocus.z);
+    const forcePredictiveRefresh = frameTimestamp >= nextPredictiveRefreshAt;
+    if (forcePredictiveRefresh) {
+      nextPredictiveRefreshAt = frameTimestamp + TERRAIN_PREFETCH_REFRESH_MS;
+    }
+    terrainView.updateStreaming(
+      canonicalFocus,
+      frameTimestamp,
+      forcePredictiveRefresh,
+    ).catch((error) => {
+      console.error('Terrain streaming update failed.', error);
+    });
+    voxelPrototype.update(canonicalFocus);
+
+    if (frameTimestamp >= nextStreamingStatusAt) {
+      ui.renderStreamingStatus(terrainView.getStreamingStatus());
+      nextStreamingStatusAt = frameTimestamp + 250;
+    }
     terrainView.render(viewModeController.camera);
   });
 
@@ -198,6 +246,7 @@ async function startEditor() {
     objectView.dispose();
     frameRateDisplay.dispose();
     terrainView.dispose();
+    worldStore.dispose();
   }, { once: true });
 }
 

@@ -10,6 +10,20 @@ function createValidConfig() {
       tileSize: 2,
       chunkSize: 32,
     },
+    world: {
+      seed: 918273,
+      generatorVersion: 1,
+      chunkSize: 64,
+      loadRadius: 2,
+      unloadRadius: 3,
+      prefetchSeconds: 1.5,
+      maxResidentChunks: 49,
+      maxCpuChunks: 81,
+      floatingOriginThreshold: 4096,
+      minimapCells: 192,
+      heightScale: 12,
+      seaLevel: -1.5,
+    },
     camera: {
       viewSize: 180,
     },
@@ -43,7 +57,7 @@ function createValidConfig() {
   };
 }
 
-test('accepts positive nested map, camera, player, renderer, and terrain values', () => {
+test('accepts positive nested map, world, camera, player, renderer, and terrain values', () => {
   const config = createValidConfig();
   assert.equal(validateEditorConfig(config), config);
 });
@@ -55,6 +69,36 @@ test('reads map.width through nested object paths', () => {
   assert.throws(
     () => validateEditorConfig(config),
     /map\.width must be positive/,
+  );
+});
+
+test('requires unload radius to cover the load radius', () => {
+  const config = createValidConfig();
+  config.world.unloadRadius = 1;
+
+  assert.throws(
+    () => validateEditorConfig(config),
+    /world\.unloadRadius must cover world\.loadRadius/,
+  );
+});
+
+test('requires enough terrain slots for the unload radius', () => {
+  const config = createValidConfig();
+  config.world.maxResidentChunks = 48;
+
+  assert.throws(
+    () => validateEditorConfig(config),
+    /world\.maxResidentChunks must be at least 49 for the unload window/,
+  );
+});
+
+test('requires the CPU cache to cover resident GPU chunks', () => {
+  const config = createValidConfig();
+  config.world.maxCpuChunks = 48;
+
+  assert.throws(
+    () => validateEditorConfig(config),
+    /world\.maxCpuChunks must cover resident GPU chunks/,
   );
 });
 

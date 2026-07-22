@@ -1,18 +1,41 @@
 import { EditorController } from './EditorController.js';
 import { evaluateObjectSurface } from './TerrainPlacement.js';
 import { createWorldDocument, loadWorldDocument } from './WorldDocument.js';
+import { worldToCell } from './world/WorldCoordinates.js';
+
+function cloneCampaign(campaign) {
+  return campaign ? structuredClone(campaign) : null;
+}
 
 export class TerrainAwareEditorController extends EditorController {
   constructor(options) {
     super(options);
     this.voxelStampStore = options.voxelStampStore ?? null;
+    this.worldStore = options.worldStore ?? options.tileMap?.worldStore ?? null;
+    this.campaign = null;
+    this.importWarnings = [];
+    this.focusProvider = null;
   }
 
   getState() {
     return {
       ...super.getState(),
       voxelStampCount: this.voxelStampStore?.size ?? 0,
+      worldStats: this.worldStore?.getStats() ?? null,
+      campaignSource: this.campaign?.source ?? null,
     };
+  }
+
+  getFocusCell() {
+    const canonical = this.focusProvider
+      ? this.focusProvider()
+      : (() => {
+        const renderFocus = this.editorCamera.getFocusWorld();
+        return this.terrainView.floatingOrigin
+          ? this.terrainView.floatingOrigin.toCanonical(renderFocus.x, renderFocus.z)
+          : renderFocus;
+      })();
+    return worldToCell(canonical.x, canonical.z, this.tileMap.tileSize);
   }
 
   validateObjectPlacement({ definitionKey, x, z, rotation, ignoreObjectId = null }) {
@@ -103,6 +126,27 @@ export class TerrainAwareEditorController extends EditorController {
       this.voxelStampStore.replaceAll(direction === 'undo' ? entry.before : entry.after);
       return;
     }
+    if (entry.kind === 'infinite-world') {
+      this.worldStore.restoreSnapshot(
+        direction === 'undo' ? entry.beforeWorld : entry.afterWorld,
+      );
+      this.objectMap.replaceAll(
+        direction === 'undo' ? entry.beforeObjects : entry.afterObjects,
+      );
+      this.voxelStampStore?.replaceAll(
+        direction === 'undo' ? entry.beforeVoxelStamps : entry.afterVoxelStamps,
+      );
+      this.campaign = cloneCampaign(
+        direction === 'undo' ? entry.beforeCampaign : entry.afterCampaign,
+      );
+      this.importWarnings = direction === 'undo'
+        ? [...(entry.beforeImportWarnings ?? [])]
+        : [...(entry.afterImportWarnings ?? [])];
+      this.setSelectedObject(null);
+      this.terrainView.refreshAll();
+      this.refreshObjects();
+      return;
+    }
 
     super.applyHistory(entry, direction);
     if (entry.kind === 'world' && this.voxelStampStore) {
@@ -113,6 +157,43 @@ export class TerrainAwareEditorController extends EditorController {
   }
 
   clearWorld() {
+    if (this.worldStore) {
+      const beforeWorld = this.worldStore.createSnapshot();
+      const beforeObjects = this.objectMap.clear();
+      const beforeVoxelStamps = this.voxelStampStore?.clear() ?? [];
+      const beforeCampaign = cloneCampaign(this.campaign);
+      const beforeImportWarnings = [...this.importWarnings];
+      if (beforeWorld.tileOverrides.length === 0
+          && beforeWorld.heightOverrides.length === 0
+          && beforeObjects.length === 0
+          && beforeVoxelStamps.length === 0
+          && !beforeCampaign) {
+        return;
+      }
+      this.worldStore.clearOverrides();
+      this.campaign = null;
+      this.importWarnings = [];
+      const afterWorld = this.worldStore.createSnapshot();
+      this.commitHistory({
+        kind: 'infinite-world',
+        beforeWorld,
+        afterWorld,
+        beforeObjects,
+        afterObjects: [],
+        beforeVoxelStamps,
+        afterVoxelStamps: [],
+        beforeCampaign,
+        afterCampaign: null,
+        beforeImportWarnings,
+        afterImportWarnings: [],
+      });
+      this.setSelectedObject(null);
+      this.terrainView.refreshAll();
+      this.refreshObjects();
+      this.emitMap();
+      return;
+    }
+
     const beforeObjects = this.objectMap.clear();
     const terrainPatch = this.tileMap.fill(0);
     const heightPatch = this.heightField.fill(0);
@@ -141,12 +222,16 @@ export class TerrainAwareEditorController extends EditorController {
   }
 
   toDocument() {
-    return createWorldDocument(
-      this.tileMap,
-      this.heightField,
-      this.objectMap,
-      this.voxelStampStore,
-    );
+    return {
+      ...createWorldDocument(
+        this.tileMap,
+        this.heightField,
+        this.objectMap,
+        this.voxelStampStore,
+      ),
+      ...(this.campaign ? { campaign: cloneCampaign(this.campaign) } : {}),
+      ...(this.importWarnings.length > 0 ? { importWarnings: [...this.importWarnings] } : {}),
+    };
   }
 
   loadDocument(document) {
@@ -158,11 +243,18 @@ export class TerrainAwareEditorController extends EditorController {
       this.voxelStampStore,
       () => this.validateLoadedObjectSurfaces(),
     );
+    this.campaign = cloneCampaign(document.campaign);
+    this.importWarnings = Array.isArray(document.importWarnings)
+      ? [...document.importWarnings]
+      : [];
     this.terrainView.refreshAll();
     this.refreshObjects();
     this.undoStack = [];
     this.redoStack = [];
     this.setSelectedObject(null);
+    if (this.importWarnings.length > 0) {
+      this.emitNotice(this.importWarnings.join(' '));
+    }
     this.emitMap();
     this.emitState();
   }

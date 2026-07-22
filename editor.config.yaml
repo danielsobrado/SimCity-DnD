@@ -4,6 +4,19 @@ map:
   tileSize: 2
   defaultTile: plains
   chunkSize: 32
+world:
+  seed: 918273
+  generatorVersion: 1
+  chunkSize: 64
+  loadRadius: 2
+  unloadRadius: 3
+  prefetchSeconds: 1.5
+  maxResidentChunks: 49
+  maxCpuChunks: 81
+  floatingOriginThreshold: 4096
+  minimapCells: 192
+  heightScale: 12
+  seaLevel: -1.5
 camera:
   viewSize: 180
   minZoom: 0.3

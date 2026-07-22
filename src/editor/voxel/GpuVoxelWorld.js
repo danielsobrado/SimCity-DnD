@@ -74,18 +74,14 @@ function aggregateStatus(slots, layout, stampStore, focusChunk) {
     chunkCount: slots.length,
     readyChunkCount: readyCount,
     residentChunkCount: slots.filter((slot) => slot.key).length,
-    worldChunkGrid: Object.freeze([layout.chunksX, layout.chunksZ]),
+    worldChunkGrid: Object.freeze(['∞', '∞']),
     focusChunk: focusChunk ? Object.freeze([focusChunk.chunkX, focusChunk.chunkZ]) : null,
     chunkCells: Object.freeze([
       layout.chunkCellsX,
       layout.chunkCellsY,
       layout.chunkCellsZ,
     ]),
-    cells: Object.freeze([
-      layout.totalCellsX,
-      layout.totalCellsY,
-      layout.totalCellsZ,
-    ]),
+    cells: Object.freeze([Number.POSITIVE_INFINITY, layout.totalCellsY, Number.POSITIVE_INFINITY]),
     stampCount: stampStore?.size ?? 0,
     maxStamps: layout.maxGlobalStamps,
     error,
@@ -194,11 +190,16 @@ export class GpuVoxelWorld {
     if (!group || !descriptor) {
       return;
     }
+    const render = this.terrainView.floatingOrigin
+      ? this.terrainView.floatingOrigin.toRender(descriptor.centerWorldX, descriptor.centerWorldZ)
+      : { x: descriptor.centerWorldX, z: descriptor.centerWorldZ };
+    const groundHeight = this.terrainView.getCanonicalHeight
+      ? this.terrainView.getCanonicalHeight(descriptor.centerWorldX, descriptor.centerWorldZ)
+      : this.terrainView.getWorldHeight(render.x, render.z);
     group.position.set(
-      descriptor.centerWorldX,
-      this.terrainView.getWorldHeight(descriptor.centerWorldX, descriptor.centerWorldZ)
-        + this.layout.verticalOffset,
-      descriptor.centerWorldZ,
+      render.x,
+      groundHeight + this.layout.verticalOffset,
+      render.z,
     );
   }
 
@@ -218,8 +219,11 @@ export class GpuVoxelWorld {
   }
 
   mapCellToVoxel(cellX, cellZ) {
-    const world = this.terrainView.cellToWorld(cellX, cellZ);
-    return worldToVoxel(this.layout, world.x, world.z);
+    const render = this.terrainView.cellToWorld(cellX, cellZ);
+    const canonical = this.terrainView.floatingOrigin
+      ? this.terrainView.floatingOrigin.toCanonical(render.x, render.z)
+      : render;
+    return worldToVoxel(this.layout, canonical.x, canonical.z);
   }
 
   setVisible(visible) {

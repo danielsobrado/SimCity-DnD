@@ -4,24 +4,28 @@ A D&D-inspired city builder built with Three.js, with biome-driven regions, sett
 
 ## World editor
 
-The current `main` branch contains a large-map terrain and settlement-object editor with:
+The editor now runs on an effectively unbounded logical world rather than one fixed tile array.
 
-- A 512 × 512 logical tile map.
-- A continuous shared-vertex heightfield without mesh cracks between cells.
-- Raise, lower, smooth, and terrain-paint brushes.
-- GPU texture-driven terrain displacement through TSL with no geometry readbacks.
-- Camera-driven GPU marching-cubes chunk streaming through a fixed reusable slot pool.
+- Global signed cell and chunk coordinates.
+- `64 × 64` terrain pages with `65 × 65` canonical shared height samples.
+- Deterministic procedural terrain outside modified or imported regions.
+- Predictive camera and player-driven terrain prefetch.
+- Separate load and unload radii to prevent border thrashing.
+- A fixed reusable WebGPU terrain-slot pool.
+- Bounded CPU chunk caching with deterministic eviction.
+- Background chunk generation in a module worker.
+- Floating-origin rebasing for long-distance precision.
+- Sparse terrain, height, object, campaign, and voxel persistence.
+- Dense binary encoding for fully modified or imported chunks.
+- IndexedDB browser saves with legacy localStorage loading.
+- Automatic migration of native map versions 1 through 5.
+- Azgaar Fantasy Map Generator Full JSON import.
+- Camera-driven GPU marching-cubes voxel streaming with no geometry readbacks.
 - Selectable Edit / Orbit and first-person Player modes.
-- Plains, forest, water, road, farm, stone, desert, swamp, snow, and corruption terrain.
-- Brush sizes from 1 × 1 to 15 × 15.
-- Cottage, farmstead, inn, wizard tower, keep, wall, tree, and boulder placement.
-- Slope-aware elevated placement with conforming props and terrace foundations.
-- Rotated footprints, overlap checks, terrain restrictions, selection, movement, and deletion.
-- Instanced GLB rendering with procedural fallback models.
-- Undo and redo history across terrain, heights, objects, and voxel stamps.
-- Browser save/load and JSON import/export, including sparse heightfield and voxel edit data.
-- A clickable minimap, visible terrain chunk boundaries, and rolling average FPS display.
-- WebGPURenderer by default, with its built-in WebGL 2 fallback.
+- Terrain painting, raise, lower, and smooth brushes.
+- Slope-aware building placement with foundations.
+- Instanced GLB settlement rendering with procedural fallbacks.
+- Rolling average FPS in the title area.
 
 Run it with:
 
@@ -32,116 +36,126 @@ npm run verify
 npm run dev
 ```
 
-Three.js is pinned to r185.1. Renderer, player movement, terrain limits, editor dimensions, brush settings, and voxel streaming are kept in `editor.config.yaml`. Object placement, foundation, and asset metadata are kept in `config/objects.yaml`.
+Three.js is pinned to r185.1. World generation, streaming, player movement, rendering, terrain limits, and editor settings are in `editor.config.yaml`. Object definitions and asset metadata are in `config/objects.yaml`.
+
+## Infinite terrain streaming
+
+The logical world is divided into fixed pages:
+
+```text
+unbounded world cells
+  → 64 × 64 terrain chunks
+  → 65 × 65 shared height samples
+  → bounded CPU cache
+  → fixed GPU terrain slots
+```
+
+Only pages around the active Edit or Player camera are resident. The streamer also predicts the camera position from its velocity and starts loading forward pages before the current chunk border is crossed.
+
+The default terrain settings are:
+
+```yaml
+world:
+  chunkSize: 64
+  loadRadius: 2
+  unloadRadius: 3
+  prefetchSeconds: 1.5
+  maxResidentChunks: 49
+  maxCpuChunks: 81
+  floatingOriginThreshold: 4096
+```
+
+Clean pages regenerate from the world seed and canonical global coordinates. Only changed cells, changed heights, placed objects, campaign metadata, and voxel stamps are saved.
+
+Neighboring chunks cannot split at their boundaries because both sides request the same global height samples. Shared edge edits update all resident pages that reference those samples.
+
+## Save format
+
+Native document version 6 stores:
+
+- Generator seed and version.
+- Chunk and tile dimensions.
+- Modified terrain chunks.
+- Placed objects.
+- Sparse voxel stamps.
+- Imported campaign metadata.
+
+Sparse chunks use index/value pairs. Dense imported or heavily modified chunks use base64 little-endian binary payloads with explicit empty sentinels.
+
+Browser saves use IndexedDB. Existing localStorage saves and native versions 1–5 remain loadable. Old finite maps are centered around global cell `(0, 0)` during migration, including their implicit flat height vertices.
+
+## Azgaar import
+
+Use **Import** and select an Azgaar **Full JSON** export.
+
+The conversion runs in a worker and imports:
+
+- Elevation into the shared heightfield.
+- Land, ocean, forest, desert, wetland, snow, and rocky terrain classes.
+- Source map information.
+- States and provinces.
+- Cultures and religions.
+- Burgs.
+- Rivers and routes.
+- Markers, zones, and notes.
+
+Political, settlement, river, route, marker, and note records are preserved as campaign metadata. Exact Voronoi cells, labels, heraldry, and Azgaar visual styling are not yet rendered as native overlays.
+
+The imported area occupies a finite region centered on the world origin. Procedural terrain continues outside it. Direct Azgaar `.map` files are not supported; export Full JSON from Azgaar first.
 
 ## Camera modes
 
-The top-left viewport controls switch between two camera modes.
-
 ### Edit / Orbit
 
-- Middle mouse or Space + drag pans the map.
-- Right mouse drag rotates the view.
+- Middle mouse or Space + drag pans.
+- Right mouse drag rotates.
 - Mouse wheel zooms.
-- Terrain, object, and selection tools remain active.
+- Terrain, object, selection, and voxel tools remain active.
 
 ### Player
 
 - Click the viewport to capture the mouse.
-- Move with `W`, `A`, `S`, and `D`.
-- Hold `Shift` to run.
-- Press `Space` to jump.
-- Move the mouse to look around.
-- Press `Esc` to release the mouse.
-- Select Edit / Orbit to return to editing.
+- `W`, `A`, `S`, `D` move.
+- `Shift` runs.
+- `Space` jumps.
+- Mouse movement looks around.
+- `Esc` releases the mouse.
+- Select **Edit / Orbit** to return to editing.
 
-Player movement uses gravity, map bounds, and the authoritative CPU heightfield for ground contact. It does not read the generated marching-cubes surface back from the GPU. Collision with GPU-only caves, overhangs, and voxel additions is a separate future phase.
+Player grounding uses the authoritative CPU heightfield and therefore remains readback-free. GPU-only caves, overhangs, and added voxel surfaces do not yet provide player collision.
 
-## Terrain elevation
+## GPU marching cubes
 
-The editor stores one height at every logical cell corner, so neighboring cells use the same vertices and cannot split apart. JavaScript keeps the authoritative editable heightfield for saves, player grounding, and undo. Rendering samples that array as a GPU float texture from a TSL `positionNode`; normal editing does not read terrain geometry back from the GPU.
-
-Object placement samples every shared vertex under the footprint:
-
-- Buildings stay upright at the highest supported footprint elevation.
-- Uneven building sites receive instanced retaining foundations.
-- Trees and rocks use the sampled center height.
-- Configured props can align to the terrain normal.
-- Placement is rejected when slope or foundation depth exceeds the object limits.
-- Existing objects protect the shared vertices below their footprints from sculpting.
-
-Terrain shortcuts:
-
-- `P`: paint tile materials.
-- `U`: raise terrain.
-- `J`: lower terrain.
-- `K`: smooth terrain.
-- `[` and `]`: change brush size.
-
-## Camera-driven GPU marching cubes
-
-The map-scale voxel coordinate space is divided into `24 × 16 × 24` marching-cubes chunks. Only nine chunks are resident by default. These chunks occupy a fixed GPU slot pool centered on the active Edit or Player camera.
-
-When the camera enters another voxel chunk:
-
-1. Chunks still required by the new resident set keep their existing slots.
-2. Empty slots are assigned first.
-3. Remaining slots are evicted deterministically by distance, last use, and slot index.
-4. Newly assigned chunks receive new absolute-coordinate offsets through TSL uniforms.
-5. Existing density, geometry, normal, classification, and indirect-draw buffers are reused.
-6. Only newly assigned chunks and resident chunks affected by changed stamps regenerate.
-
-Each slot includes a one-sample GPU halo. The halo supplies neighboring density values for smoothing and gradient normals, so shared borders use matching positions and lighting inputs rather than clamped edge derivatives.
+The voxel terrain uses a fixed nine-slot WebGPU pool by default. Each resident chunk retains its density, smoothed-density, classification, vertex, normal, and indirect-draw buffers.
 
 ```text
-active camera position
-  → select nearest chunk coordinates
-  → retain matching GPU slots
-  → deterministically reassign stale slots
-  → filter sparse stamps for each assigned chunk
-  → generate local density plus one-sample halo
-  → classify and emit marching-cubes geometry
-  → one indirect draw per resident slot
+sparse SDF stamps
+  → GPU density generation
+  → GPU smoothing
+  → marching-cubes classification
+  → GPU vertex and normal emission
+  → indirect rendering
 ```
 
-The CPU stores only camera position, slot ownership, and the compact ordered stamp list. Generated density, positions, normals, triangle counts, and draw counts are never read back to JavaScript.
-
-The sidebar provides Add, Dig, and Smooth operations. `Use cursor` copies the map cursor into global voxel-world X/Z coordinates; Y remains explicitly controlled for caves and raised volumes.
-
-World document version 5 stores voxel-world dimensions with the sparse stamp list. Version 4 single-chunk saves are centered into the current map-scale volume during loading. Versions 1–3 still load with an empty voxel edit layer. Invalid imports restore the previous world transactionally.
-
-Dirty-region dispatch inside one chunk, voxel LOD transitions, heightfield-to-voxel visual stitching, and GPU-surface player collision remain separate phases.
-
-## Renderer
-
-The editor uses `WebGPURenderer` and TSL terrain materials. WebGPU is selected when supported; Three.js falls back to its WebGL 2 backend otherwise. Set `renderer.forceWebGL` in `editor.config.yaml` only for compatibility testing. Voxel surface generation is disabled on the WebGL fallback while the heightfield editor and Player mode continue to work.
+Generated density, triangle counts, positions, normals, and draw commands are never downloaded to JavaScript during normal operation.
 
 ## GLB assets
 
-Production visuals are loaded from the shared `public/assets/models/settlement-core.glb` asset pack. The editor starts with procedural fallback geometry, loads each GLB asynchronously, validates its footprint and ground pivot, then swaps it into the existing instanced renderer.
-
-Regenerate the complete model catalog with:
+Production visuals are loaded from `public/assets/models/settlement-core.glb`. Procedural models remain visible until each configured GLB node passes runtime validation.
 
 ```bash
 npm run generate:assets
-```
-
-Then validate it with:
-
-```bash
 npm run validate:assets
 ```
 
-The asset generator uses only Python's standard library. See `docs/asset-pipeline.md` for the authoring contract and failure behavior.
+See `docs/asset-pipeline.md` for the authoring contract.
 
-## Starter pack
+## Current limits
 
-The original starter archive remains at:
+- Object rendering is globally stored and is not yet independently simulation-LOD streamed.
+- Voxel stamps are sparse and globally capped by configuration.
+- Azgaar political borders, labels, rivers, and routes are metadata rather than native rendered overlays.
+- Player collision does not query the GPU marching-cubes surface.
+- Full visual runtime verification still requires a physical WebGPU browser.
 
-`starter/simcity-dnd-starter-pack.zip`
-
-It contains the earlier vertical slice, transparent starter icons, architecture notes, an asset style guide, and a phased roadmap.
-
-## Scope principle
-
-Build one deep, playable settlement in one biome before implementing the huge streamed world. The first acceptance target is a 30-minute loop with placement, resources, a D&D-style threat, and save/load.
+These are explicit later phases, not hidden fallbacks or readback paths.

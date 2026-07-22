@@ -16,11 +16,17 @@ function cloneStamp(stamp) {
   });
 }
 
-function assertCellDimensions(value, fieldName) {
-  if (!Array.isArray(value)
-      || value.length !== 3
-      || value.some((entry) => !Number.isInteger(entry) || entry < 1)) {
-    throw new Error(`${fieldName} must contain three positive integers.`);
+function assertCellDimensions(value, fieldName, { allowUnboundedXZ = false } = {}) {
+  if (!Array.isArray(value) || value.length !== 3) {
+    throw new Error(`${fieldName} must contain three dimensions.`);
+  }
+  for (let axis = 0; axis < value.length; axis += 1) {
+    if (allowUnboundedXZ && axis !== 1 && value[axis] === 0) {
+      continue;
+    }
+    if (!Number.isInteger(value[axis]) || value[axis] < 1) {
+      throw new Error(`${fieldName} must contain positive integers.`);
+    }
   }
 }
 
@@ -38,13 +44,14 @@ function assertUnitInterval(value, fieldName) {
 }
 
 export class VoxelStampStore {
-  constructor({ cells, maxStamps, legacyCells = cells }) {
-    assertCellDimensions(cells, 'Voxel stamp store cells');
+  constructor({ cells, maxStamps, legacyCells = cells, unboundedXZ = false }) {
+    assertCellDimensions(cells, 'Voxel stamp store cells', { allowUnboundedXZ: unboundedXZ });
     assertCellDimensions(legacyCells, 'Voxel stamp store legacyCells');
     if (!Number.isInteger(maxStamps) || maxStamps < 1) {
       throw new Error('Voxel stamp store maxStamps must be a positive integer.');
     }
 
+    this.unboundedXZ = Boolean(unboundedXZ);
     this.cells = Object.freeze([...cells]);
     this.legacyCells = Object.freeze([...legacyCells]);
     this.maxStamps = maxStamps;
@@ -70,7 +77,6 @@ export class VoxelStampStore {
     if (this.stamps.length >= this.maxStamps) {
       throw new Error(`Voxel stamp capacity is ${this.maxStamps}.`);
     }
-
     const stamp = this.normalizeStamp({ ...input, id: this.nextId });
     this.nextId += 1;
     this.stamps.push(stamp);
@@ -114,14 +120,12 @@ export class VoxelStampStore {
   applyChange(change, direction) {
     const target = direction === 'undo' ? change.before : change.after;
     const inverse = direction === 'undo' ? change.after : change.before;
-
     if (inverse) {
       const index = this.stamps.findIndex((stamp) => stamp.id === inverse.id);
       if (index >= 0) {
         this.stamps.splice(index, 1);
       }
     }
-
     if (target) {
       const restored = this.normalizeStamp(target);
       if (this.stamps.some((stamp) => stamp.id === restored.id)) {
@@ -131,7 +135,6 @@ export class VoxelStampStore {
       this.stamps.sort((left, right) => left.id - right.id);
       this.nextId = Math.max(this.nextId, restored.id + 1);
     }
-
     this.emit();
   }
 
@@ -147,17 +150,27 @@ export class VoxelStampStore {
   }
 
   toMetadata() {
-    return { cells: [...this.cells] };
+    return this.unboundedXZ
+      ? { unboundedXZ: true, cellsY: this.cells[1] }
+      : { cells: [...this.cells] };
   }
 
-  loadDocument(document, { sourceCells = this.cells } = {}) {
-    assertCellDimensions(sourceCells, 'Voxel stamp source cells');
-    const offset = sourceCells.map((size, axis) => {
-      if (size > this.cells[axis]) {
-        throw new Error('Voxel stamp source volume exceeds the current voxel world.');
+  loadDocument(document, { sourceCells = this.cells, legacyDocument = null } = {}) {
+    let offset = [0, 0, 0];
+    if (this.unboundedXZ) {
+      const sourceIsUnbounded = legacyDocument?.voxelWorld?.unboundedXZ === true;
+      if (!sourceIsUnbounded && Array.isArray(sourceCells) && sourceCells[0] > 0 && sourceCells[2] > 0) {
+        offset = [-sourceCells[0] * 0.5, 0, -sourceCells[2] * 0.5];
       }
-      return (this.cells[axis] - size) * 0.5;
-    });
+    } else {
+      assertCellDimensions(sourceCells, 'Voxel stamp source cells');
+      offset = sourceCells.map((size, axis) => {
+        if (size > this.cells[axis]) {
+          throw new Error('Voxel stamp source volume exceeds the current voxel world.');
+        }
+        return (this.cells[axis] - size) * 0.5;
+      });
+    }
     const translated = (document ?? []).map((stamp) => ({
       ...stamp,
       center: stamp.center?.map((coordinate, axis) => coordinate + offset[axis]),
@@ -181,7 +194,10 @@ export class VoxelStampStore {
 
     const center = value.center.map((coordinate, axis) => {
       assertFinite(coordinate, `center[${axis}]`);
-      if (coordinate < 0 || coordinate > this.cells[axis]) {
+      if (axis === 1 && (coordinate < 0 || coordinate > this.cells[1])) {
+        throw new Error('Voxel stamp center[1] must be within the vertical voxel range.');
+      }
+      if (!this.unboundedXZ && axis !== 1 && (coordinate < 0 || coordinate > this.cells[axis])) {
         throw new Error(`Voxel stamp center[${axis}] must be within the voxel world.`);
       }
       return coordinate;

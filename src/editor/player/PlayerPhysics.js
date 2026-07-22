@@ -7,6 +7,12 @@ function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
+function clampToBounds(value, minimum, maximum) {
+  return Number.isFinite(minimum) && Number.isFinite(maximum)
+    ? clamp(value, minimum, maximum)
+    : value;
+}
+
 export function createPlayerState({ x, z, groundHeight, eyeHeight }) {
   return {
     x,
@@ -25,7 +31,7 @@ export function stepPlayerPhysics({
   forward,
   right,
   getGroundHeight,
-  bounds,
+  bounds = null,
 }) {
   const delta = clamp(deltaSeconds, 0, PLAYER_MAX_DELTA_SECONDS);
   const movementX = forward.x * input.forward + right.x * input.right;
@@ -33,8 +39,16 @@ export function stepPlayerPhysics({
   const length = Math.hypot(movementX, movementZ);
   const speed = config.walkSpeed * (input.running ? config.runMultiplier : 1);
   const scale = length > 0 ? speed * delta / length : 0;
-  let nextX = clamp(state.x + movementX * scale, bounds.minX, bounds.maxX);
-  let nextZ = clamp(state.z + movementZ * scale, bounds.minZ, bounds.maxZ);
+  let nextX = clampToBounds(
+    state.x + movementX * scale,
+    bounds?.minX,
+    bounds?.maxX,
+  );
+  let nextZ = clampToBounds(
+    state.z + movementZ * scale,
+    bounds?.minZ,
+    bounds?.maxZ,
+  );
   let groundEyeY = getGroundHeight(nextX, nextZ) + config.eyeHeight;
 
   if (groundEyeY - state.y > config.stepHeight) {

@@ -80,6 +80,11 @@ export class ViewModeController {
       : this.editorCamera.getFocusWorld();
   }
 
+  shiftWorld(shiftX, shiftZ) {
+    this.editorCamera.shiftWorld(shiftX, shiftZ);
+    this.playerController.shiftWorld(shiftX, shiftZ);
+  }
+
   emit() {
     const state = this.getState();
     for (const listener of this.listeners) {
