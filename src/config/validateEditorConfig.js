@@ -10,6 +10,8 @@ const REQUIRED_POSITIVE_PATHS = Object.freeze([
   Object.freeze(['player', 'jumpSpeed']),
   Object.freeze(['player', 'gravity']),
   Object.freeze(['player', 'eyeHeight']),
+  Object.freeze(['player', 'stepHeight']),
+  Object.freeze(['player', 'groundSnapDistance']),
   Object.freeze(['player', 'mouseSensitivity']),
   Object.freeze(['renderer', 'maxPixelRatio']),
   Object.freeze(['terrain', 'sculptStrength']),
