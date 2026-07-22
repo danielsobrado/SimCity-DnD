@@ -1,6 +1,10 @@
 import { createVoxelChunkLayout } from './VoxelChunkLayout.js';
 import { VOXEL_MAX_RESIDENT_CHUNKS } from './voxelConstants.js';
 
+function normalizeZero(value) {
+  return Object.is(value, -0) ? 0 : value;
+}
+
 function assertStreamingConfig(config) {
   if (!Number.isInteger(config?.streamRadius) || config.streamRadius < 0) {
     throw new Error('Voxel prototype streamRadius must be a non-negative integer.');
@@ -71,16 +75,16 @@ export function worldToVoxel(worldLayout, worldX, worldZ) {
     throw new Error('Voxel world position must be finite.');
   }
   return Object.freeze({
-    x: worldX / worldLayout.voxelSize,
-    z: -worldZ / worldLayout.voxelSize,
+    x: normalizeZero(worldX / worldLayout.voxelSize),
+    z: normalizeZero(-worldZ / worldLayout.voxelSize),
   });
 }
 
 export function worldToVoxelChunk(worldLayout, worldX, worldZ) {
   const voxel = worldToVoxel(worldLayout, worldX, worldZ);
   return Object.freeze({
-    chunkX: Math.floor(voxel.x / worldLayout.chunkCellsX),
-    chunkZ: Math.floor(voxel.z / worldLayout.chunkCellsZ),
+    chunkX: normalizeZero(Math.floor(voxel.x / worldLayout.chunkCellsX)),
+    chunkZ: normalizeZero(Math.floor(voxel.z / worldLayout.chunkCellsZ)),
   });
 }
 
