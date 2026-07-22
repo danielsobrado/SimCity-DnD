@@ -13,6 +13,16 @@ function createValidConfig() {
     camera: {
       viewSize: 180,
     },
+    player: {
+      fovDegrees: 68,
+      walkSpeed: 9,
+      runMultiplier: 1.8,
+      jumpSpeed: 8,
+      gravity: 24,
+      eyeHeight: 1.7,
+      mouseSensitivity: 0.0022,
+      maxPitchDegrees: 85,
+    },
     renderer: {
       antialias: true,
       forceWebGL: false,
@@ -31,7 +41,7 @@ function createValidConfig() {
   };
 }
 
-test('accepts positive nested map, camera, renderer, and terrain values', () => {
+test('accepts positive nested map, camera, player, renderer, and terrain values', () => {
   const config = createValidConfig();
   assert.equal(validateEditorConfig(config), config);
 });
@@ -53,6 +63,26 @@ test('rejects invalid renderer configuration', () => {
   assert.throws(
     () => validateEditorConfig(config),
     /renderer\.forceWebGL must be boolean/,
+  );
+});
+
+test('rejects invalid player field of view', () => {
+  const config = createValidConfig();
+  config.player.fovDegrees = 180;
+
+  assert.throws(
+    () => validateEditorConfig(config),
+    /player\.fovDegrees must be below 180/,
+  );
+});
+
+test('rejects invalid player pitch limits', () => {
+  const config = createValidConfig();
+  config.player.maxPitchDegrees = 90;
+
+  assert.throws(
+    () => validateEditorConfig(config),
+    /player\.maxPitchDegrees must be within/,
   );
 });
 
