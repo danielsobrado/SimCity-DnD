@@ -201,7 +201,7 @@ export class EditorUi {
       this.fileInput.value = '';
       if (!file) return;
       try {
-        controller.loadDocument(await importMap(file));
+        controller.loadDocument(await importMap(file, { config: this.config }));
         this.minimapCenter = controller.getFocusCell?.() ?? this.minimapCenter;
         this.updateMinimap();
         this.showToast('World imported.');
@@ -355,11 +355,11 @@ export class EditorUi {
         case 'rotate-selected': this.controller.rotateSelected(); break;
         case 'delete-selected': this.controller.deleteSelected(); break;
         case 'save':
-          saveToBrowser(this.config.storage.key, this.controller.toDocument());
+          await saveToBrowser(this.config.storage.key, this.controller.toDocument());
           this.showToast('World saved in this browser.');
           break;
         case 'load': {
-          const worldDocument = loadFromBrowser(this.config.storage.key);
+          const worldDocument = await loadFromBrowser(this.config.storage.key);
           if (!worldDocument) {
             this.showToast('No browser save exists yet.');
             return;
