@@ -1,0 +1,542 @@
+import { ProceduralWorldGenerator } from './ProceduralWorldGenerator.js';
+import {
+  cellKey,
+  cellToChunk,
+  chunkKey,
+  floorDiv,
+  parseCellKey,
+  parseChunkKey,
+  positiveModulo,
+} from './WorldCoordinates.js';
+import {
+  INFINITE_WORLD_FORMAT_VERSION,
+  WORLD_HEIGHT_EPSILON,
+} from './worldConstants.js';
+
+const VALID_SCULPT_OPERATIONS = new Set(['raise', 'lower', 'smooth']);
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function smoothFalloff(distance, radius) {
+  const normalized = clamp(1 - distance / radius, 0, 1);
+  return normalized * normalized * (3 - 2 * normalized);
+}
+
+function clonePatch(patch) {
+  return {
+    indices: [...patch.indices],
+    before: [...patch.before],
+    after: [...patch.after],
+  };
+}
+
+function assertPositiveInteger(value, fieldName) {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${fieldName} must be a positive integer.`);
+  }
+}
+
+function assertFiniteNumber(value, fieldName) {
+  if (!Number.isFinite(value)) {
+    throw new Error(`${fieldName} must be finite.`);
+  }
+}
+
+function tileIndex(localX, localZ, chunkSize) {
+  return localZ * chunkSize + localX;
+}
+
+function heightIndex(localX, localZ, vertexSize) {
+  return localZ * vertexSize + localX;
+}
+
+function groupOverridesByChunk(overrides, chunkSize, isHeight) {
+  const grouped = new Map();
+  for (const [key, value] of overrides.entries()) {
+    const { chunkX: coordinateX, chunkZ: coordinateZ } = parseCellKey(key);
+    const chunkX = floorDiv(coordinateX, chunkSize);
+    const chunkZ = floorDiv(coordinateZ, chunkSize);
+    const localX = positiveModulo(coordinateX, chunkSize);
+    const localZ = positiveModulo(coordinateZ, chunkSize);
+    const keyForChunk = chunkKey(chunkX, chunkZ);
+    const entries = grouped.get(keyForChunk) ?? [];
+    entries.push([
+      isHeight
+        ? heightIndex(localX, localZ, chunkSize + 1)
+        : tileIndex(localX, localZ, chunkSize),
+      value,
+    ]);
+    grouped.set(keyForChunk, entries);
+  }
+  return grouped;
+}
+
+export class InfiniteWorldStore {
+  constructor({
+    chunkSize,
+    tileSize,
+    cacheLimit = 169,
+    generator = new ProceduralWorldGenerator(),
+  }) {
+    assertPositiveInteger(chunkSize, 'World chunk size');
+    assertPositiveInteger(cacheLimit, 'World cache limit');
+    assertFiniteNumber(tileSize, 'World tile size');
+    if (tileSize <= 0) {
+      throw new Error('World tile size must be positive.');
+    }
+
+    this.chunkSize = chunkSize;
+    this.vertexSize = chunkSize + 1;
+    this.tileSize = tileSize;
+    this.cacheLimit = cacheLimit;
+    this.generator = generator;
+    this.tileOverrides = new Map();
+    this.heightOverrides = new Map();
+    this.cache = new Map();
+    this.clock = 0;
+    this.revision = 0;
+    this.listeners = new Set();
+  }
+
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(change) {
+    this.revision += 1;
+    const snapshot = Object.freeze({ revision: this.revision, ...change });
+    for (const listener of this.listeners) {
+      listener(snapshot);
+    }
+  }
+
+  getTile(cellX, cellZ) {
+    const key = cellKey(cellX, cellZ);
+    return this.tileOverrides.get(key) ?? this.generator.sampleTile(cellX, cellZ);
+  }
+
+  getHeight(vertexX, vertexZ) {
+    const key = cellKey(vertexX, vertexZ);
+    return this.heightOverrides.get(key) ?? this.generator.sampleHeight(vertexX, vertexZ);
+  }
+
+  sampleHeight(cellX, cellZ) {
+    const x0 = Math.floor(cellX);
+    const z0 = Math.floor(cellZ);
+    const x1 = x0 + 1;
+    const z1 = z0 + 1;
+    const tx = cellX - x0;
+    const tz = cellZ - z0;
+    const north = this.getHeight(x0, z0)
+      + (this.getHeight(x1, z0) - this.getHeight(x0, z0)) * tx;
+    const south = this.getHeight(x0, z1)
+      + (this.getHeight(x1, z1) - this.getHeight(x0, z1)) * tx;
+    return north + (south - north) * tz;
+  }
+
+  getCellHeight(cellX, cellZ) {
+    return this.sampleHeight(cellX + 0.5, cellZ + 0.5);
+  }
+
+  setTile(cellX, cellZ, tileId, { silent = false } = {}) {
+    if (!Number.isInteger(tileId) || tileId < 0 || tileId > 255) {
+      throw new Error('Tile id must be an unsigned byte integer.');
+    }
+    const key = cellKey(cellX, cellZ);
+    const before = this.getTile(cellX, cellZ);
+    const base = this.generator.sampleTile(cellX, cellZ);
+    if (tileId === base) {
+      this.tileOverrides.delete(key);
+    } else {
+      this.tileOverrides.set(key, tileId);
+    }
+    this.updateCachedTile(cellX, cellZ, tileId);
+    if (!silent && before !== tileId) {
+      this.emit({ kind: 'tile', cells: Object.freeze([{ x: cellX, z: cellZ }]) });
+    }
+    return before;
+  }
+
+  setHeight(vertexX, vertexZ, value, { silent = false } = {}) {
+    assertFiniteNumber(value, 'Height');
+    const key = cellKey(vertexX, vertexZ);
+    const before = this.getHeight(vertexX, vertexZ);
+    const base = this.generator.sampleHeight(vertexX, vertexZ);
+    if (Math.abs(value - base) <= WORLD_HEIGHT_EPSILON) {
+      this.heightOverrides.delete(key);
+    } else {
+      this.heightOverrides.set(key, value);
+    }
+    this.updateCachedHeight(vertexX, vertexZ, value);
+    if (!silent && Math.abs(before - value) > WORLD_HEIGHT_EPSILON) {
+      this.emit({ kind: 'height', vertices: Object.freeze([{ x: vertexX, z: vertexZ }]) });
+    }
+    return before;
+  }
+
+  paintSquare(centerX, centerZ, brushSize, tileId, canPaint = null) {
+    const radius = Math.floor(brushSize / 2);
+    const patch = { indices: [], before: [], after: [] };
+    const changedCells = [];
+    for (let z = centerZ - radius; z <= centerZ + radius; z += 1) {
+      for (let x = centerX - radius; x <= centerX + radius; x += 1) {
+        if (canPaint && !canPaint(x, z, null, tileId)) {
+          continue;
+        }
+        const before = this.getTile(x, z);
+        if (before === tileId) {
+          continue;
+        }
+        this.setTile(x, z, tileId, { silent: true });
+        patch.indices.push(cellKey(x, z));
+        patch.before.push(before);
+        patch.after.push(tileId);
+        changedCells.push(Object.freeze({ x, z }));
+      }
+    }
+    if (changedCells.length > 0) {
+      this.emit({ kind: 'tile', cells: Object.freeze(changedCells) });
+    }
+    return patch;
+  }
+
+  sculpt({
+    centerX,
+    centerZ,
+    brushSize,
+    operation,
+    strength,
+    smoothFactor,
+    minHeight,
+    maxHeight,
+    canEdit = null,
+  }) {
+    if (!VALID_SCULPT_OPERATIONS.has(operation)) {
+      throw new Error(`Unknown heightfield operation: ${operation}.`);
+    }
+    const radius = Math.max(1, (brushSize + 1) / 2);
+    const centerVertexX = centerX + 0.5;
+    const centerVertexZ = centerZ + 0.5;
+    const minimumX = Math.floor(centerVertexX - radius);
+    const maximumX = Math.ceil(centerVertexX + radius);
+    const minimumZ = Math.floor(centerVertexZ - radius);
+    const maximumZ = Math.ceil(centerVertexZ + radius);
+    const source = new Map();
+    if (operation === 'smooth') {
+      for (let z = minimumZ - 1; z <= maximumZ + 1; z += 1) {
+        for (let x = minimumX - 1; x <= maximumX + 1; x += 1) {
+          source.set(cellKey(x, z), this.getHeight(x, z));
+        }
+      }
+    }
+
+    const patch = { indices: [], before: [], after: [] };
+    const vertices = [];
+    for (let z = minimumZ; z <= maximumZ; z += 1) {
+      for (let x = minimumX; x <= maximumX; x += 1) {
+        const distance = Math.hypot(x - centerVertexX, z - centerVertexZ);
+        if (distance > radius || (canEdit && !canEdit(x, z, null))) {
+          continue;
+        }
+        const before = this.getHeight(x, z);
+        const falloff = smoothFalloff(distance, radius);
+        let after = before;
+        if (operation === 'raise') {
+          after = clamp(before + strength * falloff, minHeight, maxHeight);
+        } else if (operation === 'lower') {
+          after = clamp(before - strength * falloff, minHeight, maxHeight);
+        } else {
+          let total = 0;
+          let count = 0;
+          for (let neighborZ = z - 1; neighborZ <= z + 1; neighborZ += 1) {
+            for (let neighborX = x - 1; neighborX <= x + 1; neighborX += 1) {
+              total += source.get(cellKey(neighborX, neighborZ));
+              count += 1;
+            }
+          }
+          after = clamp(before + (total / count - before) * smoothFactor * falloff, minHeight, maxHeight);
+        }
+        if (Math.abs(after - before) <= WORLD_HEIGHT_EPSILON) {
+          continue;
+        }
+        this.setHeight(x, z, after, { silent: true });
+        patch.indices.push(cellKey(x, z));
+        patch.before.push(before);
+        patch.after.push(after);
+        vertices.push(Object.freeze({ x, z }));
+      }
+    }
+    if (vertices.length > 0) {
+      this.emit({ kind: 'height', vertices: Object.freeze(vertices) });
+    }
+    return patch;
+  }
+
+  applyTilePatch(patch, direction) {
+    const values = direction === 'undo' ? patch.before : patch.after;
+    const cells = [];
+    for (let offset = 0; offset < patch.indices.length; offset += 1) {
+      const { chunkX: x, chunkZ: z } = parseCellKey(patch.indices[offset]);
+      this.setTile(x, z, values[offset], { silent: true });
+      cells.push(Object.freeze({ x, z }));
+    }
+    if (cells.length > 0) {
+      this.emit({ kind: 'tile', cells: Object.freeze(cells) });
+    }
+  }
+
+  applyHeightPatch(patch, direction) {
+    const values = direction === 'undo' ? patch.before : patch.after;
+    const vertices = [];
+    for (let offset = 0; offset < patch.indices.length; offset += 1) {
+      const { chunkX: x, chunkZ: z } = parseCellKey(patch.indices[offset]);
+      this.setHeight(x, z, values[offset], { silent: true });
+      vertices.push(Object.freeze({ x, z }));
+    }
+    if (vertices.length > 0) {
+      this.emit({ kind: 'height', vertices: Object.freeze(vertices) });
+    }
+  }
+
+  getChunk(chunkX, chunkZ) {
+    const key = chunkKey(chunkX, chunkZ);
+    let page = this.cache.get(key);
+    this.clock += 1;
+    if (!page) {
+      page = this.generateChunk(chunkX, chunkZ);
+      this.cache.set(key, page);
+    }
+    page.lastUsed = this.clock;
+    this.evictCache();
+    return page;
+  }
+
+  requestChunk(chunkX, chunkZ) {
+    return Promise.resolve(this.getChunk(chunkX, chunkZ));
+  }
+
+  generateChunk(chunkX, chunkZ) {
+    const tiles = new Uint8Array(this.chunkSize * this.chunkSize);
+    const heights = new Float32Array(this.vertexSize * this.vertexSize);
+    const originX = chunkX * this.chunkSize;
+    const originZ = chunkZ * this.chunkSize;
+    for (let localZ = 0; localZ < this.chunkSize; localZ += 1) {
+      for (let localX = 0; localX < this.chunkSize; localX += 1) {
+        tiles[tileIndex(localX, localZ, this.chunkSize)] = this.getTile(originX + localX, originZ + localZ);
+      }
+    }
+    for (let localZ = 0; localZ <= this.chunkSize; localZ += 1) {
+      for (let localX = 0; localX <= this.chunkSize; localX += 1) {
+        heights[heightIndex(localX, localZ, this.vertexSize)] = this.getHeight(originX + localX, originZ + localZ);
+      }
+    }
+    return {
+      key: chunkKey(chunkX, chunkZ),
+      chunkX,
+      chunkZ,
+      originX,
+      originZ,
+      tiles,
+      heights,
+      revision: this.revision,
+      lastUsed: this.clock,
+    };
+  }
+
+  updateCachedTile(cellX, cellZ, tileId) {
+    const location = cellToChunk(cellX, cellZ, this.chunkSize);
+    const page = this.cache.get(chunkKey(location.chunkX, location.chunkZ));
+    if (page) {
+      page.tiles[tileIndex(location.localX, location.localZ, this.chunkSize)] = tileId;
+      page.revision = this.revision + 1;
+    }
+  }
+
+  updateCachedHeight(vertexX, vertexZ, value) {
+    const primaryChunkX = floorDiv(vertexX, this.chunkSize);
+    const primaryChunkZ = floorDiv(vertexZ, this.chunkSize);
+    for (let chunkZ = primaryChunkZ - 1; chunkZ <= primaryChunkZ; chunkZ += 1) {
+      for (let chunkX = primaryChunkX - 1; chunkX <= primaryChunkX; chunkX += 1) {
+        const localX = vertexX - chunkX * this.chunkSize;
+        const localZ = vertexZ - chunkZ * this.chunkSize;
+        if (localX < 0 || localZ < 0 || localX > this.chunkSize || localZ > this.chunkSize) {
+          continue;
+        }
+        const page = this.cache.get(chunkKey(chunkX, chunkZ));
+        if (page) {
+          page.heights[heightIndex(localX, localZ, this.vertexSize)] = value;
+          page.revision = this.revision + 1;
+        }
+      }
+    }
+  }
+
+  evictCache() {
+    if (this.cache.size <= this.cacheLimit) {
+      return;
+    }
+    const pages = [...this.cache.values()].sort((left, right) => left.lastUsed - right.lastUsed || left.key.localeCompare(right.key));
+    while (this.cache.size > this.cacheLimit && pages.length > 0) {
+      this.cache.delete(pages.shift().key);
+    }
+  }
+
+  clearOverrides() {
+    const snapshot = this.createSnapshot();
+    if (this.tileOverrides.size === 0 && this.heightOverrides.size === 0) {
+      return snapshot;
+    }
+    this.tileOverrides.clear();
+    this.heightOverrides.clear();
+    this.cache.clear();
+    this.emit({ kind: 'reset' });
+    return snapshot;
+  }
+
+  createSnapshot() {
+    return Object.freeze({
+      tileOverrides: Object.freeze([...this.tileOverrides.entries()]),
+      heightOverrides: Object.freeze([...this.heightOverrides.entries()]),
+    });
+  }
+
+  restoreSnapshot(snapshot) {
+    this.tileOverrides = new Map(snapshot?.tileOverrides ?? []);
+    this.heightOverrides = new Map(snapshot?.heightOverrides ?? []);
+    this.cache.clear();
+    this.emit({ kind: 'reset' });
+  }
+
+  toDocument() {
+    const tileChunks = groupOverridesByChunk(this.tileOverrides, this.chunkSize, false);
+    const heightChunks = groupOverridesByChunk(this.heightOverrides, this.chunkSize, true);
+    const keys = new Set([...tileChunks.keys(), ...heightChunks.keys()]);
+    const chunks = [...keys].sort().map((key) => {
+      const { chunkX: x, chunkZ: z } = parseChunkKey(key);
+      return {
+        x,
+        z,
+        tiles: tileChunks.get(key) ?? [],
+        heights: heightChunks.get(key) ?? [],
+      };
+    });
+    return {
+      version: INFINITE_WORLD_FORMAT_VERSION,
+      world: {
+        chunkSize: this.chunkSize,
+        tileSize: this.tileSize,
+        generator: this.generator.toMetadata(),
+      },
+      chunks,
+      savedAt: new Date().toISOString(),
+    };
+  }
+
+  loadDocument(document) {
+    const previous = this.createSnapshot();
+    try {
+      if (document?.version === INFINITE_WORLD_FORMAT_VERSION) {
+        this.loadInfiniteDocument(document);
+      } else {
+        this.loadLegacyDocument(document);
+      }
+      this.cache.clear();
+      this.emit({ kind: 'reset' });
+    } catch (error) {
+      this.tileOverrides = new Map(previous.tileOverrides);
+      this.heightOverrides = new Map(previous.heightOverrides);
+      this.cache.clear();
+      throw error;
+    }
+  }
+
+  loadInfiniteDocument(document) {
+    if (document.world?.chunkSize !== this.chunkSize || document.world?.tileSize !== this.tileSize) {
+      throw new Error('Infinite world chunk or tile size does not match the editor configuration.');
+    }
+    if (!Array.isArray(document.chunks)) {
+      throw new Error('Infinite world chunks must be an array.');
+    }
+    const tileOverrides = new Map();
+    const heightOverrides = new Map();
+    for (const chunk of document.chunks) {
+      if (!Number.isSafeInteger(chunk?.x) || !Number.isSafeInteger(chunk?.z)) {
+        throw new Error('Infinite world chunk coordinates must be safe integers.');
+      }
+      for (const [index, value] of chunk.tiles ?? []) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.chunkSize ** 2) {
+          throw new Error('Infinite world tile override index is invalid.');
+        }
+        const localX = index % this.chunkSize;
+        const localZ = Math.floor(index / this.chunkSize);
+        tileOverrides.set(cellKey(chunk.x * this.chunkSize + localX, chunk.z * this.chunkSize + localZ), value);
+      }
+      for (const [index, value] of chunk.heights ?? []) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.vertexSize ** 2 || !Number.isFinite(value)) {
+          throw new Error('Infinite world height override is invalid.');
+        }
+        const localX = index % this.vertexSize;
+        const localZ = Math.floor(index / this.vertexSize);
+        heightOverrides.set(cellKey(chunk.x * this.chunkSize + localX, chunk.z * this.chunkSize + localZ), value);
+      }
+    }
+    this.tileOverrides = tileOverrides;
+    this.heightOverrides = heightOverrides;
+  }
+
+  loadLegacyDocument(document) {
+    if (!document || !Number.isInteger(document.width) || !Number.isInteger(document.height) || !Array.isArray(document.tiles)) {
+      throw new Error('The selected file is not a supported native world document.');
+    }
+    if (document.tiles.length !== document.width * document.height) {
+      throw new Error('Legacy map tile payload has an invalid size.');
+    }
+    const offsetX = -Math.floor(document.width / 2);
+    const offsetZ = -Math.floor(document.height / 2);
+    const tileOverrides = new Map();
+    for (let index = 0; index < document.tiles.length; index += 1) {
+      const localX = index % document.width;
+      const localZ = Math.floor(index / document.width);
+      const worldX = offsetX + localX;
+      const worldZ = offsetZ + localZ;
+      const tileId = document.tiles[index];
+      if (tileId !== this.generator.sampleTile(worldX, worldZ)) {
+        tileOverrides.set(cellKey(worldX, worldZ), tileId);
+      }
+    }
+
+    const heightOverrides = new Map();
+    const legacyHeightfield = document.heightfield;
+    if (legacyHeightfield?.values) {
+      const vertexWidth = document.width + 1;
+      for (const [index, value] of legacyHeightfield.values) {
+        const localX = index % vertexWidth;
+        const localZ = Math.floor(index / vertexWidth);
+        const worldX = offsetX + localX;
+        const worldZ = offsetZ + localZ;
+        if (Math.abs(value - this.generator.sampleHeight(worldX, worldZ)) > WORLD_HEIGHT_EPSILON) {
+          heightOverrides.set(cellKey(worldX, worldZ), value);
+        }
+      }
+    }
+    this.tileOverrides = tileOverrides;
+    this.heightOverrides = heightOverrides;
+  }
+
+  getStats() {
+    return Object.freeze({
+      cacheSize: this.cache.size,
+      cacheLimit: this.cacheLimit,
+      tileOverrideCount: this.tileOverrides.size,
+      heightOverrideCount: this.heightOverrides.size,
+      revision: this.revision,
+    });
+  }
+
+  clonePatch(patch) {
+    return clonePatch(patch);
+  }
+}
