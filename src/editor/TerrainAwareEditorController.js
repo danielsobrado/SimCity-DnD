@@ -1,8 +1,20 @@
 import { EditorController } from './EditorController.js';
 import { evaluateObjectSurface } from './TerrainPlacement.js';
-import { loadWorldDocument } from './WorldDocument.js';
+import { createWorldDocument, loadWorldDocument } from './WorldDocument.js';
 
 export class TerrainAwareEditorController extends EditorController {
+  constructor(options) {
+    super(options);
+    this.voxelStampStore = options.voxelStampStore ?? null;
+  }
+
+  getState() {
+    return {
+      ...super.getState(),
+      voxelStampCount: this.voxelStampStore?.size ?? 0,
+    };
+  }
+
   validateObjectPlacement({ definitionKey, x, z, rotation, ignoreObjectId = null }) {
     const objectValidation = this.objectMap.validatePlacement({
       definitionKey,
@@ -60,12 +72,90 @@ export class TerrainAwareEditorController extends EditorController {
     }
   }
 
+  addVoxelStamp(input) {
+    if (!this.voxelStampStore) {
+      throw new Error('Voxel stamp storage is unavailable.');
+    }
+    const after = this.voxelStampStore.add(input);
+    this.commitHistory({ kind: 'voxel-stamp', before: null, after });
+    this.emitMap();
+    return after;
+  }
+
+  clearVoxelStamps() {
+    if (!this.voxelStampStore) {
+      return;
+    }
+    const before = this.voxelStampStore.clear();
+    if (before.length === 0) {
+      return;
+    }
+    this.commitHistory({ kind: 'voxel-stamps', before, after: [] });
+    this.emitMap();
+  }
+
+  applyHistory(entry, direction) {
+    if (entry.kind === 'voxel-stamp') {
+      this.voxelStampStore.applyChange(entry, direction);
+      return;
+    }
+    if (entry.kind === 'voxel-stamps') {
+      this.voxelStampStore.replaceAll(direction === 'undo' ? entry.before : entry.after);
+      return;
+    }
+
+    super.applyHistory(entry, direction);
+    if (entry.kind === 'world' && this.voxelStampStore) {
+      this.voxelStampStore.replaceAll(
+        direction === 'undo' ? entry.beforeVoxelStamps : entry.afterVoxelStamps,
+      );
+    }
+  }
+
+  clearWorld() {
+    const beforeObjects = this.objectMap.clear();
+    const terrainPatch = this.tileMap.fill(0);
+    const heightPatch = this.heightField.fill(0);
+    const beforeVoxelStamps = this.voxelStampStore?.clear() ?? [];
+    if (beforeObjects.length === 0
+        && terrainPatch.indices.length === 0
+        && heightPatch.indices.length === 0
+        && beforeVoxelStamps.length === 0) {
+      return;
+    }
+
+    this.commitHistory({
+      kind: 'world',
+      terrainPatch,
+      heightPatch,
+      beforeObjects,
+      afterObjects: [],
+      beforeVoxelStamps,
+      afterVoxelStamps: [],
+    });
+    this.setSelectedObject(null);
+    this.terrainView.updatePatch(terrainPatch);
+    this.terrainView.updateHeightPatch(heightPatch);
+    this.refreshObjects();
+    this.emitMap();
+  }
+
+  toDocument() {
+    return createWorldDocument(
+      this.tileMap,
+      this.heightField,
+      this.objectMap,
+      this.voxelStampStore,
+    );
+  }
+
   loadDocument(document) {
     loadWorldDocument(
       document,
       this.tileMap,
       this.heightField,
       this.objectMap,
+      this.voxelStampStore,
       () => this.validateLoadedObjectSurfaces(),
     );
     this.terrainView.refreshAll();
