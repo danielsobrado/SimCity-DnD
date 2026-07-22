@@ -83,12 +83,10 @@ export class PlayerController {
     this.resetInput();
 
     if (this.enabled && spawn) {
-      const x = Math.max(-this.terrainView.worldWidth / 2, Math.min(this.terrainView.worldWidth / 2, spawn.x));
-      const z = Math.max(-this.terrainView.worldDepth / 2, Math.min(this.terrainView.worldDepth / 2, spawn.z));
       this.state = createPlayerState({
-        x,
-        z,
-        groundHeight: this.terrainView.getWorldHeight(x, z),
+        x: spawn.x,
+        z: spawn.z,
+        groundHeight: this.terrainView.getWorldHeight(spawn.x, spawn.z),
         eyeHeight: this.config.eyeHeight,
       });
       this.applyCameraState();
@@ -146,12 +144,6 @@ export class PlayerController {
       forward: this.forward,
       right: this.right,
       getGroundHeight: (x, z) => this.terrainView.getWorldHeight(x, z),
-      bounds: {
-        minX: -this.terrainView.worldWidth / 2,
-        maxX: this.terrainView.worldWidth / 2,
-        minZ: -this.terrainView.worldDepth / 2,
-        maxZ: this.terrainView.worldDepth / 2,
-      },
     });
     this.jumpQueued = false;
     this.applyCameraState();
@@ -159,6 +151,15 @@ export class PlayerController {
 
   getFocusWorld() {
     return Object.freeze({ x: this.state.x, z: this.state.z });
+  }
+
+  shiftWorld(shiftX, shiftZ) {
+    this.state = {
+      ...this.state,
+      x: this.state.x - shiftX,
+      z: this.state.z - shiftZ,
+    };
+    this.applyCameraState();
   }
 
   applyCameraState() {
