@@ -82,9 +82,9 @@ export function validateEditorConfig(config) {
   if (config.world.loadRadius > config.world.unloadRadius) {
     throw new Error('Invalid editor configuration: world.unloadRadius must cover world.loadRadius.');
   }
-  const minimumResidentChunks = (config.world.loadRadius * 2 + 1) ** 2;
+  const minimumResidentChunks = (config.world.unloadRadius * 2 + 1) ** 2;
   if (config.world.maxResidentChunks < minimumResidentChunks) {
-    throw new Error(`Invalid editor configuration: world.maxResidentChunks must be at least ${minimumResidentChunks}.`);
+    throw new Error(`Invalid editor configuration: world.maxResidentChunks must be at least ${minimumResidentChunks} for the unload window.`);
   }
   if (config.world.maxCpuChunks < config.world.maxResidentChunks) {
     throw new Error('Invalid editor configuration: world.maxCpuChunks must cover resident GPU chunks.');
