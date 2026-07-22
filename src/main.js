@@ -231,7 +231,7 @@ async function startEditor() {
     ).catch((error) => {
       console.error('Terrain streaming update failed.', error);
     });
-    stylizedSurface.update(frameTimestamp);
+    stylizedSurface.update(frameTimestamp, viewModeController.camera);
     voxelPrototype.update(canonicalFocus);
 
     if (frameTimestamp >= nextStreamingStatusAt) {
