@@ -4,6 +4,15 @@ const REQUIRED_POSITIVE_PATHS = Object.freeze([
   Object.freeze(['map', 'tileSize']),
   Object.freeze(['map', 'chunkSize']),
   Object.freeze(['camera', 'viewSize']),
+  Object.freeze(['player', 'fovDegrees']),
+  Object.freeze(['player', 'walkSpeed']),
+  Object.freeze(['player', 'runMultiplier']),
+  Object.freeze(['player', 'jumpSpeed']),
+  Object.freeze(['player', 'gravity']),
+  Object.freeze(['player', 'eyeHeight']),
+  Object.freeze(['player', 'stepHeight']),
+  Object.freeze(['player', 'groundSnapDistance']),
+  Object.freeze(['player', 'mouseSensitivity']),
   Object.freeze(['renderer', 'maxPixelRatio']),
   Object.freeze(['terrain', 'sculptStrength']),
 ]);
@@ -40,6 +49,15 @@ export function validateEditorConfig(config) {
   }
   for (const path of REQUIRED_BOOLEAN_PATHS) {
     assertBoolean(config, path);
+  }
+
+  if (config.player.fovDegrees >= 180) {
+    throw new Error('Invalid editor configuration: player.fovDegrees must be below 180.');
+  }
+  if (!Number.isFinite(config.player.maxPitchDegrees)
+      || config.player.maxPitchDegrees <= 0
+      || config.player.maxPitchDegrees >= 90) {
+    throw new Error('Invalid editor configuration: player.maxPitchDegrees must be within (0, 90).');
   }
 
   if (!Number.isFinite(config.terrain?.minHeight) || !Number.isFinite(config.terrain?.maxHeight)) {

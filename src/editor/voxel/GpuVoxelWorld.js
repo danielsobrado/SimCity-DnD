@@ -1,5 +1,12 @@
+import { uniform } from 'three/tsl';
 import { GpuVoxelChunk } from './GpuVoxelChunk.js';
-import { selectVoxelStampsForChunk } from './VoxelWorldLayout.js';
+import { createVoxelStreamingPlan } from './VoxelStreamingPlan.js';
+import {
+  selectResidentChunkDescriptors,
+  selectVoxelStampsForChunk,
+  worldToVoxel,
+  worldToVoxelChunk,
+} from './VoxelWorldLayout.js';
 
 function signatureFor(stamps) {
   return JSON.stringify(stamps.map((stamp) => [
@@ -12,8 +19,31 @@ function signatureFor(stamps) {
   ]));
 }
 
-function aggregateStatus(chunks, layout, stampStore) {
-  const chunkStates = chunks.map((chunk) => chunk.getStatus());
+function createSlot(terrainView, layout, slotIndex) {
+  const shaderDescriptor = {
+    key: `slot-${slotIndex}`,
+    offsetX: uniform(0),
+    offsetZ: uniform(0),
+    centerOffsetX: 0,
+    centerOffsetZ: 0,
+  };
+  return {
+    slotIndex,
+    key: null,
+    descriptor: null,
+    lastUsed: 0,
+    signature: null,
+    chunk: new GpuVoxelChunk({
+      terrainView,
+      worldLayout: layout,
+      descriptor: shaderDescriptor,
+    }),
+    shaderDescriptor,
+  };
+}
+
+function aggregateStatus(slots, layout, stampStore, focusChunk) {
+  const chunkStates = slots.map((slot) => slot.chunk.getStatus());
   const failed = chunkStates.find((state) => state.code === 'failed');
   const unsupported = chunkStates.find((state) => state.code === 'unsupported');
   const readyCount = chunkStates.filter((state) => state.ready).length;
@@ -29,7 +59,7 @@ function aggregateStatus(chunks, layout, stampStore) {
   } else if (unsupported) {
     code = 'unsupported';
     error = unsupported.error;
-  } else if (readyCount === chunks.length) {
+  } else if (readyCount === slots.length) {
     code = 'ready';
   }
 
@@ -41,9 +71,11 @@ function aggregateStatus(chunks, layout, stampStore) {
     visible: chunkStates.some((state) => state.visible),
     rebuilding,
     algorithm: 'marching-cubes',
-    chunkCount: chunks.length,
+    chunkCount: slots.length,
     readyChunkCount: readyCount,
-    chunkGrid: Object.freeze([layout.chunksX, layout.chunksZ]),
+    residentChunkCount: slots.filter((slot) => slot.key).length,
+    worldChunkGrid: Object.freeze([layout.chunksX, layout.chunksZ]),
+    focusChunk: focusChunk ? Object.freeze([focusChunk.chunkX, focusChunk.chunkZ]) : null,
     chunkCells: Object.freeze([
       layout.chunkCellsX,
       layout.chunkCellsY,
@@ -55,7 +87,7 @@ function aggregateStatus(chunks, layout, stampStore) {
       layout.totalCellsZ,
     ]),
     stampCount: stampStore?.size ?? 0,
-    maxStamps: layout.maxStamps,
+    maxStamps: layout.maxGlobalStamps,
     error,
   });
 }
@@ -65,77 +97,162 @@ export class GpuVoxelWorld {
     this.terrainView = terrainView;
     this.layout = layout;
     this.stampStore = stampStore;
-    this.chunks = layout.chunks.map((descriptor) => new GpuVoxelChunk({
-      terrainView,
-      worldLayout: layout,
-      descriptor,
-    }));
-    this.stampSignatures = new Map();
+    this.slots = Array.from(
+      { length: layout.slotCount },
+      (_, slotIndex) => createSlot(terrainView, layout, slotIndex),
+    );
+    this.chunks = this.slots.map((slot) => slot.chunk);
     this.unsubscribeStamps = null;
+    this.focusChunk = null;
+    this.focusKey = null;
+    this.pendingFocusWorld = null;
+    this.clock = 0;
+    this.visible = layout.visible;
+    this.initialized = false;
     this.disposed = false;
   }
 
   getStatus() {
-    return aggregateStatus(this.chunks, this.layout, this.stampStore);
+    return aggregateStatus(this.slots, this.layout, this.stampStore, this.focusChunk);
   }
 
-  async initialize() {
-    this.applyStampSnapshot(this.stampStore?.list() ?? [], false);
-    for (const chunk of this.chunks) {
-      await chunk.initialize();
+  async initialize(focusWorld = { x: 0, z: 0 }) {
+    this.updateAssignments(focusWorld, false);
+    for (const slot of this.slots) {
+      await slot.chunk.initialize();
+      this.positionSlot(slot);
+      slot.chunk.setVisible(this.visible && Boolean(slot.key));
     }
+    this.initialized = true;
     this.unsubscribeStamps = this.stampStore?.subscribe((stamps) => {
-      this.applyStampSnapshot(stamps, true);
+      this.applyStampSnapshot(stamps);
     });
     return this.getStatus();
   }
 
-  applyStampSnapshot(stamps, regenerate) {
-    for (let index = 0; index < this.chunks.length; index += 1) {
-      const chunk = this.chunks[index];
-      const descriptor = this.layout.chunks[index];
-      const selected = selectVoxelStampsForChunk(stamps, descriptor, this.layout);
-      const signature = signatureFor(selected);
-      if (this.stampSignatures.get(descriptor.key) === signature) {
+  updateAssignments(focusWorld, regenerate = this.initialized) {
+    const selection = selectResidentChunkDescriptors(this.layout, focusWorld);
+    const focusKey = `${selection.focusChunk.chunkX}:${selection.focusChunk.chunkZ}`;
+    if (focusKey === this.focusKey && regenerate) {
+      return;
+    }
+
+    const plan = createVoxelStreamingPlan({
+      slots: this.slots,
+      targets: selection.descriptors,
+      focusChunk: selection.focusChunk,
+    });
+    this.focusChunk = selection.focusChunk;
+    this.focusKey = focusKey;
+    this.clock += 1;
+
+    for (const slotIndex of plan.retained) {
+      this.slots[slotIndex].lastUsed = this.clock;
+    }
+    for (const assignment of plan.assignments) {
+      this.assignSlot(
+        this.slots[assignment.slotIndex],
+        assignment.descriptor,
+        regenerate,
+      );
+    }
+  }
+
+  assignSlot(slot, descriptor, regenerate) {
+    slot.key = descriptor.key;
+    slot.descriptor = descriptor;
+    slot.lastUsed = this.clock;
+    slot.shaderDescriptor.offsetX.value = descriptor.offsetX;
+    slot.shaderDescriptor.offsetZ.value = descriptor.offsetZ;
+    slot.shaderDescriptor.centerOffsetX = descriptor.centerWorldX;
+    slot.shaderDescriptor.centerOffsetZ = descriptor.centerWorldZ;
+    const stamps = selectVoxelStampsForChunk(
+      this.stampStore?.list() ?? [],
+      descriptor,
+      this.layout,
+    );
+    slot.signature = signatureFor(stamps);
+    slot.chunk.stamps = stamps;
+    this.positionSlot(slot);
+
+    if (!regenerate) {
+      return;
+    }
+
+    slot.chunk.setVisible(false);
+    slot.chunk.setStamps(stamps).finally(() => {
+      if (!this.disposed && slot.key === descriptor.key) {
+        this.positionSlot(slot);
+        slot.chunk.setVisible(this.visible);
+      }
+    });
+  }
+
+  positionSlot(slot) {
+    const group = slot.chunk.group;
+    const descriptor = slot.descriptor;
+    if (!group || !descriptor) {
+      return;
+    }
+    group.position.set(
+      descriptor.centerWorldX,
+      this.terrainView.getWorldHeight(descriptor.centerWorldX, descriptor.centerWorldZ)
+        + this.layout.verticalOffset,
+      descriptor.centerWorldZ,
+    );
+  }
+
+  applyStampSnapshot(stamps) {
+    for (const slot of this.slots) {
+      if (!slot.descriptor) {
         continue;
       }
-      this.stampSignatures.set(descriptor.key, signature);
-      if (regenerate) {
-        chunk.setStamps(selected);
-      } else {
-        chunk.stamps = selected;
+      const selected = selectVoxelStampsForChunk(stamps, slot.descriptor, this.layout);
+      const signature = signatureFor(selected);
+      if (signature === slot.signature) {
+        continue;
       }
+      slot.signature = signature;
+      slot.chunk.setStamps(selected);
     }
   }
 
   mapCellToVoxel(cellX, cellZ) {
     const world = this.terrainView.cellToWorld(cellX, cellZ);
-    const origin = this.terrainView.cellToWorld(this.layout.originX, this.layout.originZ);
-    const x = (world.x - origin.x) / this.layout.voxelSize + this.layout.totalCellsX * 0.5;
-    const z = (world.z - origin.z) / this.layout.voxelSize + this.layout.totalCellsZ * 0.5;
-    if (x < 0 || z < 0 || x > this.layout.totalCellsX || z > this.layout.totalCellsZ) {
-      return null;
-    }
-    return Object.freeze({ x, z });
+    return worldToVoxel(this.layout, world.x, world.z);
   }
 
   setVisible(visible) {
     if (!this.getStatus().ready) {
       return false;
     }
-    for (const chunk of this.chunks) {
-      chunk.setVisible(visible);
+    this.visible = Boolean(visible);
+    for (const slot of this.slots) {
+      slot.chunk.setVisible(this.visible && Boolean(slot.key));
     }
-    return Boolean(visible);
+    return this.visible;
   }
 
   toggle() {
-    return this.setVisible(!this.getStatus().visible);
+    return this.setVisible(!this.visible);
   }
 
-  update() {
-    for (const chunk of this.chunks) {
-      chunk.update();
+  update(focusWorld = { x: 0, z: 0 }) {
+    const nextFocus = worldToVoxelChunk(this.layout, focusWorld.x, focusWorld.z);
+    const nextKey = `${nextFocus.chunkX}:${nextFocus.chunkZ}`;
+    if (nextKey !== this.focusKey) {
+      this.pendingFocusWorld = { x: focusWorld.x, z: focusWorld.z };
+    }
+
+    const rebuilding = this.slots.some((slot) => slot.chunk.getStatus().rebuilding);
+    if (this.pendingFocusWorld && !rebuilding) {
+      const pendingFocusWorld = this.pendingFocusWorld;
+      this.pendingFocusWorld = null;
+      this.updateAssignments(pendingFocusWorld, true);
+    }
+
+    for (const slot of this.slots) {
+      this.positionSlot(slot);
     }
   }
 
@@ -144,10 +261,11 @@ export class GpuVoxelWorld {
       return;
     }
     this.disposed = true;
+    this.pendingFocusWorld = null;
     this.unsubscribeStamps?.();
     this.unsubscribeStamps = null;
-    for (const chunk of this.chunks) {
-      chunk.dispose();
+    for (const slot of this.slots) {
+      slot.chunk.dispose();
     }
   }
 }

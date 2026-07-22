@@ -1,9 +1,11 @@
 const STATUS_LABELS = Object.freeze({
   disabled: 'Disabled in editor.config.yaml.',
-  pending: 'Preparing multi-chunk GPU marching-cubes buffers…',
+  pending: 'Preparing streamed GPU marching-cubes slots…',
   unsupported: 'Unavailable: the active renderer is not using WebGPU.',
   failed: 'GPU marching-cubes initialization failed.',
 });
+
+const STATUS_REFRESH_MS = 250;
 
 function readNumber(input, fieldName) {
   const value = Number(input.value);
@@ -22,7 +24,7 @@ export class VoxelPrototypeUi {
     this.panel = document.createElement('section');
     this.panel.className = 'panel';
     this.panel.innerHTML = `
-      <h2>GPU voxel world</h2>
+      <h2>GPU voxel streaming</h2>
       <button class="action-button action-button--wide" type="button" data-role="voxel-toggle">
         Marching-cubes chunks
       </button>
@@ -94,6 +96,7 @@ export class VoxelPrototypeUi {
     this.applyButton.addEventListener('click', this.onApply);
     this.clearButton.addEventListener('click', this.onClear);
     this.unsubscribeStamps = stampStore.subscribe(() => this.render());
+    this.statusTimer = window.setInterval(() => this.render(), STATUS_REFRESH_MS);
 
     const sidebar = root.querySelector('.sidebar');
     const controlsPanel = sidebar?.querySelector('.help-list')?.closest('.panel');
@@ -157,13 +160,15 @@ export class VoxelPrototypeUi {
     }
 
     this.toggleButton.textContent = state.visible
-      ? 'Hide marching-cubes chunks'
-      : 'Show marching-cubes chunks';
+      ? 'Hide streamed chunks'
+      : 'Show streamed chunks';
     const rebuildLabel = state.rebuilding ? ' · rebuilding' : '';
-    this.status.textContent = `${state.readyChunkCount}/${state.chunkCount} chunks · ${state.chunkGrid.join('×')} grid · ${state.stampCount}/${state.maxStamps} stamps${rebuildLabel} · zero readbacks`;
+    const focusLabel = state.focusChunk ? state.focusChunk.join(':') : '—';
+    this.status.textContent = `${state.residentChunkCount}/${state.chunkCount} GPU slots · focus ${focusLabel} · world ${state.worldChunkGrid.join('×')} chunks · ${state.stampCount}/${state.maxStamps} stamps${rebuildLabel} · zero readbacks`;
   }
 
   dispose() {
+    window.clearInterval(this.statusTimer);
     this.toggleButton.removeEventListener('click', this.onToggle);
     this.operationRow.removeEventListener('click', this.onOperation);
     this.useCursorButton.removeEventListener('click', this.onUseCursor);

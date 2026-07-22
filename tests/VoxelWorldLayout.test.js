@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  createVoxelChunkDescriptor,
   createVoxelWorldLayout,
+  selectResidentChunkDescriptors,
   selectVoxelStampsForChunk,
   toGlobalVoxelSample,
+  worldToVoxelChunk,
 } from '../src/editor/voxel/VoxelWorldLayout.js';
 
 const MAP_CONFIG = Object.freeze({ width: 512, height: 512, tileSize: 2 });
@@ -12,16 +15,17 @@ function createConfig() {
   return {
     enabled: true,
     visible: true,
-    chunkGrid: [2, 2],
+    streamRadius: 1,
+    slotCount: 9,
     cells: [24, 16, 24],
     voxelSize: 1.5,
-    originCell: [280, 240],
     verticalOffset: 0.2,
     baseHeight: 7,
     surfaceAmplitude: 3,
     surfaceFrequency: 0.28,
     seed: 17,
     maxStamps: 64,
+    maxStampsPerChunk: 64,
     defaultRadius: 2.5,
     defaultStrength: 0.75,
     defaultSmoothness: 0.65,
@@ -39,47 +43,82 @@ function stamp(center, radius = 2.5) {
   };
 }
 
-test('creates a fixed resident grid with deterministic chunk offsets', () => {
+test('derives a map-scale voxel world and fixed resident slot count', () => {
   const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
 
-  assert.equal(layout.chunkCount, 4);
-  assert.deepEqual([layout.totalCellsX, layout.totalCellsY, layout.totalCellsZ], [48, 16, 48]);
-  assert.deepEqual(layout.chunks.map((chunk) => chunk.key), ['0:0', '1:0', '0:1', '1:1']);
-  assert.deepEqual([layout.chunks[3].offsetX, layout.chunks[3].offsetZ], [24, 24]);
+  assert.deepEqual([layout.chunksX, layout.chunksZ], [29, 29]);
+  assert.deepEqual([layout.totalCellsX, layout.totalCellsY, layout.totalCellsZ], [696, 16, 696]);
+  assert.equal(layout.worldChunkCount, 841);
+  assert.equal(layout.slotCount, 9);
   assert.equal(layout.sampleHalo, 1);
-  assert.equal(layout.sampleCountX, 27);
 });
 
-test('adjacent chunks map their shared sample plane to identical global coordinates', () => {
+test('selects the nearest deterministic chunk window around the camera', () => {
   const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
-  const left = layout.chunks[0];
-  const right = layout.chunks[1];
+  const selection = selectResidentChunkDescriptors(layout, { x: 0, z: 0 });
+
+  assert.deepEqual(selection.focusChunk, { chunkX: 14, chunkZ: 14 });
+  assert.equal(selection.descriptors.length, 9);
+  assert.equal(selection.descriptors[0].key, '14:14');
+  assert.deepEqual(
+    selection.descriptors.map((descriptor) => descriptor.key),
+    ['14:14', '14:13', '13:14', '15:14', '14:15', '13:13', '15:13', '13:15', '15:15'],
+  );
+});
+
+test('keeps the slot pool full at map edges', () => {
+  const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
+  const selection = selectResidentChunkDescriptors(layout, { x: -512, z: 512 });
+
+  assert.deepEqual(selection.focusChunk, { chunkX: 0, chunkZ: 28 });
+  assert.equal(selection.descriptors.length, 9);
+  assert.equal(new Set(selection.descriptors.map((descriptor) => descriptor.key)).size, 9);
+});
+
+test('adjacent chunks share scalar samples and world-space border positions', () => {
+  const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
+  const left = createVoxelChunkDescriptor(layout, 4, 6);
+  const right = createVoxelChunkDescriptor(layout, 5, 6);
+  const near = createVoxelChunkDescriptor(layout, 4, 6);
+  const far = createVoxelChunkDescriptor(layout, 4, 7);
+  const halfWidth = layout.chunkWorldWidth / 2;
+  const halfDepth = layout.chunkWorldDepth / 2;
 
   assert.deepEqual(
     toGlobalVoxelSample(left, { x: layout.chunkCellsX, y: 8, z: 10 }),
     toGlobalVoxelSample(right, { x: 0, y: 8, z: 10 }),
   );
+  assert.deepEqual(
+    toGlobalVoxelSample(near, { x: 10, y: 8, z: layout.chunkCellsZ }),
+    toGlobalVoxelSample(far, { x: 10, y: 8, z: 0 }),
+  );
+  assert.equal(left.centerWorldX + halfWidth, right.centerWorldX - halfWidth);
+  assert.equal(near.centerWorldZ + halfDepth, far.centerWorldZ - halfDepth);
 });
 
 test('filters a border-crossing stamp into both affected chunks with local centers', () => {
   const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
+  const left = createVoxelChunkDescriptor(layout, 0, 0);
+  const right = createVoxelChunkDescriptor(layout, 1, 0);
+  const distant = createVoxelChunkDescriptor(layout, 3, 3);
   const stamps = [stamp([24, 7, 12], 3)];
-  const left = selectVoxelStampsForChunk(stamps, layout.chunks[0], layout);
-  const right = selectVoxelStampsForChunk(stamps, layout.chunks[1], layout);
-  const distant = selectVoxelStampsForChunk(stamps, layout.chunks[3], layout);
 
-  assert.equal(left.length, 1);
-  assert.equal(right.length, 1);
-  assert.deepEqual(left[0].center, [24, 7, 12]);
-  assert.deepEqual(right[0].center, [0, 7, 12]);
-  assert.equal(distant.length, 0);
+  assert.deepEqual(selectVoxelStampsForChunk(stamps, left, layout)[0].center, [24, 7, 12]);
+  assert.deepEqual(selectVoxelStampsForChunk(stamps, right, layout)[0].center, [0, 7, 12]);
+  assert.equal(selectVoxelStampsForChunk(stamps, distant, layout).length, 0);
 });
 
-test('rejects resident grids that do not fit inside the map', () => {
+test('maps world positions to stable voxel chunk coordinates', () => {
+  const layout = createVoxelWorldLayout(createConfig(), MAP_CONFIG);
+  assert.deepEqual(worldToVoxelChunk(layout, 0, 0), { chunkX: 14, chunkZ: 14 });
+  assert.deepEqual(worldToVoxelChunk(layout, -512, 512), { chunkX: 0, chunkZ: 28 });
+});
+
+test('requires enough slots for the configured streaming radius', () => {
   const config = createConfig();
-  config.originCell = [4, 4];
+  config.slotCount = 8;
   assert.throws(
     () => createVoxelWorldLayout(config, MAP_CONFIG),
-    /must fit inside the logical map/,
+    /slotCount must be at least 9/,
   );
 });

@@ -1,8 +1,9 @@
 import { MC_MAX_TRIANGLES_PER_CELL } from './MarchingCubesTables.js';
 import {
   VOXEL_MAX_AXIS_CELLS,
+  VOXEL_MAX_GLOBAL_STAMPS,
   VOXEL_MAX_OUTPUT_VERTICES,
-  VOXEL_MAX_STAMPS,
+  VOXEL_MAX_STAMPS_PER_CHUNK,
   VOXEL_MAX_TOTAL_CELLS,
 } from './voxelConstants.js';
 
@@ -42,6 +43,12 @@ function assertIntegerTuple(value, length, fieldName) {
   }
 }
 
+function assertIntegerRange(value, minimum, maximum, fieldName) {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`Voxel prototype ${fieldName} must be within ${minimum}–${maximum}.`);
+  }
+}
+
 export function createVoxelChunkLayout(config, mapConfig) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error('Voxel prototype configuration must be an object.');
@@ -50,7 +57,6 @@ export function createVoxelChunkLayout(config, mapConfig) {
   assertBoolean(config.enabled, 'enabled');
   assertBoolean(config.visible, 'visible');
   assertIntegerTuple(config.cells, 3, 'cells');
-  assertIntegerTuple(config.originCell, 2, 'originCell');
   assertPositive(config.voxelSize, 'voxelSize');
   assertFinite(config.verticalOffset, 'verticalOffset');
   assertPositive(config.baseHeight, 'baseHeight');
@@ -59,17 +65,21 @@ export function createVoxelChunkLayout(config, mapConfig) {
   assertPositive(config.defaultRadius, 'defaultRadius');
   assertUnitInterval(config.defaultStrength, 'defaultStrength');
   assertPositive(config.defaultSmoothness, 'defaultSmoothness');
-  if (!Number.isInteger(config.maxStamps)
-      || config.maxStamps < 1
-      || config.maxStamps > VOXEL_MAX_STAMPS) {
-    throw new Error(`Voxel prototype maxStamps must be within 1–${VOXEL_MAX_STAMPS}.`);
+  assertIntegerRange(config.maxStamps, 1, VOXEL_MAX_GLOBAL_STAMPS, 'maxStamps');
+  assertIntegerRange(
+    config.maxStampsPerChunk,
+    1,
+    VOXEL_MAX_STAMPS_PER_CHUNK,
+    'maxStampsPerChunk',
+  );
+  if (config.maxStamps > config.maxStampsPerChunk) {
+    throw new Error('Voxel prototype maxStamps must not exceed maxStampsPerChunk.');
   }
   if (!Number.isInteger(config.seed)) {
     throw new Error('Voxel prototype seed must be an integer.');
   }
 
   const [cellsX, cellsY, cellsZ] = config.cells;
-  const [originX, originZ] = config.originCell;
   for (const [axis, value] of [['x', cellsX], ['y', cellsY], ['z', cellsZ]]) {
     if (value < 1 || value > VOXEL_MAX_AXIS_CELLS) {
       throw new Error(`Voxel prototype ${axis} cells must be within 1–${VOXEL_MAX_AXIS_CELLS}.`);
@@ -94,9 +104,6 @@ export function createVoxelChunkLayout(config, mapConfig) {
       || mapConfig.tileSize <= 0) {
     throw new Error('Voxel prototype requires valid map dimensions and tile size.');
   }
-  if (originX < 0 || originZ < 0 || originX >= mapConfig.width || originZ >= mapConfig.height) {
-    throw new Error('Voxel prototype originCell must be inside the map.');
-  }
 
   const sampleCountX = cellsX + 1 + VOXEL_SAMPLE_HALO * 2;
   const sampleCountY = cellsY + 1 + VOXEL_SAMPLE_HALO * 2;
@@ -108,8 +115,6 @@ export function createVoxelChunkLayout(config, mapConfig) {
     cellsX,
     cellsY,
     cellsZ,
-    originX,
-    originZ,
     tileSize: mapConfig.tileSize,
     voxelSize: config.voxelSize,
     verticalOffset: config.verticalOffset,
@@ -117,7 +122,8 @@ export function createVoxelChunkLayout(config, mapConfig) {
     surfaceAmplitude: config.surfaceAmplitude,
     surfaceFrequency: config.surfaceFrequency,
     seed: config.seed,
-    maxStamps: config.maxStamps,
+    maxGlobalStamps: config.maxStamps,
+    maxStamps: config.maxStampsPerChunk,
     defaultRadius: config.defaultRadius,
     defaultStrength: config.defaultStrength,
     defaultSmoothness: config.defaultSmoothness,
@@ -131,8 +137,8 @@ export function createVoxelChunkLayout(config, mapConfig) {
     maxTriangles,
     maxVertices,
     maxInstances: maxTriangles,
-    worldWidth: cellsX * config.voxelSize,
+    chunkWorldWidth: cellsX * config.voxelSize,
     worldHeight: cellsY * config.voxelSize,
-    worldDepth: cellsZ * config.voxelSize,
+    chunkWorldDepth: cellsZ * config.voxelSize,
   });
 }
