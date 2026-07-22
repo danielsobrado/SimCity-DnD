@@ -101,8 +101,9 @@ export function createStylizedGrassMaterial({
   const bladeColor = mix(variedColor, dirtColor, dirt.mul(config.dirt.bladeBlend))
     .mul(config.color.brightness);
 
-  const material = new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide });
+  const material = new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide });
   material.positionNode = finalPosition;
+  material.normalNode = vec3(0, 1, 0);
   material.colorNode = bladeColor;
   material.depthWrite = true;
   material.transparent = false;
