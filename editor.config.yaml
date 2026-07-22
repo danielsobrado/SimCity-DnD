@@ -16,6 +16,8 @@ player:
   jumpSpeed: 8
   gravity: 24
   eyeHeight: 1.7
+  stepHeight: 1.1
+  groundSnapDistance: 0.6
   mouseSensitivity: 0.0022
   maxPitchDegrees: 85
 renderer:
