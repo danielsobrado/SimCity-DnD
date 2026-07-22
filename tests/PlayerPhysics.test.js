@@ -8,13 +8,15 @@ const CONFIG = Object.freeze({
   jumpSpeed: 8,
   gravity: 20,
   eyeHeight: 1.7,
+  stepHeight: 1.1,
+  groundSnapDistance: 0.6,
 });
 const BOUNDS = Object.freeze({ minX: -100, maxX: 100, minZ: -100, maxZ: 100 });
 const FORWARD = Object.freeze({ x: 0, z: -1 });
 const RIGHT = Object.freeze({ x: 1, z: 0 });
 const GROUND = () => 3;
 
-function step(state, input, deltaSeconds = 0.05) {
+function step(state, input, deltaSeconds = 0.05, getGroundHeight = GROUND) {
   return stepPlayerPhysics({
     state,
     input: { forward: 0, right: 0, running: false, jump: false, ...input },
@@ -22,7 +24,7 @@ function step(state, input, deltaSeconds = 0.05) {
     config: CONFIG,
     forward: FORWARD,
     right: RIGHT,
-    getGroundHeight: GROUND,
+    getGroundHeight,
     bounds: BOUNDS,
   });
 }
@@ -57,6 +59,37 @@ test('jumps, applies gravity, and lands on the heightfield', () => {
   assert.equal(state.grounded, true);
   assert.equal(state.y, 4.7);
   assert.equal(state.verticalVelocity, 0);
+});
+
+test('snaps to shallow terrain changes while grounded', () => {
+  const initial = createPlayerState({ x: 0, z: 0, groundHeight: 3, eyeHeight: 1.7 });
+  const ground = (x) => (x > 0.25 ? 3.5 : 3);
+  const moved = step(initial, { right: 1 }, 0.05, ground);
+
+  assert.equal(moved.x, 0.5);
+  assert.equal(moved.y, 5.2);
+  assert.equal(moved.grounded, true);
+});
+
+test('blocks movement into terrain above the configured step height', () => {
+  const initial = createPlayerState({ x: 0, z: 0, groundHeight: 0, eyeHeight: 1.7 });
+  const ground = (x) => (x > 0.25 ? 2 : 0);
+  const moved = step(initial, { right: 1 }, 0.05, ground);
+
+  assert.equal(moved.x, 0);
+  assert.equal(moved.y, 1.7);
+  assert.equal(moved.grounded, true);
+});
+
+test('falls under gravity instead of snapping down a large drop', () => {
+  const initial = createPlayerState({ x: 0, z: 0, groundHeight: 3, eyeHeight: 1.7 });
+  const ground = (x) => (x > 0.25 ? 0 : 3);
+  const moved = step(initial, { right: 1 }, 0.05, ground);
+
+  assert.equal(moved.x, 0.5);
+  assert.equal(moved.grounded, false);
+  assert.ok(moved.y < 4.7);
+  assert.ok(moved.y > 1.7);
 });
 
 test('clamps movement to the terrain bounds', () => {
