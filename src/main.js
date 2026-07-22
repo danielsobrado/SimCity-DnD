@@ -29,6 +29,8 @@ import { ProceduralWorldGenerator } from './editor/world/ProceduralWorldGenerato
 import { WorkerBackedWorldStore } from './editor/world/WorkerBackedWorldStore.js';
 import { WorldChunkWorkerClient } from './editor/world/WorldChunkWorkerClient.js';
 
+const TERRAIN_PREFETCH_REFRESH_MS = 200;
+
 async function startEditor() {
   const config = loadEditorConfig();
   const defaultTile = TILE_BY_KEY.get(config.map.defaultTile);
@@ -181,11 +183,13 @@ async function startEditor() {
   let active = true;
   let nextFrameRateDisplayAt = 0;
   let nextStreamingStatusAt = 0;
+  let nextPredictiveRefreshAt = 0;
   const onVisibilityChange = () => {
     if (!document.hidden) return;
     frameRateMeter.reset();
     frameRateDisplay.update(null);
     nextFrameRateDisplayAt = 0;
+    nextPredictiveRefreshAt = 0;
   };
   document.addEventListener('visibilitychange', onVisibilityChange);
 
@@ -208,7 +212,15 @@ async function startEditor() {
       renderFocus = viewModeController.getFocusWorld();
     }
     const canonicalFocus = floatingOrigin.toCanonical(renderFocus.x, renderFocus.z);
-    terrainView.updateStreaming(canonicalFocus, frameTimestamp).catch((error) => {
+    const forcePredictiveRefresh = frameTimestamp >= nextPredictiveRefreshAt;
+    if (forcePredictiveRefresh) {
+      nextPredictiveRefreshAt = frameTimestamp + TERRAIN_PREFETCH_REFRESH_MS;
+    }
+    terrainView.updateStreaming(
+      canonicalFocus,
+      frameTimestamp,
+      forcePredictiveRefresh,
+    ).catch((error) => {
       console.error('Terrain streaming update failed.', error);
     });
     voxelPrototype.update(canonicalFocus);
