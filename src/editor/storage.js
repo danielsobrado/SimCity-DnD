@@ -1,8 +1,6 @@
 import { loadEditorConfig } from '../config/loadEditorConfig.js';
-import {
-  importAzgaarFullJson,
-  isAzgaarFullJson,
-} from './import/AzgaarJsonImporter.js';
+import { AzgaarImportWorkerClient } from './import/AzgaarImportWorkerClient.js';
+import { isAzgaarFullJson } from './import/AzgaarJsonImporter.js';
 
 const DATABASE_NAME = 'simcity-dnd-worlds';
 const DATABASE_VERSION = 1;
@@ -96,5 +94,10 @@ export async function importMap(file, { config = null } = {}) {
   if (!isAzgaarFullJson(document)) {
     return document;
   }
-  return importAzgaarFullJson(document, config ?? loadEditorConfig());
+  const worker = new AzgaarImportWorkerClient();
+  try {
+    return await worker.convert(document, config ?? loadEditorConfig());
+  } finally {
+    worker.dispose();
+  }
 }
