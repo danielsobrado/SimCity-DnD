@@ -94,7 +94,10 @@ export function loadWorldDocument(
       tileMap.loadDocument(document);
       models.heightField?.loadDocument(document.heightfield);
     }
-    models.objectMap.loadDocument(migrateLegacyObjects(document, document.objects));
+    const objects = worldStore
+      ? migrateLegacyObjects(document, document.objects)
+      : document.objects ?? [];
+    models.objectMap.loadDocument(objects);
     models.voxelStampStore?.loadDocument(document.voxelStamps ?? [], {
       sourceCells: resolveVoxelSourceCells(document, models.voxelStampStore),
       legacyDocument: document,
