@@ -1,0 +1,73 @@
+name: Bake tree impostors
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bake-tree-impostors.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bake-tree-impostors-main
+  cancel-in-progress: false
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Locate Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [[ -z "$browser" ]]; then
+            echo "No Chromium-family browser is installed on the runner." >&2
+            exit 1
+          fi
+          echo "CHROME_PATH=$browser" >> "$GITHUB_ENV"
+          "$browser" --version
+
+      - name: Bake offline impostor atlases
+        run: npm run bake:impostors
+
+      - name: Validate generated assets
+        run: |
+          test -f public/assets/impostors/trees/manifest.json
+          npm run validate:assets
+          npm test
+          npm run build
+
+      - name: Commit generated atlases
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/assets/impostors/trees/manifest.json
+          git add public/assets/impostors/trees/*.png
+          if git diff --cached --quiet; then
+            echo "Offline tree impostor assets are already current."
+            exit 0
+          fi
+          git commit -m "Add offline tree impostor atlases"
+          git pull --rebase origin main
+          git push origin HEAD:main
