@@ -16,7 +16,7 @@
     "verify": "npm run validate:assets && npm test && npm run build"
   },
   "dependencies": {
-    "js-yaml": "4.1.0",
+    "js-yaml": "4.3.0",
     "three": "0.185.1"
   },
   "devDependencies": {

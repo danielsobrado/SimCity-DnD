@@ -1,10 +1,65 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  IndexedDbWorldContentProvider,
   LocalFirstWorldContentProvider,
   MemoryWorldContentProvider,
   UrlWorldContentProvider,
 } from '../src/editor/world/WorldContentProvider.js';
+
+function createFakeIndexedDb() {
+  const values = new Map();
+  return {
+    open() {
+      const listeners = { upgradeneeded: [], success: [], error: [] };
+      const database = {
+        objectStoreNames: { contains: () => false },
+        createObjectStore() {},
+        close() {},
+        transaction() {
+          return {
+            objectStore() {
+              return {
+                get(key) {
+                  return makeRequest(values.get(key));
+                },
+                put(value, key) {
+                  values.set(key, structuredClone(value));
+                  return makeRequest(key);
+                },
+              };
+            },
+          };
+        },
+      };
+      const request = {
+        result: database,
+        addEventListener(type, handler) {
+          listeners[type].push(handler);
+        },
+      };
+      queueMicrotask(() => {
+        for (const handler of listeners.upgradeneeded) handler();
+        for (const handler of listeners.success) handler();
+      });
+      return request;
+    },
+  };
+}
+
+function makeRequest(result) {
+  const listeners = { success: [], error: [] };
+  const request = {
+    result,
+    addEventListener(type, handler) {
+      listeners[type].push(handler);
+    },
+  };
+  queueMicrotask(() => {
+    for (const handler of listeners.success) handler();
+  });
+  return request;
+}
 
 test('local-first content returns local data without calling the URL provider', async () => {
   const local = new MemoryWorldContentProvider();
@@ -49,3 +104,62 @@ test('URL content provider treats 404 as an empty chunk', async () => {
   assert.equal(await provider.getChunk('world-a', -1, 4), null);
 });
 
+test('URL content provider loads JSON and reports server errors', async () => {
+  const success = new UrlWorldContentProvider({
+    baseUrl: 'https://world.example/content/',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ settlements: [{ id: 'capital' }] }),
+    }),
+  });
+  assert.deepEqual(
+    await success.getChunk('world/a', 1, 4),
+    { settlements: [{ id: 'capital' }] },
+  );
+
+  const failed = new UrlWorldContentProvider({
+    baseUrl: 'https://world.example/content',
+    fetchImpl: async () => ({ ok: false, status: 503 }),
+  });
+  await assert.rejects(() => failed.getChunk('world-a', 1, 4), /status 503/);
+});
+
+test('IndexedDB content persists chunks and degrades to empty when unavailable', async () => {
+  const original = globalThis.indexedDB;
+  try {
+    delete globalThis.indexedDB;
+    const unavailable = new IndexedDbWorldContentProvider();
+    assert.equal(await unavailable.getChunk('world-a', 0, 0), null);
+    await unavailable.putChunk('world-a', 0, 0, { ignored: true });
+
+    globalThis.indexedDB = createFakeIndexedDb();
+    const provider = new IndexedDbWorldContentProvider();
+    await provider.putChunk('world-a', -3, 7, { zones: [{ id: 'wilds' }] });
+    assert.deepEqual(
+      await provider.getChunk('world-a', -3, 7),
+      { zones: [{ id: 'wilds' }] },
+    );
+  } finally {
+    if (original === undefined) {
+      delete globalThis.indexedDB;
+    } else {
+      globalThis.indexedDB = original;
+    }
+  }
+});
+
+test('content providers validate construction and persist explicit local writes', async () => {
+  assert.throws(() => new UrlWorldContentProvider(), /base URL/);
+  assert.throws(
+    () => new LocalFirstWorldContentProvider({ local: null }),
+    /local provider/,
+  );
+  const local = new MemoryWorldContentProvider();
+  const provider = new LocalFirstWorldContentProvider({ local });
+  await provider.putChunk('world-a', 2, 2, { markers: [{ id: 'ruin' }] });
+  assert.deepEqual(
+    await provider.getChunk('world-a', 2, 2),
+    { markers: [{ id: 'ruin' }] },
+  );
+});

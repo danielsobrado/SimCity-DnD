@@ -75,11 +75,15 @@ function encodeRuns(values, bytesPerValue) {
 }
 
 function encodeValues(values, bytesPerValue) {
-  const raw = bytesPerValue === 1
-    ? new Uint8Array(values)
-    : new Uint8Array(
-      values.buffer.slice(values.byteOffset, values.byteOffset + values.byteLength),
-    );
+  const raw = new Uint8Array(values.length * bytesPerValue);
+  if (bytesPerValue === 1) {
+    raw.set(values);
+  } else {
+    const view = new DataView(raw.buffer);
+    for (let index = 0; index < values.length; index += 1) {
+      view.setUint16(index * 2, values[index], true);
+    }
+  }
   const runs = encodeRuns(values, bytesPerValue);
   const useRuns = runs.byteLength < raw.byteLength;
   return {
@@ -342,4 +346,3 @@ export function createAzgaarMacroWorldSource(document, config, options = {}) {
 }
 
 export const AZGAAR_MACRO_SOURCE_KIND = MACRO_SOURCE_KIND;
-

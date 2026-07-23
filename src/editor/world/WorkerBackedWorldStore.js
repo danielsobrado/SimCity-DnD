@@ -39,10 +39,12 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
     this.contentProvider = contentProvider;
     this.surfaceMaskConfig = surfaceMaskConfig ?? createSurfaceMaskConfig(null);
     this.pendingChunks = new Map();
+    this.baseTerrainRevision = 0;
   }
 
   setBaseTerrain(baseTerrain) {
     super.setBaseTerrain(baseTerrain);
+    this.baseTerrainRevision = (this.baseTerrainRevision ?? 0) + 1;
     this.chunkWorker.setBaseTerrain?.(this.baseTerrain);
   }
 
@@ -61,19 +63,30 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
       return pending;
     }
 
+    const sourceRevision = this.baseTerrainRevision;
     const contentRequest = this.contentProvider
       ? this.contentProvider.getChunk(this.getContentWorldId(), chunkX, chunkZ)
       : Promise.resolve(null);
-    const request = Promise.all([
+    let request;
+    request = Promise.all([
       this.chunkWorker.request(chunkX, chunkZ, { priority }),
       contentRequest,
     ])
-      .then(([page, content]) => this.completeWorkerPage({
-        ...page,
-        ...(content ? { content } : {}),
-      }))
+      .then(([page, content]) => {
+        if (sourceRevision !== this.baseTerrainRevision) {
+          const error = new Error('World chunk request superseded by a base terrain change.');
+          error.cancelled = true;
+          throw error;
+        }
+        return this.completeWorkerPage({
+          ...page,
+          ...(content ? { content } : {}),
+        });
+      })
       .finally(() => {
-        this.pendingChunks.delete(key);
+        if (this.pendingChunks.get(key) === request) {
+          this.pendingChunks.delete(key);
+        }
       });
     this.pendingChunks.set(key, request);
     return request;

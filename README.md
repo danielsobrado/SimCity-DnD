@@ -16,6 +16,8 @@ The editor now runs on an effectively unbounded logical world rather than one fi
 - Background chunk generation in a module worker.
 - Floating-origin rebasing for long-distance precision.
 - Sparse terrain, height, object, campaign, and voxel persistence.
+- Portable compressed Azgaar macro-atlas persistence.
+- Local-first chunk content with optional URL fallback.
 - Dense binary encoding for fully modified or imported chunks.
 - IndexedDB browser saves (localStorage is still read as a fallback for older browser saves).
 - Native saves use infinite-world document version 6 only.
@@ -74,8 +76,9 @@ Neighboring chunks cannot split at their boundaries because both sides request t
 Native document version 6 stores:
 
 - Generator seed and version.
+- Optional Azgaar macro base terrain, physical scale, rectangular bounds, and rivers.
 - Chunk and tile dimensions.
-- Modified terrain chunks.
+- Modified terrain chunks only; clean generated chunks are reproducible and omitted.
 - Placed objects.
 - Sparse voxel stamps.
 - Imported campaign metadata.
@@ -86,14 +89,28 @@ Browser saves use IndexedDB. Native documents must be version 6 (infinite world)
 
 ## Azgaar import
 
-Use **Import** and select an Azgaar **Full JSON** export.
+Use **Import** and select an Azgaar **Full JSON** export. The import dialog shows
+the source scale, automatically preserves the source aspect ratio, and allows
+the physical world width to be overridden.
 
-The conversion runs in a worker and writes a **version 6 infinite-world document**: sparse chunk overrides for a raster sized by `import.azgaarTargetWidth` × `import.azgaarTargetHeight` in `editor.config.yaml`. That painted region can be large; the playable world stays infinite and streamed (only resident GPU chunks + stored overrides cost memory).
+The conversion runs in a worker and writes a **version 6 infinite-world
+document** containing a compressed macro atlas. The default atlas long edge is
+`import.azgaarAtlasLongEdge: 2000`; the shorter edge follows the Azgaar map
+aspect ratio. Atlas pixels describe continent-scale geography rather than
+literal playable cells.
 
-The conversion imports:
+The chunk worker converts canonical world coordinates into atlas coordinates
+and generates detailed `64 × 64` terrain pages only as the camera or player
+approaches them. Generated clean pages are evicted and regenerated
+deterministically. Only edits remain as sparse overrides, so memory and save
+growth are not proportional to the physical world area.
 
-- Elevation into the shared heightfield.
-- Land, ocean, forest, desert, wetland, snow, and rocky terrain classes.
+The macro source imports:
+
+- Interpolated elevation with deterministic local relief.
+- Land, ocean, forest, desert, wetland, snow, and rocky terrain.
+- River centerlines used to generate local water channels.
+- Feature identifiers for future overlays and simulation.
 - Source map information.
 - States and provinces.
 - Cultures and religions.
@@ -101,9 +118,27 @@ The conversion imports:
 - Rivers and routes.
 - Markers, zones, and notes.
 
-Political, settlement, river, route, marker, and note records are preserved as campaign metadata. Exact Voronoi cells, labels, heraldry, and Azgaar visual styling are not yet rendered as native overlays.
+Political, settlement, route, marker, and note records are preserved as
+campaign metadata. Labels, heraldry, and Azgaar visual styling are not yet
+rendered as native overlays.
 
-The imported area occupies a finite painted region centered on the world origin. Procedural terrain and streaming continue outside it. Direct Azgaar `.map` files are not supported; export Full JSON from Azgaar first.
+The imported rectangle is centered on the world origin. Terrain beyond its
+bounds transitions into deep ocean over
+`import.azgaarOceanTransitionKilometers`. Direct Azgaar `.map` files are not
+supported; export Full JSON from Azgaar first.
+
+## World content providers
+
+Terrain is deterministic and does not need to be downloaded or cached on disk.
+Authored settlements, encounters, and other chunk content use a local-first
+provider chain:
+
+1. IndexedDB content for offline use.
+2. An optional URL provider configured with `world.contentBaseUrl`.
+3. Deterministic generation when no authored content exists.
+
+Remote results are cached locally. Network failures fall back to local or empty
+content without affecting terrain streaming.
 
 ## Camera modes
 
@@ -156,7 +191,7 @@ See `docs/asset-pipeline.md` for the authoring contract.
 
 - Object rendering is globally stored and is not yet independently simulation-LOD streamed.
 - Voxel stamps are sparse and globally capped by configuration.
-- Azgaar political borders, labels, rivers, and routes are metadata rather than native rendered overlays.
+- Azgaar political borders, labels, and routes are metadata rather than native rendered overlays.
 - Player collision does not query the GPU marching-cubes surface.
 - Full visual runtime verification still requires a physical WebGPU browser.
 

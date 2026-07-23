@@ -100,3 +100,15 @@ test('clean macro chunks can be evicted and regenerated identically', () => {
   assert.deepEqual(first.tiles, second.tiles);
   assert.deepEqual(first.heights, second.heights);
 });
+
+test('river vectors become local water channels without rasterizing the world', () => {
+  const source = createSource();
+  source.rivers = [{
+    id: 1,
+    widthAtlas: 0.75,
+    points: [[1, 0], [1, 2]],
+  }];
+  const generator = new AzgaarMacroWorldGenerator(source, metadata);
+  assert.equal(generator.sampleTile(-4, 0), 2);
+  assert.notEqual(generator.sampleTile(0, 0), 2);
+});

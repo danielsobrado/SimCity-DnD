@@ -95,7 +95,7 @@ function createRiverIndex(rivers, width, height) {
 export class AzgaarMacroWorldGenerator {
   constructor(source, proceduralMetadata) {
     const decoded = decodeMacroAtlas(source);
-    this.source = structuredClone(source);
+    this.source = source;
     this.heights = decoded.heights;
     this.biomes = decoded.biomes;
     this.features = decoded.features;
@@ -220,4 +220,3 @@ export class AzgaarMacroWorldGenerator {
     return tileForBiome(rawHeight, this.biomes[index]);
   }
 }
-
