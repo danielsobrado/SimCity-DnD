@@ -1,6 +1,6 @@
 name: Offline impostor diagnostic
 
-# Temporary PR workflow for producing the real offline atlas artifact.
+# Temporary PR workflow marker; the base workflow performs the actual bake.
 on:
   pull_request:
     branches: [main]
