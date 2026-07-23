@@ -1,6 +1,5 @@
 import * as THREE from 'three/webgpu';
 import { normalizeBaseUrl, resolveAssetUrl } from '../assets/assetUrl.js';
-import { parseChunkKey } from '../world/WorldCoordinates.js';
 import { StylizedFlowerSlot } from './StylizedFlowerSlot.js';
 
 function configureTexture(texture, colorSpace = THREE.NoColorSpace) {
@@ -70,7 +69,7 @@ export class StylizedFlowerView {
 
   update(timestamp) {
     if (this.disposed || this.slots.length === 0 || !this.terrainView.focusChunkKey) return;
-    const focusChunk = parseChunkKey(this.terrainView.focusChunkKey);
+    const focusChunk = this.terrainView.focusChunk;
     for (const slot of this.slots) slot.update(timestamp, focusChunk);
   }
 

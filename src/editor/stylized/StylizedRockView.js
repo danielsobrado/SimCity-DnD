@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { PerfCounters } from '../performance/qa/PerfCounters.js';
-import { cellCenterToWorld, parseChunkKey } from '../world/WorldCoordinates.js';
+import { cellCenterToWorld } from '../world/WorldCoordinates.js';
 import { materialList } from '../assets/assetUrl.js';
 import { extractRockPrototypes } from './StylizedPrototypeBake.js';
 import {
@@ -64,7 +64,7 @@ export class StylizedRockView {
 
   update() {
     if (this.disposed || this.prototypes.length === 0 || !this.terrainView.focusChunkKey) return;
-    const focus = parseChunkKey(this.terrainView.focusChunkKey);
+    const focus = this.terrainView.focusChunk;
     const origin = this.terrainView.floatingOrigin.getState();
     this.root.position.set(-origin.x, 0, -origin.z);
     const updateKey = `${focus.chunkX}:${focus.chunkZ}:${this.terrainView.worldStore.revision}`;

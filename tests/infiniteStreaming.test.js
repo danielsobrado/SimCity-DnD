@@ -6,6 +6,7 @@ import {
   selectTerrainResidentDescriptors,
   worldToTerrainChunk,
 } from '../src/editor/world/TerrainStreamingPlan.js';
+import { parseChunkKey } from '../src/editor/world/WorldCoordinates.js';
 
 function createSlots(count) {
   return Array.from({ length: count }, (_, slotIndex) => ({
@@ -85,4 +86,17 @@ test('floating origin preserves canonical coordinates across rebases', () => {
   });
   assert.deepEqual(origin.toCanonical(22, -2), { x: 150, z: -130 });
   assert.deepEqual(origin.toRender(150, -130), { x: 22, z: -2 });
+});
+
+test('streaming focus dirty key is not a parseable world chunk key', () => {
+  // InfiniteTerrainView stores focusChunkKey as `${current}|${predicted}` so the
+  // resident-set rebuild can skip when neither chunk moved. Stylized layers must
+  // read terrainView.focusChunk for coordinates, not parseChunkKey(focusChunkKey).
+  const currentChunk = { chunkX: 0, chunkZ: 0 };
+  const predictedChunk = { chunkX: 0, chunkZ: 0 };
+  const focusChunkKey = `${currentChunk.chunkX}:${currentChunk.chunkZ}`
+    + `|${predictedChunk.chunkX}:${predictedChunk.chunkZ}`;
+  assert.equal(focusChunkKey, '0:0|0:0');
+  assert.throws(() => parseChunkKey(focusChunkKey), /Invalid world chunk key/);
+  assert.deepEqual(parseChunkKey(`${currentChunk.chunkX}:${currentChunk.chunkZ}`), currentChunk);
 });

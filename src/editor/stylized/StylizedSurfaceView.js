@@ -1,5 +1,4 @@
 import { vec3 } from 'three/tsl';
-import { parseChunkKey } from '../world/WorldCoordinates.js';
 import {
   objectBoulderSignatureForChunk,
   rockSignatureForChunk,
@@ -101,8 +100,7 @@ export class StylizedSurfaceView {
     this.flowerView?.update(timestamp);
     for (const slot of this.waterSlots) slot.update(timestamp);
 
-    const focusKey = this.terrainView.focusChunkKey;
-    const focusChunk = focusKey ? parseChunkKey(focusKey) : null;
+    const focusChunk = this.terrainView.focusChunkKey ? this.terrainView.focusChunk : null;
     const rockRadius = this.config.rocks.radius;
     const rockFalloff = this.config.rocks.falloff;
 

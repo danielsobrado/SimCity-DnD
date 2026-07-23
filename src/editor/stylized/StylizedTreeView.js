@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { uniform } from 'three/tsl';
 import { PerfCounters } from '../performance/qa/PerfCounters.js';
-import { cellCenterToWorld, parseChunkKey } from '../world/WorldCoordinates.js';
+import { cellCenterToWorld } from '../world/WorldCoordinates.js';
 import { materialList, normalizeBaseUrl, resolveAssetUrl } from '../assets/assetUrl.js';
 import {
   extractPrototypeParts,
@@ -126,7 +126,7 @@ export class StylizedTreeView {
   update(timestamp, rockPlacements = [], rockSignature = '') {
     this.time.value = timestamp / 1000;
     if (this.disposed || this.renderers.length === 0 || !this.terrainView.focusChunkKey) return;
-    const focus = parseChunkKey(this.terrainView.focusChunkKey);
+    const focus = this.terrainView.focusChunk;
     const origin = this.terrainView.floatingOrigin.getState();
     this.root.position.set(-origin.x, 0, -origin.z);
     const updateKey = `${focus.chunkX}:${focus.chunkZ}:${this.terrainView.worldStore.revision}:${rockSignature}`;
