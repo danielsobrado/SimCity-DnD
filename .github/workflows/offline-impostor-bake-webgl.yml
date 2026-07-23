@@ -1,47 +1,18 @@
-name: Offline impostor bake WebGL
+name: Cancel superseded offline impostor WebGL runs
 
 on:
   push:
     branches: [main]
     paths:
       - .github/workflows/offline-impostor-bake-webgl.yml
-  workflow_dispatch:
-
-permissions:
-  contents: write
 
 concurrency:
   group: offline-impostor-bake-webgl
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  bake:
+  cancel-legacy:
+    if: ${{ false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
     steps:
-      - name: Checkout current main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22.16.0'
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Locate Chromium
-        shell: bash
-        run: |
-          set -euo pipefail
-          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
-          test -n "$browser"
-          echo "CHROME_PATH=$browser" >> "$GITHUB_ENV"
-          "$browser" --version
-
-      - name: Generate, validate and commit atlases
-        run: npm run bake:impostors
+      - run: echo cancelled
