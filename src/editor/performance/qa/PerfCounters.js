@@ -5,6 +5,13 @@ export const PerfCounters = {
     counts[name] = (counts[name] ?? 0) + amount;
   },
 
+  set(name, value) {
+    if (!Number.isFinite(value)) {
+      throw new Error(`Performance counter ${name} must be finite.`);
+    }
+    counts[name] = value;
+  },
+
   get(name) {
     return counts[name] ?? 0;
   },

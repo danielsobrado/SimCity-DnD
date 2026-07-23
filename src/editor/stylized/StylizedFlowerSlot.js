@@ -30,6 +30,23 @@ function createCrossGeometry(maxInstances) {
   return geometry;
 }
 
+function densityForDistance(distance, radius, farDensity) {
+  if (radius <= 0 || distance <= 0) return 1;
+  const amount = Math.min(1, distance / radius);
+  return 1 + (farDensity - 1) * amount;
+}
+
+function setGeometryBounds(geometry, chunkWorldSize, minimumHeight, maximumHeight, maximumSize) {
+  if (!Number.isFinite(minimumHeight) || !Number.isFinite(maximumHeight)) return;
+  const half = chunkWorldSize / 2 + maximumSize + 1;
+  geometry.boundingBox = new THREE.Box3(
+    new THREE.Vector3(-half, minimumHeight - 1, -half),
+    new THREE.Vector3(half, maximumHeight + maximumSize + 2, half),
+  );
+  geometry.boundingSphere = new THREE.Sphere();
+  geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+}
+
 export class StylizedFlowerSlot {
   constructor({ terrainSlot, terrainView, config, textures, variantIndex }) {
     this.terrainSlot = terrainSlot;
@@ -53,55 +70,71 @@ export class StylizedFlowerSlot {
       config,
     });
     this.mesh = new THREE.Mesh(this.geometry, this.material);
-    this.mesh.frustumCulled = false;
+    this.mesh.frustumCulled = true;
     this.mesh.visible = false;
     this.mesh.name = `stylized-flowers-${terrainSlot.slotIndex}-${variantIndex}`;
     terrainView.scene.add(this.mesh);
-    this.lastKey = null;
-    this.lastRevision = -1;
+    this.readyKey = null;
+    this.readyRevision = -1;
+    this.readySampleLimit = 0;
     this.pendingRebuild = null;
   }
 
   update(timestamp, focusChunk) {
     this.time.value = timestamp / 1000;
     const descriptor = this.terrainSlot.descriptor;
-    const withinRadius = descriptor && focusChunk
+    const distance = descriptor && focusChunk
       ? Math.max(
         Math.abs(descriptor.chunkX - focusChunk.chunkX),
         Math.abs(descriptor.chunkZ - focusChunk.chunkZ),
-      ) <= this.config.flowers.residentRadius
-      : false;
-    this.mesh.visible = Boolean(this.terrainSlot.mesh.visible && withinRadius);
-    if (!this.mesh.visible || !descriptor || !this.terrainSlot.page) {
+      )
+      : Number.POSITIVE_INFINITY;
+    const withinRadius = distance <= this.config.flowers.residentRadius;
+    const active = Boolean(this.terrainSlot.mesh.visible && withinRadius && descriptor && this.terrainSlot.page);
+    this.mesh.visible = Boolean(active && this.readyKey === descriptor?.key);
+    if (!active) {
       this.pendingRebuild = null;
       return;
     }
 
     this.mesh.position.copy(this.terrainSlot.mesh.position);
     this.chunkCenter.value.set(descriptor.centerWorldX, descriptor.centerWorldZ);
-    if (this.lastKey !== descriptor.key || this.lastRevision !== this.terrainSlot.pageRevision) {
-      this.pendingRebuild = {
-        key: `flower:${this.terrainSlot.slotIndex}:${this.variantIndex}`,
-        page: this.terrainSlot.page,
-        descriptor,
-        revision: this.terrainSlot.pageRevision,
-      };
-    }
+    const farDensity = this.config.flowers.outerRingDensity ?? 0.5;
+    const density = densityForDistance(distance, this.config.flowers.residentRadius, farDensity);
+    const sampleLimit = Math.max(2, Math.round(this.config.flowers.perChunk * density));
+    const needsBuild = this.readyKey !== descriptor.key
+      || this.readyRevision !== this.terrainSlot.pageRevision
+      || this.readySampleLimit !== sampleLimit;
+    if (!needsBuild) return;
+
+    const signature = `${descriptor.key}:${this.terrainSlot.pageRevision}:${sampleLimit}`;
+    if (this.pendingRebuild?.signature === signature) return;
+    this.pendingRebuild = {
+      key: `flower:${this.terrainSlot.slotIndex}:${this.variantIndex}`,
+      page: this.terrainSlot.page,
+      descriptor,
+      revision: this.terrainSlot.pageRevision,
+      sampleLimit,
+      signature,
+    };
   }
 
   applyPendingRebuild() {
-    if (!this.pendingRebuild) {
-      return false;
-    }
+    if (!this.pendingRebuild) return false;
     const job = this.pendingRebuild;
     this.pendingRebuild = null;
-    this.rebuild(job.page, job.descriptor);
-    this.lastKey = job.descriptor.key;
-    this.lastRevision = job.revision;
+    this.rebuild(job.page, job.descriptor, job.sampleLimit);
+    this.readyKey = job.descriptor.key;
+    this.readyRevision = job.revision;
+    this.readySampleLimit = job.sampleLimit;
+    this.mesh.visible = Boolean(
+      this.terrainSlot.mesh.visible
+      && this.terrainSlot.descriptor?.key === this.readyKey,
+    );
     return true;
   }
 
-  rebuild(page, descriptor) {
+  rebuild(page, descriptor, sampleLimit) {
     PerfCounters.inc('flowerRebuilds');
     const baseAttribute = this.geometry.getAttribute('instanceBase');
     const parameterAttribute = this.geometry.getAttribute('instanceParams');
@@ -109,8 +142,10 @@ export class StylizedFlowerSlot {
     const parameters = parameterAttribute.array;
     const eligible = new Set(this.config.flowers.tileIds);
     let count = 0;
+    let minimumHeight = Number.POSITIVE_INFINITY;
+    let maximumHeight = Number.NEGATIVE_INFINITY;
 
-    for (let index = this.variantIndex; index < this.config.flowers.perChunk; index += 2) {
+    for (let index = this.variantIndex; index < sampleLimit; index += 2) {
       const localX = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 0) * this.chunkSize;
       const localZ = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 1) * this.chunkSize;
       const cellX = Math.min(this.chunkSize - 1, Math.floor(localX));
@@ -131,12 +166,22 @@ export class StylizedFlowerSlot {
           * (this.config.flowers.maxSize - this.config.flowers.minSize);
       parameters[parameterOffset + 2] = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 4);
       parameters[parameterOffset + 3] = this.variantIndex;
+      minimumHeight = Math.min(minimumHeight, height);
+      maximumHeight = Math.max(maximumHeight, height);
       count += 1;
     }
 
     this.geometry.instanceCount = count;
     baseAttribute.needsUpdate = true;
     parameterAttribute.needsUpdate = true;
+    setGeometryBounds(
+      this.geometry,
+      this.chunkWorldSize,
+      minimumHeight,
+      maximumHeight,
+      this.config.flowers.maxSize,
+    );
+    PerfCounters.set('flowerLastChunkInstances', count);
   }
 
   dispose() {

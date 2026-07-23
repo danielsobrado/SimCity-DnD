@@ -18,6 +18,17 @@ function rockIntersectsChunk({
     && rockZ <= descriptor.centerWorldZ + half + expand;
 }
 
+export function collectObjectBoulderPlacements({ objectMap, tileSize, radius }) {
+  return objectMap.list()
+    .filter((object) => object.definitionKey === 'boulder')
+    .map((object) => ({
+      stableId: `object:${object.id}`,
+      x: (object.x + 0.5) * tileSize,
+      z: -(object.z + 0.5) * tileSize,
+      radius,
+    }));
+}
+
 export function rocksInfluencingChunk({
   descriptor,
   rockPlacements,
@@ -57,13 +68,11 @@ export function rockSignatureForChunk({
     radius,
     falloff,
   });
-  if (local.length === 0) {
-    return '';
-  }
+  if (local.length === 0) return '';
   return local
     .map((rock) => {
       const rockRadius = rock.radius ?? radius;
-      return `${rock.x.toFixed(2)}:${rock.z.toFixed(2)}:${rockRadius.toFixed(2)}`;
+      return `${rock.stableId ?? ''}:${rock.x.toFixed(2)}:${rock.z.toFixed(2)}:${rockRadius.toFixed(2)}`;
     })
     .sort()
     .join('|');
@@ -71,30 +80,23 @@ export function rockSignatureForChunk({
 
 export function objectBoulderSignatureForChunk({
   objectMap,
+  objectPlacements = null,
   descriptor,
   tileSize,
   chunkWorldSize,
   radius,
   falloff,
 }) {
-  const parts = [];
-  for (const object of objectMap.list()) {
-    if (object.definitionKey !== 'boulder') continue;
-    const center = {
-      x: (object.x + 0.5) * tileSize,
-      z: -(object.z + 0.5) * tileSize,
-    };
-    if (!rockIntersectsChunk({
-      rockX: center.x,
-      rockZ: center.z,
-      rockRadius: radius,
-      falloff,
-      descriptor,
-      chunkWorldSize,
-    })) {
-      continue;
-    }
-    parts.push(`${object.id}:${object.x}:${object.z}`);
-  }
-  return parts.sort().join('|');
+  const placements = objectPlacements ?? collectObjectBoulderPlacements({
+    objectMap,
+    tileSize,
+    radius,
+  });
+  return rockSignatureForChunk({
+    descriptor,
+    rockPlacements: placements,
+    chunkWorldSize,
+    radius,
+    falloff,
+  });
 }

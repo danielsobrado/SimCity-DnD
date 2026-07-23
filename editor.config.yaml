@@ -71,6 +71,7 @@ stylizedSurface:
     # With tileSize 2, bladesPerCell ≈ density × 4. Streamed chunks can't
     # afford 300/u², so this targets ~12/u² (48/cell) with matching blade size.
     bladesPerCell: 48
+    outerRingDensity: 0.45
     tileIds: [0, 1, 4]
     minWidth: 0.06
     maxWidth: 0.06
@@ -80,6 +81,25 @@ stylizedSurface:
     grassBuildsPerFrame: 1
     flowerBuildsPerFrame: 1
     heavyBuildBudgetMs: 3
+    grassCellsPerBuildSlice: 64
+    inactiveReleaseFrames: 30
+  lod:
+    enabled: true
+    tree:
+      meshRadius: 1
+      proxyRadius: 3
+      billboardRadius: 4
+      nearPixels: 32
+      proxyPixels: 8
+      billboardPixels: 1.5
+      hysteresisRatio: 0.15
+    rock:
+      meshRadius: 1
+      proxyRadius: 3
+      nearPixels: 16
+      proxyPixels: 1.5
+      billboardPixels: 0.5
+      hysteresisRatio: 0.15
   wind:
     direction: [1, 0]
     strength: 0.1
@@ -131,6 +151,7 @@ stylizedSurface:
     enabled: true
     residentRadius: 1
     perChunk: 480
+    outerRingDensity: 0.5
     tileIds: [0, 1, 4]
     minSize: 0.45
     maxSize: 0.6

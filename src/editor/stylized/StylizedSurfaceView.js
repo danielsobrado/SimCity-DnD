@@ -1,10 +1,12 @@
 import { vec3 } from 'three/tsl';
 import {
+  collectObjectBoulderPlacements,
   objectBoulderSignatureForChunk,
   rockSignatureForChunk,
   rocksInfluencingChunk,
 } from './chunkRockSignature.js';
 import { StylizedBuildQueue } from './StylizedBuildQueue.js';
+import { StylizedChunkRevisionTracker } from './StylizedChunkRevisionTracker.js';
 import { StylizedFlowerView } from './StylizedFlowerView.js';
 import { StylizedGrassSlot } from './StylizedGrassSlot.js';
 import { StylizedRockView } from './StylizedRockView.js';
@@ -23,6 +25,9 @@ export class StylizedSurfaceView {
       ? new StylizedSceneAssetCache({ baseUrl })
       : null;
     this.sharedScenePath = null;
+    this.revisionTracker = this.enabled
+      ? new StylizedChunkRevisionTracker({ worldStore: terrainView.worldStore })
+      : null;
     if (this.enabled) {
       for (const terrainSlot of terrainView.slots) terrainSlot.mesh.receiveShadow = true;
     }
@@ -31,10 +36,15 @@ export class StylizedSurfaceView {
       : null;
     const sunDirection = this.skyView?.sunDirection ?? vec3(0.35, 0.85, 0.25);
     this.rockView = this.enabled
-      ? new StylizedRockView({ terrainView, config })
+      ? new StylizedRockView({ terrainView, config, revisionTracker: this.revisionTracker })
       : null;
     this.treeView = this.enabled
-      ? new StylizedTreeView({ terrainView, config, baseUrl })
+      ? new StylizedTreeView({
+        terrainView,
+        config,
+        revisionTracker: this.revisionTracker,
+        baseUrl,
+      })
       : null;
     this.flowerView = this.enabled
       ? new StylizedFlowerView({ terrainView, config, baseUrl })
@@ -93,16 +103,21 @@ export class StylizedSurfaceView {
   update(timestamp, camera) {
     if (!this.enabled) return;
     this.skyView?.update(timestamp, camera);
-    this.rockView?.update();
+    this.rockView?.update(camera);
     const rockPlacements = this.rockView?.getPlacements() ?? [];
     const rockSignature = this.rockView?.getSignature() ?? '';
-    this.treeView?.update(timestamp, rockPlacements, rockSignature);
+    this.treeView?.update(timestamp, camera, rockPlacements, rockSignature);
     this.flowerView?.update(timestamp);
     for (const slot of this.waterSlots) slot.update(timestamp);
 
     const focusChunk = this.terrainView.focusChunkKey ? this.terrainView.focusChunk : null;
     const rockRadius = this.config.rocks.radius;
     const rockFalloff = this.config.rocks.falloff;
+    const objectBoulders = collectObjectBoulderPlacements({
+      objectMap: this.objectMap,
+      tileSize: this.tileSize,
+      radius: rockRadius,
+    });
 
     for (const slot of this.slots) {
       const descriptor = slot.terrainSlot.descriptor;
@@ -117,9 +132,17 @@ export class StylizedSurfaceView {
         radius: rockRadius,
         falloff: rockFalloff,
       });
+      const localObjectBoulders = rocksInfluencingChunk({
+        descriptor,
+        rockPlacements: objectBoulders,
+        chunkWorldSize: this.chunkWorldSize,
+        radius: rockRadius,
+        falloff: rockFalloff,
+      });
       const signature = [
         objectBoulderSignatureForChunk({
           objectMap: this.objectMap,
+          objectPlacements: objectBoulders,
           descriptor,
           tileSize: this.tileSize,
           chunkWorldSize: this.chunkWorldSize,
@@ -134,7 +157,10 @@ export class StylizedSurfaceView {
           falloff: rockFalloff,
         }),
       ].join('|');
-      slot.update(timestamp, focusChunk, signature, localRocks);
+      slot.update(timestamp, focusChunk, signature, [
+        ...localObjectBoulders,
+        ...localRocks,
+      ]);
       if (slot.pendingRebuild) {
         this.grassBuildQueue.enqueue({
           key: slot.pendingRebuild.key,
@@ -173,5 +199,7 @@ export class StylizedSurfaceView {
     this.waterSlots.length = 0;
     for (const slot of this.slots) slot.dispose();
     this.slots.length = 0;
+    this.revisionTracker?.dispose();
+    this.revisionTracker = null;
   }
 }

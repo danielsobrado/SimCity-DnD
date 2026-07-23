@@ -1,0 +1,187 @@
+import { cellCenterToWorld } from '../world/WorldCoordinates.js';
+import { hash32, overlaps, scatterRandom01 } from './scatterMath.js';
+
+const DEFAULT_PRIORITY_CHANNEL = 23;
+const SIGNATURE_SCALE = 1000;
+
+function candidateOrder(left, right) {
+  if (left.priority !== right.priority) return left.priority - right.priority;
+  return left.stableId.localeCompare(right.stableId);
+}
+
+function candidateWins(left, right) {
+  return candidateOrder(left, right) < 0;
+}
+
+function candidateOverlaps(left, right) {
+  const deltaX = left.x - right.x;
+  const deltaZ = left.z - right.z;
+  const clear = left.radius + right.radius;
+  return deltaX * deltaX + deltaZ * deltaZ < clear * clear;
+}
+
+function stableId(kind, chunkX, chunkZ, index) {
+  return `${kind}:${chunkX}:${chunkZ}:${index}`;
+}
+
+function quantize(value) {
+  return Math.round(value * SIGNATURE_SCALE);
+}
+
+function mixHash(seed, value) {
+  return hash32(seed ^ hash32(value));
+}
+
+export function placementSignature(placements) {
+  let result = 0x811c9dc5;
+  const ordered = [...placements].sort((left, right) => (
+    String(left.stableId ?? '').localeCompare(String(right.stableId ?? ''))
+  ));
+  for (const placement of ordered) {
+    result = mixHash(result, quantize(placement.x));
+    result = mixHash(result, quantize(placement.z));
+    result = mixHash(result, quantize(placement.radius ?? 0));
+    result = mixHash(result, placement.prototypeIndex ?? 0);
+  }
+  return `${ordered.length}:${result.toString(16).padStart(8, '0')}`;
+}
+
+export function blockersForChunk({
+  placements,
+  chunkX,
+  chunkZ,
+  chunkWorldSize,
+  expand = 0,
+}) {
+  const minimumX = chunkX * chunkWorldSize - expand;
+  const maximumX = (chunkX + 1) * chunkWorldSize + expand;
+  const maximumZ = -chunkZ * chunkWorldSize + expand;
+  const minimumZ = -(chunkZ + 1) * chunkWorldSize - expand;
+  return placements.filter((placement) => {
+    const radius = placement.radius ?? 0;
+    return placement.x + radius >= minimumX
+      && placement.x - radius <= maximumX
+      && placement.z + radius >= minimumZ
+      && placement.z - radius <= maximumZ;
+  });
+}
+
+function createCandidate({
+  kind,
+  chunkX,
+  chunkZ,
+  index,
+  chunkSize,
+  tileSize,
+  tileIds,
+  tileAt,
+  heightAt,
+  prototypeCount,
+  minScale,
+  maxScale,
+  radiusForScale,
+  priorityChannel,
+}) {
+  const cellX = chunkX * chunkSize
+    + Math.floor(scatterRandom01(chunkX, chunkZ, index, 0) * chunkSize);
+  const cellZ = chunkZ * chunkSize
+    + Math.floor(scatterRandom01(chunkX, chunkZ, index, 1) * chunkSize);
+  if (!tileIds.has(tileAt(cellX, cellZ))) return null;
+
+  const center = cellCenterToWorld(cellX, cellZ, tileSize);
+  const x = center.x + (scatterRandom01(chunkX, chunkZ, index, 2) - 0.5) * tileSize;
+  const z = center.z + (scatterRandom01(chunkX, chunkZ, index, 3) - 0.5) * tileSize;
+  const prototypeIndex = Math.floor(
+    scatterRandom01(chunkX, chunkZ, index, 4) * prototypeCount,
+  ) % prototypeCount;
+  const scale = minScale
+    + scatterRandom01(chunkX, chunkZ, index, 5) * (maxScale - minScale);
+  const rotationY = scatterRandom01(chunkX, chunkZ, index, 6) * Math.PI * 2;
+  const id = stableId(kind, chunkX, chunkZ, index);
+
+  return Object.freeze({
+    stableId: id,
+    ownerChunkX: chunkX,
+    ownerChunkZ: chunkZ,
+    index,
+    x,
+    z,
+    height: heightAt(x, z),
+    scale,
+    rotationY,
+    prototypeIndex,
+    radius: radiusForScale(scale),
+    priority: scatterRandom01(chunkX, chunkZ, index, priorityChannel),
+  });
+}
+
+/**
+ * Builds one chunk's accepted placements using a Matérn-II rule: a candidate
+ * survives only when no overlapping candidate has a lower stable priority.
+ * Acceptance is independent of focus-window size and traversal order.
+ */
+export function buildStableChunkManifest({
+  kind,
+  chunkX,
+  chunkZ,
+  chunkSize,
+  tileSize,
+  perChunk,
+  tileIds,
+  tileAt,
+  heightAt,
+  prototypeCount,
+  minScale,
+  maxScale,
+  radiusForScale,
+  blockers = [],
+  haloChunks = 1,
+  priorityChannel = DEFAULT_PRIORITY_CHANNEL,
+}) {
+  if (!Number.isInteger(prototypeCount) || prototypeCount < 1) return Object.freeze([]);
+  const eligibleTileIds = tileIds instanceof Set ? tileIds : new Set(tileIds);
+  const candidates = [];
+
+  for (let candidateChunkZ = chunkZ - haloChunks;
+    candidateChunkZ <= chunkZ + haloChunks;
+    candidateChunkZ += 1) {
+    for (let candidateChunkX = chunkX - haloChunks;
+      candidateChunkX <= chunkX + haloChunks;
+      candidateChunkX += 1) {
+      for (let index = 0; index < perChunk; index += 1) {
+        const candidate = createCandidate({
+          kind,
+          chunkX: candidateChunkX,
+          chunkZ: candidateChunkZ,
+          index,
+          chunkSize,
+          tileSize,
+          tileIds: eligibleTileIds,
+          tileAt,
+          heightAt,
+          prototypeCount,
+          minScale,
+          maxScale,
+          radiusForScale,
+          priorityChannel,
+        });
+        if (candidate) candidates.push(candidate);
+      }
+    }
+  }
+
+  const accepted = candidates.filter((candidate) => {
+    if (overlaps(candidate.x, candidate.z, blockers, candidate.radius)) return false;
+    for (const other of candidates) {
+      if (other === candidate || !candidateWins(other, candidate)) continue;
+      if (candidateOverlaps(candidate, other)) return false;
+    }
+    return true;
+  });
+
+  return Object.freeze(accepted
+    .filter((candidate) => (
+      candidate.ownerChunkX === chunkX && candidate.ownerChunkZ === chunkZ
+    ))
+    .sort((left, right) => left.index - right.index));
+}
