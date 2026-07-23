@@ -91,7 +91,7 @@ jobs:
           retention-days: 3
 
       - name: Commit assets and bake report
-        if: always() && github.event_name != 'pull_request'
+        if: always()
         shell: bash
         env:
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
@@ -107,6 +107,7 @@ jobs:
 
           - Run: ${GITHUB_RUN_ID}
           - Source commit: ${GITHUB_SHA}
+          - Event: ${GITHUB_EVENT_NAME}
           - Install: ${INSTALL_OUTCOME}
           - Browser: ${BROWSER_OUTCOME}
           - Bake: ${BAKE_OUTCOME}
@@ -141,6 +142,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A -- docs/qa/offline-impostor-bake-status.md public/assets/impostors/trees
+          if git diff --cached --quiet; then
+            echo "No asset or report changes to commit."
+            exit 0
+          fi
           git commit -m "Record offline tree impostor bake"
           git pull --rebase origin main
           git push origin HEAD:main
