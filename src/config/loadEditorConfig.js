@@ -3,8 +3,17 @@ import configSource from '../../editor.config.yaml?raw';
 import { validateEditorConfig } from './validateEditorConfig.js';
 import { validateStylizedLodConfig } from './validateStylizedLodConfig.js';
 
+function applyRuntimeOverrides(config) {
+  if (typeof window === 'undefined') return;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('bakeImpostors') === '1') {
+    config.renderer.forceWebGL = true;
+  }
+}
+
 export function loadEditorConfig() {
   const config = yaml.load(configSource);
+  applyRuntimeOverrides(config);
   validateEditorConfig(config);
   validateStylizedLodConfig(config);
   return Object.freeze(config);
