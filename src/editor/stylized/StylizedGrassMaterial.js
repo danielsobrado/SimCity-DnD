@@ -28,6 +28,7 @@ function colorNode(value) {
 
 export function createStylizedGrassMaterial({
   surfaceMaskTexture,
+  trampleTexture,
   chunkCenter,
   chunkWorldSize,
   time,
@@ -36,7 +37,6 @@ export function createStylizedGrassMaterial({
 }) {
   const base = attribute('instanceBase', 'vec3');
   const parameters = attribute('instanceParams', 'vec4');
-  const trample = attribute('instanceTrample', 'vec3');
   const normalizedHeight = positionLocal.y;
   const localUv = vec2(
     base.x.div(chunkWorldSize).add(0.5),
@@ -44,6 +44,9 @@ export function createStylizedGrassMaterial({
   );
   const worldXZ = base.xz.add(chunkCenter);
   const surface = texture(surfaceMaskTexture, localUv);
+  const trampleSample = texture(trampleTexture, localUv);
+  const trampleDirection = trampleSample.xy.mul(2).sub(1);
+  const trampleInfluence = trampleSample.z;
 
   const dirtSettings = {
     scale: float(config.dirt.scale),
@@ -57,13 +60,14 @@ export function createStylizedGrassMaterial({
   };
   const dirt = max(surface.r, stylizedDirtMask(worldXZ, dirtSettings));
   const shrink = oneMinus(dirt.mul(config.dirt.bladeCut))
-    .mul(oneMinus(trample.z.mul(config.rocks.flatten)));
+    .mul(oneMinus(trampleInfluence.mul(config.rocks.flatten)));
   const bladeHeight = normalizedHeight.mul(parameters.y).mul(shrink);
   const heightMask = normalizedHeight.mul(shrink).pow(2);
 
   const angle = parameters.z;
-  const bladeAxis = vec2(cos(angle), sin(angle));
-  const widthOffset = bladeAxis.mul(positionLocal.x.mul(parameters.x));
+  const localX = cos(angle).mul(positionLocal.x).sub(sin(angle).mul(positionLocal.z));
+  const localZ = sin(angle).mul(positionLocal.x).add(cos(angle).mul(positionLocal.z));
+  const clumpOffset = vec2(localX, localZ).mul(parameters.x);
   const windDirection = vec2(config.wind.direction[0], config.wind.direction[1]);
   const windPerpendicular = vec2(windDirection.y.negate(), windDirection.x);
   const primary = sin(dot(worldXZ, windDirection).mul(config.wind.frequency)
@@ -79,9 +83,12 @@ export function createStylizedGrassMaterial({
     .mul(heightMask);
   const lean = float(config.wind.lean).mul(heightMask);
   const windOffset = windDirection.mul(swing.add(lean));
-  const rockOffset = trample.xy.mul(config.rocks.bend).mul(trample.z).mul(heightMask);
+  const rockOffset = trampleDirection
+    .mul(config.rocks.bend)
+    .mul(trampleInfluence)
+    .mul(heightMask);
 
-  const finalXZ = base.xz.add(widthOffset).add(windOffset).add(rockOffset);
+  const finalXZ = base.xz.add(clumpOffset).add(windOffset).add(rockOffset);
   const finalPosition = vec3(finalXZ.x, base.y.add(bladeHeight), finalXZ.y);
   const worldPosition = positionWorld;
 

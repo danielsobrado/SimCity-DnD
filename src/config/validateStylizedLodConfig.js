@@ -10,9 +10,21 @@ function assertNonNegativeInteger(value, path) {
   }
 }
 
+function assertPositiveInteger(value, path) {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`Invalid editor configuration: ${path} must be a positive integer.`);
+  }
+}
+
 function assertPositive(value, path) {
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`Invalid editor configuration: ${path} must be positive.`);
+  }
+}
+
+function assertFinite(value, path) {
+  if (!Number.isFinite(value)) {
+    throw new Error(`Invalid editor configuration: ${path} must be finite.`);
   }
 }
 
@@ -23,28 +35,110 @@ function assertUnitInterval(value, path, allowZero = true) {
   }
 }
 
-function validateLodBand(name, band, { hasBillboard }) {
-  if (!band || typeof band !== 'object') {
-    throw new Error(`Invalid editor configuration: stylizedSurface.lod.${name} is required.`);
+function validateTreeBand(tree) {
+  for (const [name, value] of [
+    ['meshRadius', tree.meshRadius],
+    ['proxyRadius', tree.proxyRadius],
+    ['impostorRadius', tree.impostorRadius],
+    ['clusterRadius', tree.clusterRadius],
+  ]) {
+    assertNonNegativeInteger(value, `stylizedSurface.lod.tree.${name}`);
   }
-  assertNonNegativeInteger(band.meshRadius, `stylizedSurface.lod.${name}.meshRadius`);
-  assertNonNegativeInteger(band.proxyRadius, `stylizedSurface.lod.${name}.proxyRadius`);
-  if (band.proxyRadius < band.meshRadius) {
-    throw new Error(`Invalid editor configuration: stylizedSurface.lod.${name}.proxyRadius must cover meshRadius.`);
+  if (!(tree.meshRadius <= tree.proxyRadius
+      && tree.proxyRadius <= tree.impostorRadius
+      && tree.impostorRadius <= tree.clusterRadius)) {
+    throw new Error('Invalid editor configuration: tree LOD radii must ascend mesh <= proxy <= impostor <= cluster.');
   }
-  if (hasBillboard) {
-    assertNonNegativeInteger(band.billboardRadius, `stylizedSurface.lod.${name}.billboardRadius`);
-    if (band.billboardRadius < band.proxyRadius) {
-      throw new Error(`Invalid editor configuration: stylizedSurface.lod.${name}.billboardRadius must cover proxyRadius.`);
-    }
+  for (const [name, value] of [
+    ['nearPixels', tree.nearPixels],
+    ['proxyPixels', tree.proxyPixels],
+    ['impostorPixels', tree.impostorPixels],
+    ['clusterPixels', tree.clusterPixels],
+    ['transitionMs', tree.transitionMs],
+  ]) {
+    assertPositive(value, `stylizedSurface.lod.tree.${name}`);
   }
-  assertPositive(band.nearPixels, `stylizedSurface.lod.${name}.nearPixels`);
-  assertPositive(band.proxyPixels, `stylizedSurface.lod.${name}.proxyPixels`);
-  assertPositive(band.billboardPixels, `stylizedSurface.lod.${name}.billboardPixels`);
-  if (!(band.nearPixels > band.proxyPixels && band.proxyPixels > band.billboardPixels)) {
-    throw new Error(`Invalid editor configuration: stylizedSurface.lod.${name} pixel thresholds must descend near > proxy > billboard.`);
+  if (!(tree.nearPixels > tree.proxyPixels
+      && tree.proxyPixels > tree.impostorPixels
+      && tree.impostorPixels > tree.clusterPixels)) {
+    throw new Error('Invalid editor configuration: tree projected thresholds must descend near > proxy > impostor > cluster.');
   }
-  assertUnitInterval(band.hysteresisRatio, `stylizedSurface.lod.${name}.hysteresisRatio`);
+  assertUnitInterval(tree.hysteresisRatio, 'stylizedSurface.lod.tree.hysteresisRatio');
+}
+
+function validateRockBand(rock) {
+  assertNonNegativeInteger(rock.meshRadius, 'stylizedSurface.lod.rock.meshRadius');
+  assertNonNegativeInteger(rock.proxyRadius, 'stylizedSurface.lod.rock.proxyRadius');
+  if (rock.proxyRadius < rock.meshRadius) {
+    throw new Error('Invalid editor configuration: rock proxyRadius must cover meshRadius.');
+  }
+  for (const [name, value] of [
+    ['nearPixels', rock.nearPixels],
+    ['proxyPixels', rock.proxyPixels],
+    ['impostorPixels', rock.impostorPixels],
+    ['clusterPixels', rock.clusterPixels],
+    ['transitionMs', rock.transitionMs],
+  ]) {
+    assertPositive(value, `stylizedSurface.lod.rock.${name}`);
+  }
+  if (!(rock.nearPixels > rock.proxyPixels
+      && rock.proxyPixels > rock.impostorPixels
+      && rock.impostorPixels > rock.clusterPixels)) {
+    throw new Error('Invalid editor configuration: rock projected thresholds must descend near > proxy > impostor > cluster.');
+  }
+  assertUnitInterval(rock.hysteresisRatio, 'stylizedSurface.lod.rock.hysteresisRatio');
+}
+
+function validateImpostor(impostor) {
+  assertBoolean(impostor.enabled, 'stylizedSurface.lod.impostor.enabled');
+  assertBoolean(impostor.runtimeBake, 'stylizedSurface.lod.impostor.runtimeBake');
+  assertPositiveInteger(impostor.columns, 'stylizedSurface.lod.impostor.columns');
+  assertPositiveInteger(impostor.rows, 'stylizedSurface.lod.impostor.rows');
+  assertPositiveInteger(impostor.tileSize, 'stylizedSurface.lod.impostor.tileSize');
+  if (impostor.tileSize < 32 || impostor.tileSize > 512) {
+    throw new Error('Invalid editor configuration: impostor tileSize must be from 32 to 512.');
+  }
+  assertNonNegativeInteger(impostor.gutter, 'stylizedSurface.lod.impostor.gutter');
+  if (impostor.gutter * 2 >= impostor.tileSize) {
+    throw new Error('Invalid editor configuration: impostor gutter must leave a positive capture area.');
+  }
+  assertFinite(impostor.lowElevationDegrees, 'stylizedSurface.lod.impostor.lowElevationDegrees');
+  assertFinite(impostor.highElevationDegrees, 'stylizedSurface.lod.impostor.highElevationDegrees');
+  if (impostor.highElevationDegrees <= impostor.lowElevationDegrees) {
+    throw new Error('Invalid editor configuration: impostor high elevation must exceed low elevation.');
+  }
+  if (typeof impostor.manifest !== 'string' || impostor.manifest.trim().length === 0) {
+    throw new Error('Invalid editor configuration: impostor manifest path is required.');
+  }
+}
+
+function validateGroundCover(groundCover) {
+  if (!groundCover) return;
+  assertBoolean(groundCover.enabled, 'stylizedSurface.groundCover.enabled');
+  if (!groundCover.enabled) return;
+  for (const [name, value] of [
+    ['startDistance', groundCover.startDistance],
+    ['endDistance', groundCover.endDistance],
+    ['frequency', groundCover.frequency],
+    ['noiseScale', groundCover.noiseScale],
+    ['noiseWarp', groundCover.noiseWarp],
+    ['strength', groundCover.strength],
+    ['tipStrength', groundCover.tipStrength],
+  ]) {
+    assertPositive(value, `stylizedSurface.groundCover.${name}`);
+  }
+  if (groundCover.endDistance <= groundCover.startDistance) {
+    throw new Error('Invalid editor configuration: groundCover endDistance must exceed startDistance.');
+  }
+  assertUnitInterval(groundCover.strandThreshold, 'stylizedSurface.groundCover.strandThreshold');
+  if (!Array.isArray(groundCover.direction)
+      || groundCover.direction.length !== 2
+      || groundCover.direction.some((value) => !Number.isFinite(value))) {
+    throw new Error('Invalid editor configuration: groundCover.direction must be a finite vec2.');
+  }
+  if (typeof groundCover.tipColor !== 'string' || groundCover.tipColor.length === 0) {
+    throw new Error('Invalid editor configuration: groundCover.tipColor is required.');
+  }
 }
 
 export function validateStylizedLodConfig(config) {
@@ -57,14 +151,16 @@ export function validateStylizedLodConfig(config) {
   if (surface.flowers.outerRingDensity !== undefined) {
     assertUnitInterval(surface.flowers.outerRingDensity, 'stylizedSurface.flowers.outerRingDensity', false);
   }
+  assertPositiveInteger(surface.grass.bladesPerClump, 'stylizedSurface.grass.bladesPerClump');
+  assertPositiveInteger(surface.grass.influenceTextureSize, 'stylizedSurface.grass.influenceTextureSize');
+  if (surface.grass.influenceTextureSize > 128) {
+    throw new Error('Invalid editor configuration: grass influenceTextureSize must not exceed 128.');
+  }
   if (surface.streaming?.grassCellsPerBuildSlice !== undefined) {
-    assertNonNegativeInteger(
+    assertPositiveInteger(
       surface.streaming.grassCellsPerBuildSlice,
       'stylizedSurface.streaming.grassCellsPerBuildSlice',
     );
-    if (surface.streaming.grassCellsPerBuildSlice < 1) {
-      throw new Error('Invalid editor configuration: stylizedSurface.streaming.grassCellsPerBuildSlice must be positive.');
-    }
   }
   if (surface.streaming?.inactiveReleaseFrames !== undefined) {
     assertNonNegativeInteger(
@@ -73,9 +169,25 @@ export function validateStylizedLodConfig(config) {
     );
   }
 
+  if (surface.streaming?.treeManifestBuildsPerFrame !== undefined) {
+    assertPositiveInteger(
+      surface.streaming.treeManifestBuildsPerFrame,
+      'stylizedSurface.streaming.treeManifestBuildsPerFrame',
+    );
+  }
+  if (surface.streaming?.manifestBuildBudgetMs !== undefined) {
+    assertPositive(
+      surface.streaming.manifestBuildBudgetMs,
+      'stylizedSurface.streaming.manifestBuildBudgetMs',
+    );
+  }
+
+  validateGroundCover(surface.groundCover);
   if (!surface.lod) return config;
   assertBoolean(surface.lod.enabled, 'stylizedSurface.lod.enabled');
-  validateLodBand('tree', surface.lod.tree, { hasBillboard: true });
-  validateLodBand('rock', surface.lod.rock, { hasBillboard: false });
+  validateTreeBand(surface.lod.tree);
+  validateRockBand(surface.lod.rock);
+  validateImpostor(surface.lod.impostor);
+  assertBoolean(surface.lod.gpuCulling.enabled, 'stylizedSurface.lod.gpuCulling.enabled');
   return config;
 }

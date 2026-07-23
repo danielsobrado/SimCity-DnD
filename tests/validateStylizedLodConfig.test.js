@@ -6,46 +6,98 @@ function config() {
   return {
     stylizedSurface: {
       enabled: true,
-      grass: { outerRingDensity: 0.45 },
+      grass: {
+        outerRingDensity: 0.45,
+        bladesPerClump: 8,
+        influenceTextureSize: 32,
+      },
       flowers: { outerRingDensity: 0.5 },
-      streaming: { grassCellsPerBuildSlice: 64, inactiveReleaseFrames: 30 },
+      streaming: {
+        grassCellsPerBuildSlice: 64,
+        inactiveReleaseFrames: 30,
+        treeManifestBuildsPerFrame: 4,
+        manifestBuildBudgetMs: 3,
+      },
+      groundCover: {
+        enabled: true,
+        startDistance: 150,
+        endDistance: 620,
+        direction: [1, 0],
+        frequency: 2.8,
+        noiseScale: 0.08,
+        noiseWarp: 3.2,
+        strandThreshold: 0.72,
+        strength: 0.36,
+        tipColor: '#ffffff',
+        tipStrength: 0.28,
+      },
       lod: {
         enabled: true,
         tree: {
           meshRadius: 1,
           proxyRadius: 3,
-          billboardRadius: 4,
+          impostorRadius: 5,
+          clusterRadius: 8,
           nearPixels: 32,
           proxyPixels: 8,
-          billboardPixels: 1.5,
+          impostorPixels: 2,
+          clusterPixels: 0.45,
           hysteresisRatio: 0.15,
+          transitionMs: 320,
         },
         rock: {
           meshRadius: 1,
           proxyRadius: 3,
           nearPixels: 16,
           proxyPixels: 1.5,
-          billboardPixels: 0.5,
+          impostorPixels: 0.5,
+          clusterPixels: 0.25,
           hysteresisRatio: 0.15,
+          transitionMs: 240,
         },
+        impostor: {
+          enabled: true,
+          runtimeBake: true,
+          manifest: '/assets/impostors/trees/manifest.json',
+          columns: 8,
+          rows: 2,
+          tileSize: 128,
+          gutter: 4,
+          lowElevationDegrees: 12,
+          highElevationDegrees: 58,
+        },
+        gpuCulling: { enabled: true },
       },
     },
   };
 }
 
-test('validates projected LOD and streaming controls', () => {
+test('validates complete vegetation LOD configuration', () => {
   const value = config();
   assert.equal(validateStylizedLodConfig(value), value);
 });
 
-test('rejects inverted LOD radii', () => {
+test('rejects inverted tree radii', () => {
   const value = config();
-  value.stylizedSurface.lod.tree.proxyRadius = 0;
-  assert.throws(() => validateStylizedLodConfig(value), /proxyRadius must cover meshRadius/);
+  value.stylizedSurface.lod.tree.impostorRadius = 2;
+  assert.throws(() => validateStylizedLodConfig(value), /tree LOD radii must ascend/);
 });
 
-test('rejects non-descending projected pixel thresholds', () => {
+test('rejects oversized influence textures', () => {
   const value = config();
-  value.stylizedSurface.lod.rock.proxyPixels = 32;
-  assert.throws(() => validateStylizedLodConfig(value), /thresholds must descend/);
+  value.stylizedSurface.grass.influenceTextureSize = 256;
+  assert.throws(() => validateStylizedLodConfig(value), /must not exceed 128/);
+});
+
+test('rejects invalid impostor atlas dimensions', () => {
+  const value = config();
+  value.stylizedSurface.lod.impostor.tileSize = 16;
+  assert.throws(() => validateStylizedLodConfig(value), /tileSize must be from 32 to 512/);
+});
+
+
+test('rejects invalid tree manifest budgets', () => {
+  const value = config();
+  value.stylizedSurface.streaming.treeManifestBuildsPerFrame = 0;
+  assert.throws(() => validateStylizedLodConfig(value), /treeManifestBuildsPerFrame/);
 });

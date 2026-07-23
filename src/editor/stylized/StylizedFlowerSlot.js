@@ -7,7 +7,7 @@ import { sampleHeight, scatterRandom01 } from './scatterMath.js';
 function createCrossGeometry(maxInstances) {
   const positions = new Float32Array([
     -0.5, 0, 0, 0.5, 0, 0, -0.5, 1, 0, 0.5, 1, 0,
-    0, 0, -0.5, 0, 0, 0.5, 0, 1, -0.5, 0, 1, 0.5,
+    0, 0, -0.5, 0, 0.5, 0, 1, -0.5, 0, 1, 0.5,
   ]);
   const uvs = new Float32Array([
     0, 0, 1, 0, 0, 1, 1, 1,
@@ -48,16 +48,15 @@ function setGeometryBounds(geometry, chunkWorldSize, minimumHeight, maximumHeigh
 }
 
 export class StylizedFlowerSlot {
-  constructor({ terrainSlot, terrainView, config, textures, variantIndex }) {
+  constructor({ terrainSlot, terrainView, config, textures }) {
     this.terrainSlot = terrainSlot;
     this.terrainView = terrainView;
     this.config = config;
     this.textures = textures;
-    this.variantIndex = variantIndex;
     this.chunkSize = terrainView.worldStore.chunkSize;
     this.tileSize = terrainView.worldStore.tileSize;
     this.chunkWorldSize = this.chunkSize * this.tileSize;
-    this.maxInstances = Math.ceil(config.flowers.perChunk / 2);
+    this.maxInstances = config.flowers.perChunk;
     this.chunkCenter = uniform(new THREE.Vector2());
     this.time = uniform(0);
     this.geometry = createCrossGeometry(this.maxInstances);
@@ -72,7 +71,7 @@ export class StylizedFlowerSlot {
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.frustumCulled = true;
     this.mesh.visible = false;
-    this.mesh.name = `stylized-flowers-${terrainSlot.slotIndex}-${variantIndex}`;
+    this.mesh.name = `stylized-flowers-${terrainSlot.slotIndex}`;
     terrainView.scene.add(this.mesh);
     this.readyKey = null;
     this.readyRevision = -1;
@@ -101,7 +100,7 @@ export class StylizedFlowerSlot {
     this.chunkCenter.value.set(descriptor.centerWorldX, descriptor.centerWorldZ);
     const farDensity = this.config.flowers.outerRingDensity ?? 0.5;
     const density = densityForDistance(distance, this.config.flowers.residentRadius, farDensity);
-    const sampleLimit = Math.max(2, Math.round(this.config.flowers.perChunk * density));
+    const sampleLimit = Math.max(1, Math.round(this.config.flowers.perChunk * density));
     const needsBuild = this.readyKey !== descriptor.key
       || this.readyRevision !== this.terrainSlot.pageRevision
       || this.readySampleLimit !== sampleLimit;
@@ -110,7 +109,7 @@ export class StylizedFlowerSlot {
     const signature = `${descriptor.key}:${this.terrainSlot.pageRevision}:${sampleLimit}`;
     if (this.pendingRebuild?.signature === signature) return;
     this.pendingRebuild = {
-      key: `flower:${this.terrainSlot.slotIndex}:${this.variantIndex}`,
+      key: `flower:${this.terrainSlot.slotIndex}`,
       page: this.terrainSlot.page,
       descriptor,
       revision: this.terrainSlot.pageRevision,
@@ -145,7 +144,7 @@ export class StylizedFlowerSlot {
     let minimumHeight = Number.POSITIVE_INFINITY;
     let maximumHeight = Number.NEGATIVE_INFINITY;
 
-    for (let index = this.variantIndex; index < sampleLimit; index += 2) {
+    for (let index = 0; index < sampleLimit; index += 1) {
       const localX = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 0) * this.chunkSize;
       const localZ = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 1) * this.chunkSize;
       const cellX = Math.min(this.chunkSize - 1, Math.floor(localX));
@@ -165,7 +164,7 @@ export class StylizedFlowerSlot {
         + scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 3)
           * (this.config.flowers.maxSize - this.config.flowers.minSize);
       parameters[parameterOffset + 2] = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 4);
-      parameters[parameterOffset + 3] = this.variantIndex;
+      parameters[parameterOffset + 3] = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 5) < 0.5 ? 0 : 1;
       minimumHeight = Math.min(minimumHeight, height);
       maximumHeight = Math.max(maximumHeight, height);
       count += 1;

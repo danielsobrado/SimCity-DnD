@@ -1,6 +1,10 @@
 import * as THREE from 'three/webgpu';
 import {
+  abs,
+  cameraPosition,
   clamp,
+  distance,
+  dot,
   float,
   fract,
   max,
@@ -8,6 +12,8 @@ import {
   mix,
   oneMinus,
   positionLocal,
+  positionWorld,
+  sin,
   smoothstep,
   texture,
   uv,
@@ -100,6 +106,28 @@ export function createTerrainMaterial({
       .mul(stylizedConfig.ground.grainStrength)
       .mul(dirt),
   );
+
+  const farCover = stylizedConfig.groundCover;
+  if (farCover?.enabled) {
+    const cameraDistance = distance(cameraPosition, positionWorld);
+    const farMask = smoothstep(farCover.startDistance, farCover.endDistance, cameraDistance)
+      .mul(grassCoverage)
+      .mul(oneMinus(dirt));
+    const direction = vec2(farCover.direction[0], farCover.direction[1]);
+    const strand = smoothstep(
+      farCover.strandThreshold,
+      1,
+      abs(sin(dot(worldXZ, direction).mul(farCover.frequency)
+        .add(stylizedFbm(worldXZ.mul(farCover.noiseScale)).mul(farCover.noiseWarp)))),
+    );
+    const farGrass = mix(
+      grassTint,
+      colorNode(farCover.tipColor),
+      strand.mul(farCover.tipStrength),
+    );
+    groundColor = mix(groundColor, farGrass, farMask.mul(farCover.strength));
+  }
+
   groundColor = max(groundColor, vec3(0));
 
   const material = new THREE.MeshLambertNodeMaterial();

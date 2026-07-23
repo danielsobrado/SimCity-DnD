@@ -2,28 +2,25 @@ import * as THREE from 'three/webgpu';
 import { uniform } from 'three/tsl';
 import { PerfCounters } from '../performance/qa/PerfCounters.js';
 import { materialList, normalizeBaseUrl, resolveAssetUrl } from '../assets/assetUrl.js';
-import {
-  extractPrototypeParts,
-  findPrototypeRoots,
-} from './StylizedTreePrototypes.js';
-import {
-  createStylizedLeafMaterial,
-  createStylizedTrunkMaterial,
-} from './StylizedTreeMaterials.js';
+import { extractPrototypeParts, findPrototypeRoots } from './StylizedTreePrototypes.js';
+import { createStylizedLeafMaterial, createStylizedTrunkMaterial } from './StylizedTreeMaterials.js';
 import { instanceCapacity } from './scatterMath.js';
-import {
-  blockersForChunk,
-  buildStableChunkManifest,
-  placementSignature,
-} from './StableScatterManifest.js';
+import { TreeManifestStore } from './TreeManifestStore.js';
+import { rebuildTreeLod } from './TreeLodAssembler.js';
 import {
   buildChunkLodPlan,
   createInstancedRenderers,
   disposeInstancedRenderers,
   pruneStateMap,
-  writeMatrices,
 } from './lod/StylizedLodRuntime.js';
-import { createTreeProxyPrototype } from './lod/StylizedProxyGeometry.js';
+import { createCanopyClusterPart, createTreeProxyPrototype } from './lod/StylizedProxyGeometry.js';
+import {
+  TreeImpostorAssetLoader,
+  disposeTreeImpostorAtlases,
+  downloadTreeImpostorBundle,
+} from './impostor/TreeImpostorAssets.js';
+import { TreeImpostorBaker } from './impostor/TreeImpostorBaker.js';
+import { TreeImpostorBatch } from './impostor/TreeImpostorBatch.js';
 
 function firstMaterial(mesh, name) {
   return materialList(mesh).find((material) => material?.name === name) ?? materialList(mesh)[0];
@@ -37,24 +34,24 @@ function configureBarkTexture(texture, colorSpace) {
   return texture;
 }
 
-function createMatrices(prototypeCount) {
-  return Array.from({ length: prototypeCount }, () => []);
-}
-
 function lodSettings(config) {
   const tree = config.lod?.tree ?? {};
   const meshRadius = tree.meshRadius ?? config.trees.residentRadius;
   const proxyRadius = Math.max(meshRadius, tree.proxyRadius ?? 3);
-  const billboardRadius = Math.max(proxyRadius, tree.billboardRadius ?? 4);
+  const impostorRadius = Math.max(proxyRadius, tree.impostorRadius ?? 5);
+  const clusterRadius = Math.max(impostorRadius, tree.clusterRadius ?? 8);
   return Object.freeze({
     enabled: config.lod?.enabled !== false,
     meshRadius,
     proxyRadius,
-    billboardRadius,
+    impostorRadius,
+    clusterRadius,
+    transitionMs: tree.transitionMs ?? 320,
     thresholds: {
       nearPixels: tree.nearPixels ?? 32,
       proxyPixels: tree.proxyPixels ?? 8,
-      billboardPixels: tree.billboardPixels ?? 1.5,
+      impostorPixels: tree.impostorPixels ?? 2,
+      clusterPixels: tree.clusterPixels ?? 0.45,
       hysteresisRatio: tree.hysteresisRatio ?? 0.15,
     },
   });
@@ -80,12 +77,17 @@ export class StylizedTreeView {
     this.time = uniform(0);
     this.prototypes = [];
     this.proxyPrototypes = [];
-    this.billboardPrototypes = [];
+    this.fallbackImpostorPrototypes = [];
     this.renderers = [];
     this.proxyRenderers = [];
-    this.billboardRenderers = [];
+    this.fallbackImpostorRenderers = [];
+    this.clusterRenderers = [];
+    this.impostorAtlases = [];
+    this.impostorBatches = [];
+    this.impostorVersion = 0;
+    this.impostorReady = Promise.resolve(null);
     this.textures = [];
-    this.manifestCache = new Map();
+    this.manifestStore = null;
     this.chunkLodStates = new Map();
     this.lastUpdateKey = null;
     this.disposed = false;
@@ -147,7 +149,12 @@ export class StylizedTreeView {
             config: this.config,
           })
           : createStylizedTrunkMaterial({ textures: barkTextures, config: this.config });
-        return { geometry: part.geometry, material, kind: part.kind };
+        return {
+          geometry: part.geometry,
+          material,
+          kind: part.kind,
+          sourceMap: leafMap,
+        };
       });
       if (parts.length > 0) this.prototypes.push(parts);
     }
@@ -155,16 +162,20 @@ export class StylizedTreeView {
       throw new Error('Pine prototype extraction produced no upright renderable parts.');
     }
 
+    this.createRenderResources();
+  }
+
+  createRenderResources() {
     const settings = lodSettings(this.config);
     const capacity = instanceCapacity({
-      residentRadius: settings.billboardRadius,
+      residentRadius: settings.impostorRadius + 1,
       perChunk: this.config.trees.perChunk,
     });
     const proxies = this.prototypes.map((parts) => createTreeProxyPrototype(parts, this.config));
     this.proxyPrototypes = proxies.map((prototype) => prototype.proxyParts);
-    this.billboardPrototypes = proxies.map((prototype) => prototype.billboardParts);
+    this.fallbackImpostorPrototypes = proxies.map((prototype) => prototype.fallbackImpostorParts);
     this.prototypeHeight = Math.max(...proxies.map((prototype) => prototype.height));
-
+    this.prototypeWidth = Math.max(...proxies.map((prototype) => prototype.width));
     this.renderers = createInstancedRenderers({
       root: this.root,
       partsByPrototype: this.prototypes,
@@ -179,137 +190,144 @@ export class StylizedTreeView {
       name: 'stylized-pine-proxy',
       castShadow: false,
     });
-    this.billboardRenderers = createInstancedRenderers({
+    this.fallbackImpostorRenderers = createInstancedRenderers({
       root: this.root,
-      partsByPrototype: this.billboardPrototypes,
+      partsByPrototype: this.fallbackImpostorPrototypes,
       capacity,
-      name: 'stylized-pine-billboard',
+      name: 'stylized-pine-impostor-fallback',
       castShadow: false,
+    });
+    this.clusterRenderers = createInstancedRenderers({
+      root: this.root,
+      partsByPrototype: [[createCanopyClusterPart(this.config)]],
+      capacity: (settings.clusterRadius * 2 + 3) ** 2,
+      name: 'stylized-canopy-cluster',
+      castShadow: false,
+    });
+    this.manifestStore = new TreeManifestStore({
+      terrainView: this.terrainView,
+      config: this.config,
+      revisionTracker: this.revisionTracker,
+      prototypeCount: this.prototypes.length,
+      onBuilt: () => { this.lastUpdateKey = null; },
+    });
+    this.impostorReady = this.initializeImpostors(capacity).catch((error) => {
+      console.warn('Tree impostor initialization failed; cross-card fallback remains active.', error);
+      return null;
     });
   }
 
-  update(timestamp, camera, rockPlacements = [], rockSignature = '') {
+  async initializeImpostors(capacity) {
+    const settings = this.config.lod?.impostor;
+    if (!settings?.enabled || this.disposed) return null;
+    const forceBake = typeof location !== 'undefined'
+      && new URLSearchParams(location.search).get('bakeImpostors') === '1';
+    const loader = new TreeImpostorAssetLoader({ baseUrl: this.baseUrl });
+    let atlases = forceBake ? null : await loader.load(settings.manifest).catch((error) => {
+      console.warn('Tree impostor assets could not be loaded; runtime bake will be attempted.', error);
+      return null;
+    });
+    if (!atlases && settings.runtimeBake !== false) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      atlases = await new TreeImpostorBaker({
+        renderer: this.terrainView.renderer,
+        config: this.config,
+      }).bake(this.prototypes);
+    }
+    if (!atlases || this.disposed) return null;
+
+    this.impostorAtlases = [...atlases];
+    this.impostorBatches = this.impostorAtlases.map((atlas, index) => new TreeImpostorBatch({
+      renderer: this.terrainView.renderer,
+      scene: this.terrainView.scene,
+      atlas,
+      capacity,
+      name: `stylized-pine-impostor-${index}`,
+      gpuCulling: this.config.lod?.gpuCulling?.enabled !== false,
+    }));
+    this.impostorVersion += 1;
+    this.lastUpdateKey = null;
+    PerfCounters.set('treeImpostorAtlasBytes', this.impostorAtlases.reduce((total, atlas) => (
+      total + atlas.columns * atlas.rows * atlas.tileSize * atlas.tileSize * 8 * 4 / 3
+    ), 0));
+    return this.impostorAtlases;
+  }
+
+  update(timestamp, camera, rockSource = null, rockSignature = '') {
     this.time.value = timestamp / 1000;
-    if (this.disposed || this.renderers.length === 0 || !this.terrainView.focusChunkKey || !camera) return;
+    if (this.disposed || !this.manifestStore || !this.terrainView.focusChunkKey || !camera) return;
     const focus = this.terrainView.focusChunk;
     const origin = this.terrainView.floatingOrigin.getState();
     this.root.position.set(-origin.x, 0, -origin.z);
     const settings = lodSettings(this.config);
-    const radius = settings.enabled ? settings.billboardRadius : this.config.trees.residentRadius;
+    const radius = settings.enabled ? settings.clusterRadius : this.config.trees.residentRadius;
     const viewportHeight = this.terrainView.renderer.domElement.clientHeight
       || this.terrainView.renderer.domElement.height
       || 1;
     const plan = settings.enabled
       ? buildChunkLodPlan({
         focus,
-        radius,
+        radius: radius + 1,
         chunkWorldSize: this.terrainView.chunkWorldSize,
         floatingOrigin: this.terrainView.floatingOrigin,
         camera,
         viewportHeight,
         objectHeight: this.prototypeHeight,
         thresholds: settings.thresholds,
-        radii: {
-          meshRadius: settings.meshRadius,
-          proxyRadius: settings.proxyRadius,
-          billboardRadius: settings.billboardRadius,
-        },
-        previousStates: this.chunkLodStates,
+        radii: settings,
+        transitionStates: this.chunkLodStates,
+        timestamp,
+        transitionMs: settings.transitionMs,
       })
       : {
         entries: this.createNearOnlyPlan(focus, radius),
         signature: `near:${focus.chunkX}:${focus.chunkZ}:${radius}`,
       };
     pruneStateMap(this.chunkLodStates, plan.entries);
-    const revisionSignature = this.revisionTracker.windowSignature(focus, radius, 1);
-    const updateKey = `${focus.chunkX}:${focus.chunkZ}:${revisionSignature}:${rockSignature}:${plan.signature}`;
-    if (updateKey === this.lastUpdateKey) return;
-    this.lastUpdateKey = updateKey;
-    this.rebuild(plan, rockPlacements);
+    const revision = this.revisionTracker.windowSignature(focus, radius + 1, 1);
+    const key = `${focus.chunkX}:${focus.chunkZ}:${revision}:${rockSignature}:${plan.signature}:${this.impostorVersion}`;
+    if (key !== this.lastUpdateKey) {
+      this.lastUpdateKey = key;
+      rebuildTreeLod({
+        plan,
+        rockSource,
+        manifestStore: this.manifestStore,
+        prototypeCount: this.prototypes.length,
+        prototypeWidth: this.prototypeWidth,
+        prototypeHeight: this.prototypeHeight,
+        impostorAtlases: this.impostorAtlases,
+        impostorBatches: this.impostorBatches,
+        renderers: this.renderers,
+        proxyRenderers: this.proxyRenderers,
+        fallbackImpostorRenderers: this.fallbackImpostorRenderers,
+        clusterRenderers: this.clusterRenderers,
+      });
+      this.manifestStore.flush();
+    }
+    for (const batch of this.impostorBatches) batch.update(camera, origin);
   }
 
   createNearOnlyPlan(focus, radius) {
     const entries = [];
-    for (let chunkZ = focus.chunkZ - radius; chunkZ <= focus.chunkZ + radius; chunkZ += 1) {
-      for (let chunkX = focus.chunkX - radius; chunkX <= focus.chunkX + radius; chunkX += 1) {
-        entries.push({ chunkX, chunkZ, band: 'near' });
+    for (let z = focus.chunkZ - radius; z <= focus.chunkZ + radius; z += 1) {
+      for (let x = focus.chunkX - radius; x <= focus.chunkX + radius; x += 1) {
+        entries.push({
+          chunkX: x,
+          chunkZ: z,
+          chunkDistance: Math.max(Math.abs(x - focus.chunkX), Math.abs(z - focus.chunkZ)),
+          representations: [{ band: 'near', fade: 1 }],
+        });
       }
     }
     return entries;
   }
 
-  manifestForChunk(chunkX, chunkZ, rockPlacements) {
-    const clearRadius = this.config.trees.clearRadius ?? this.terrainView.worldStore.tileSize;
-    const localBlockers = blockersForChunk({
-      placements: rockPlacements,
-      chunkX,
-      chunkZ,
-      chunkWorldSize: this.terrainView.chunkWorldSize,
-      expand: clearRadius,
-    });
-    const key = [
-      this.revisionTracker.signature(chunkX, chunkZ, 1),
-      placementSignature(localBlockers),
-      this.prototypes.length,
-    ].join('|');
-    const cacheKey = `${chunkX}:${chunkZ}`;
-    const cached = this.manifestCache.get(cacheKey);
-    if (cached?.key === key) return cached.placements;
-
-    const placements = buildStableChunkManifest({
-      kind: 'tree',
-      chunkX,
-      chunkZ,
-      chunkSize: this.terrainView.worldStore.chunkSize,
-      tileSize: this.terrainView.worldStore.tileSize,
-      perChunk: this.config.trees.perChunk,
-      tileIds: this.config.trees.tileIds,
-      tileAt: (cellX, cellZ) => this.terrainView.tileMap.get(cellX, cellZ),
-      heightAt: (x, z) => this.terrainView.getCanonicalHeight(x, z),
-      prototypeCount: this.prototypes.length,
-      minScale: this.config.trees.minScale,
-      maxScale: this.config.trees.maxScale,
-      radiusForScale: () => clearRadius,
-      blockers: localBlockers,
-    });
-    this.manifestCache.set(cacheKey, { key, placements });
-    return placements;
-  }
-
-  rebuild(plan, rockPlacements = []) {
-    PerfCounters.inc('treeRebuilds');
-    const near = createMatrices(this.prototypes.length);
-    const proxy = createMatrices(this.prototypes.length);
-    const billboard = createMatrices(this.prototypes.length);
-    const dummy = new THREE.Object3D();
-    const activeChunks = new Set();
-
-    for (const entry of plan.entries) {
-      if (entry.band === 'culled') continue;
-      activeChunks.add(`${entry.chunkX}:${entry.chunkZ}`);
-      const placements = this.manifestForChunk(entry.chunkX, entry.chunkZ, rockPlacements);
-      for (const placement of placements) {
-        dummy.position.set(placement.x, placement.height, placement.z);
-        dummy.rotation.set(0, placement.rotationY, 0);
-        dummy.scale.setScalar(placement.scale);
-        dummy.updateMatrix();
-        const target = entry.band === 'near'
-          ? near
-          : entry.band === 'proxy' ? proxy : billboard;
-        target[placement.prototypeIndex].push(dummy.matrix.clone());
-      }
+  async exportImpostors() {
+    await this.impostorReady;
+    if (this.impostorAtlases.length === 0) {
+      throw new Error('No runtime-baked tree impostors are available to export.');
     }
-
-    const nearCount = writeMatrices(this.renderers, near);
-    const proxyCount = writeMatrices(this.proxyRenderers, proxy);
-    const billboardCount = writeMatrices(this.billboardRenderers, billboard);
-    PerfCounters.set('treeNearInstances', nearCount);
-    PerfCounters.set('treeProxyInstances', proxyCount);
-    PerfCounters.set('treeBillboardInstances', billboardCount);
-
-    for (const key of this.manifestCache.keys()) {
-      if (!activeChunks.has(key)) this.manifestCache.delete(key);
-    }
+    return downloadTreeImpostorBundle(this.impostorAtlases);
   }
 
   dispose() {
@@ -318,13 +336,15 @@ export class StylizedTreeView {
     this.terrainView.scene.remove(this.root);
     disposeInstancedRenderers(this.root, this.renderers);
     disposeInstancedRenderers(this.root, this.proxyRenderers);
-    disposeInstancedRenderers(this.root, this.billboardRenderers);
+    disposeInstancedRenderers(this.root, this.fallbackImpostorRenderers);
+    disposeInstancedRenderers(this.root, this.clusterRenderers);
+    for (const batch of this.impostorBatches) batch.dispose();
+    disposeTreeImpostorAtlases(this.impostorAtlases);
     disposePrototypeParts(this.prototypes);
     disposePrototypeParts(this.proxyPrototypes);
-    disposePrototypeParts(this.billboardPrototypes);
+    disposePrototypeParts(this.fallbackImpostorPrototypes);
     this.textures.forEach((texture) => texture.dispose());
-    this.textures.length = 0;
-    this.manifestCache.clear();
+    this.manifestStore?.dispose();
     this.chunkLodStates.clear();
   }
 }

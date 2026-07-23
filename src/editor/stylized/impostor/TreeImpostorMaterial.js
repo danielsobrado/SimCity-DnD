@@ -1,0 +1,139 @@
+import * as THREE from 'three/webgpu';
+import {
+  atan,
+  attribute,
+  cameraPosition,
+  clamp,
+  cross,
+  dot,
+  floor,
+  fract,
+  length,
+  min,
+  mix,
+  mod,
+  normalize,
+  positionLocal,
+  sin,
+  step,
+  texture,
+  uniform,
+  uv,
+  vec2,
+  vec3,
+  vec4,
+} from 'three/tsl';
+
+const HASH_VECTOR = vec3(12.9898, 78.233, 37.719);
+const HASH_SCALE = 43758.5453;
+const TWO_PI = Math.PI * 2;
+
+function createMaterial({ atlas, readTransform, readParameters }) {
+  const cameraRight = uniform(new THREE.Vector3(1, 0, 0));
+  const cameraUp = uniform(new THREE.Vector3(0, 1, 0));
+  const sphericalBlend = uniform(0);
+  const transform = readTransform();
+  const parameters = readParameters();
+  const scale = transform.w;
+  const right = normalize(cameraRight);
+  const up = normalize(mix(vec3(0, 1, 0), cameraUp, sphericalBlend));
+  const backward = normalize(cross(right, up));
+  const local = positionLocal;
+  const worldPosition = transform.xyz
+    .add(right.mul(local.x.mul(atlas.width).mul(scale)))
+    .add(up.mul(local.y.mul(atlas.height).mul(scale)));
+
+  const viewDelta = cameraPosition.sub(transform.xyz);
+  const localAzimuth = mod(atan(viewDelta.x, viewDelta.z).sub(parameters.x).add(TWO_PI), TWO_PI);
+  const columnPosition = localAzimuth.div(TWO_PI).mul(atlas.columns);
+  const column0 = floor(columnPosition);
+  const column1 = mod(column0.add(1), atlas.columns);
+  const columnBlend = fract(columnPosition);
+  const elevation = atan(viewDelta.y, length(viewDelta.xz));
+  const lowElevation = atlas.lowElevationDegrees * Math.PI / 180;
+  const highElevation = atlas.highElevationDegrees * Math.PI / 180;
+  const rowPosition = clamp(
+    elevation.sub(lowElevation).div(Math.max(0.0001, highElevation - lowElevation)),
+    0,
+    1,
+  ).mul(Math.max(0, atlas.rows - 1));
+  const row0 = floor(rowPosition);
+  const row1 = min(row0.add(1), Math.max(0, atlas.rows - 1));
+  const rowBlend = fract(rowPosition);
+  const gutter = Math.max(0, atlas.gutter ?? 0);
+  const tileScale = Math.max(0.001, (atlas.tileSize - gutter * 2) / atlas.tileSize);
+  const tileOffset = gutter / atlas.tileSize;
+  const localUv = uv().mul(tileScale).add(tileOffset);
+  const sampleAtlas = (map, column, row) => texture(map, vec2(
+    localUv.x.add(column).div(atlas.columns),
+    localUv.y.add(row).div(atlas.rows),
+  ));
+  const blendAtlas = (map) => mix(
+    mix(sampleAtlas(map, column0, row0), sampleAtlas(map, column1, row0), columnBlend),
+    mix(sampleAtlas(map, column0, row1), sampleAtlas(map, column1, row1), columnBlend),
+    rowBlend,
+  );
+  const albedo = blendAtlas(atlas.albedo);
+  const encodedNormal = blendAtlas(atlas.normal).rgb;
+  const viewNormal = encodedNormal.mul(2).sub(1);
+  const worldNormal = normalize(
+    right.mul(viewNormal.x)
+      .add(up.mul(viewNormal.y))
+      .add(backward.mul(viewNormal.z)),
+  );
+  const threshold = fract(sin(dot(
+    vec3(uv().x, uv().y, parameters.z),
+    HASH_VECTOR,
+  )).mul(HASH_SCALE));
+  const coverage = albedo.a.mul(parameters.y);
+  const visible = step(threshold, coverage);
+
+  const material = new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide });
+  material.positionNode = worldPosition;
+  material.colorNode = albedo.rgb;
+  material.normalNode = worldNormal;
+  material.opacityNode = visible;
+  material.alphaTest = 0.5;
+  material.transparent = false;
+  material.depthWrite = true;
+  material.fog = true;
+  return {
+    material,
+    uniforms: { cameraRight, cameraUp, sphericalBlend },
+  };
+}
+
+export function createCpuTreeImpostorMaterial(atlas) {
+  return createMaterial({
+    atlas,
+    readTransform: () => attribute('instanceTransform', 'vec4'),
+    readParameters: () => attribute('instanceImpostorParams', 'vec4'),
+  });
+}
+
+export function createGpuTreeImpostorMaterial({
+  atlas,
+  transformRead,
+  parameterRead,
+  visibleRead,
+  instanceIndex,
+  originUniform,
+}) {
+  return createMaterial({
+    atlas,
+    readTransform: () => {
+      const transform = transformRead.element(visibleRead.element(instanceIndex));
+      return vec4(transform.xyz.sub(originUniform), transform.w);
+    },
+    readParameters: () => parameterRead.element(visibleRead.element(instanceIndex)),
+  });
+}
+
+export function updateImpostorCameraUniforms(uniforms, camera) {
+  camera.updateMatrixWorld();
+  const elements = camera.matrixWorld.elements;
+  uniforms.cameraRight.value.set(elements[0], elements[1], elements[2]).normalize();
+  uniforms.cameraUp.value.set(elements[4], elements[5], elements[6]).normalize();
+  const forwardY = Math.abs(elements[9]);
+  uniforms.sphericalBlend.value = THREE.MathUtils.smoothstep(forwardY, 0.35, 0.82);
+}

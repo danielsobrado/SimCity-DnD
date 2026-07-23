@@ -21,7 +21,6 @@ world:
   maxCommitsPerFrame: 1
   maxCommitsPerFrameIdle: 4
   commitBudgetMs: 2
-  # workerCount: null  # defaults to CPU cores - 1 (clamped 2..8)
 camera:
   viewSize: 180
   minZoom: 0.3
@@ -67,10 +66,9 @@ stylizedSurface:
       gradient: /assets/textures/flower3/flowersGradient.png
   grass:
     residentRadius: 1
-    # Upstream GrassField demo uses 300 blades/u² on a ~15×15 patch.
-    # With tileSize 2, bladesPerCell ≈ density × 4. Streamed chunks can't
-    # afford 300/u², so this targets ~12/u² (48/cell) with matching blade size.
     bladesPerCell: 48
+    bladesPerClump: 8
+    influenceTextureSize: 32
     outerRingDensity: 0.45
     tileIds: [0, 1, 4]
     minWidth: 0.06
@@ -83,23 +81,42 @@ stylizedSurface:
     heavyBuildBudgetMs: 3
     grassCellsPerBuildSlice: 64
     inactiveReleaseFrames: 30
+    treeManifestBuildsPerFrame: 4
+    manifestBuildBudgetMs: 3
   lod:
     enabled: true
     tree:
       meshRadius: 1
       proxyRadius: 3
-      billboardRadius: 4
+      impostorRadius: 5
+      clusterRadius: 8
       nearPixels: 32
       proxyPixels: 8
-      billboardPixels: 1.5
+      impostorPixels: 2
+      clusterPixels: 0.45
       hysteresisRatio: 0.15
+      transitionMs: 320
     rock:
       meshRadius: 1
       proxyRadius: 3
       nearPixels: 16
       proxyPixels: 1.5
-      billboardPixels: 0.5
+      impostorPixels: 0.5
+      clusterPixels: 0.25
       hysteresisRatio: 0.15
+      transitionMs: 240
+    impostor:
+      enabled: true
+      manifest: /assets/impostors/trees/manifest.json
+      runtimeBake: true
+      columns: 8
+      rows: 2
+      tileSize: 128
+      gutter: 4
+      lowElevationDegrees: 12
+      highElevationDegrees: 58
+    gpuCulling:
+      enabled: true
   wind:
     direction: [1, 0]
     strength: 0.1
@@ -218,6 +235,18 @@ stylizedSurface:
     variationStrength: 0.9
     grainScale: 6.7
     grainStrength: 0.95
+  groundCover:
+    enabled: true
+    startDistance: 150
+    endDistance: 620
+    direction: [0.88, 0.47]
+    frequency: 2.8
+    noiseScale: 0.08
+    noiseWarp: 3.2
+    strandThreshold: 0.72
+    strength: 0.36
+    tipColor: '#9dbb45'
+    tipStrength: 0.28
   sky:
     enabled: true
     radius: 5000

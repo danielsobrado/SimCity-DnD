@@ -1,3 +1,4 @@
+import { PerfCounters } from '../performance/qa/PerfCounters.js';
 import { vec3 } from 'three/tsl';
 import {
   collectObjectBoulderPlacements,
@@ -50,6 +51,9 @@ export class StylizedSurfaceView {
       ? new StylizedFlowerView({ terrainView, config, baseUrl })
       : null;
     this.ready = this.bootstrapLayers();
+    this.ready.then(() => this.maybeHandleImpostorBake()).catch((error) => {
+      console.error('Tree impostor export request failed.', error);
+    });
     this.slots = this.enabled
       ? terrainView.slots.map((terrainSlot) => new StylizedGrassSlot({
         terrainSlot,
@@ -100,13 +104,56 @@ export class StylizedSurfaceView {
     }
   }
 
+  async maybeHandleImpostorBake() {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('bakeImpostors') !== '1') return;
+    window.__treeImpostorBakeStatus = 'baking';
+    try {
+      const bundle = await this.exportImpostors();
+      window.__treeImpostorBakeBundle = bundle;
+      window.__treeImpostorBakeStatus = 'done';
+      document.documentElement.dataset.impostorBake = 'done';
+    } catch (error) {
+      window.__treeImpostorBakeStatus = 'failed';
+      window.__treeImpostorBakeError = error instanceof Error ? error.message : String(error);
+      document.documentElement.dataset.impostorBake = 'failed';
+      throw error;
+    }
+  }
+
+  get impostorReady() {
+    return this.treeView?.impostorReady ?? Promise.resolve(null);
+  }
+
+  async exportImpostors() {
+    if (!this.treeView) throw new Error('Tree rendering is disabled.');
+    return this.treeView.exportImpostors();
+  }
+
+  updateRendererCounters() {
+    const info = this.terrainView.renderer.info;
+    if (!info) return;
+    for (const [name, value] of [
+      ['rendererDrawCalls', info.render?.calls],
+      ['rendererTriangles', info.render?.triangles],
+      ['rendererLines', info.render?.lines],
+      ['rendererPoints', info.render?.points],
+      ['rendererGeometries', info.memory?.geometries],
+      ['rendererTextures', info.memory?.textures],
+    ]) {
+      if (Number.isFinite(value)) PerfCounters.set(name, value);
+    }
+  }
+
   update(timestamp, camera) {
     if (!this.enabled) return;
+    this.updateRendererCounters();
     this.skyView?.update(timestamp, camera);
-    this.rockView?.update(camera);
+    this.rockView?.update(timestamp, camera);
     const rockPlacements = this.rockView?.getPlacements() ?? [];
     const rockSignature = this.rockView?.getSignature() ?? '';
-    this.treeView?.update(timestamp, camera, rockPlacements, rockSignature);
+    this.treeView?.update(timestamp, camera, this.rockView, rockSignature);
     this.flowerView?.update(timestamp);
     for (const slot of this.waterSlots) slot.update(timestamp);
 

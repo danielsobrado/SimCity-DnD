@@ -4,21 +4,18 @@ import {
   clampLodToRadii,
   projectedPixelHeight,
   selectProjectedLod,
+  updateLodTransition,
 } from '../src/editor/stylized/lod/projectedLod.js';
 
 const thresholds = {
   nearPixels: 32,
   proxyPixels: 8,
-  billboardPixels: 1.5,
+  impostorPixels: 2,
+  clusterPixels: 0.45,
 };
 
 test('orthographic projected size responds to zoom', () => {
-  const camera = {
-    isOrthographicCamera: true,
-    top: 90,
-    bottom: -90,
-    zoom: 1,
-  };
+  const camera = { isOrthographicCamera: true, top: 90, bottom: -90, zoom: 1 };
   const normal = projectedPixelHeight({ camera, worldPosition: {}, worldHeight: 10, viewportHeight: 900 });
   camera.zoom = 2;
   const zoomed = projectedPixelHeight({ camera, worldPosition: {}, worldHeight: 10, viewportHeight: 900 });
@@ -40,12 +37,39 @@ test('perspective projected size falls with distance', () => {
 test('LOD hysteresis prevents immediate boundary oscillation', () => {
   assert.equal(selectProjectedLod({ pixels: 31, previous: 'near', hysteresisRatio: 0.15, ...thresholds }), 'near');
   assert.equal(selectProjectedLod({ pixels: 26, previous: 'near', hysteresisRatio: 0.15, ...thresholds }), 'proxy');
-  assert.equal(selectProjectedLod({ pixels: 33, previous: 'proxy', hysteresisRatio: 0.15, ...thresholds }), 'proxy');
-  assert.equal(selectProjectedLod({ pixels: 38, previous: 'proxy', hysteresisRatio: 0.15, ...thresholds }), 'near');
+  assert.equal(selectProjectedLod({ pixels: 2.1, previous: 'proxy', hysteresisRatio: 0.15, ...thresholds }), 'impostor');
 });
 
 test('LOD radii cap expensive representations', () => {
-  assert.equal(clampLodToRadii({ band: 'near', chunkDistance: 2, meshRadius: 1, proxyRadius: 3, billboardRadius: 5 }), 'proxy');
-  assert.equal(clampLodToRadii({ band: 'proxy', chunkDistance: 4, meshRadius: 1, proxyRadius: 3, billboardRadius: 5 }), 'billboard');
-  assert.equal(clampLodToRadii({ band: 'billboard', chunkDistance: 6, meshRadius: 1, proxyRadius: 3, billboardRadius: 5 }), 'culled');
+  const radii = { meshRadius: 1, proxyRadius: 3, impostorRadius: 5, clusterRadius: 8 };
+  assert.equal(clampLodToRadii({ band: 'near', chunkDistance: 2, ...radii }), 'proxy');
+  assert.equal(clampLodToRadii({ band: 'proxy', chunkDistance: 4, ...radii }), 'impostor');
+  assert.equal(clampLodToRadii({ band: 'impostor', chunkDistance: 6, ...radii }), 'cluster');
+  assert.equal(clampLodToRadii({ band: 'cluster', chunkDistance: 9, ...radii }), 'culled');
+});
+
+test('LOD transitions draw both representations until complete', () => {
+  const initial = updateLodTransition({ state: null, target: 'near', timestamp: 0, durationMs: 300 });
+  const settled = updateLodTransition({ state: initial, target: 'near', timestamp: 400, durationMs: 300 });
+  const started = updateLodTransition({ state: settled, target: 'proxy', timestamp: 500, durationMs: 300 });
+  const halfway = updateLodTransition({ state: started, target: 'proxy', timestamp: 650, durationMs: 300 });
+  assert.equal(halfway.representations.length, 2);
+  assert.equal(halfway.representations[0].band, 'near');
+  assert.equal(halfway.representations[1].band, 'proxy');
+  const done = updateLodTransition({ state: halfway, target: 'proxy', timestamp: 850, durationMs: 300 });
+  assert.deepEqual(done.representations, [{ band: 'proxy', fade: 1 }]);
+});
+
+test('newly resident LOD bands fade in from culled', () => {
+  const state = updateLodTransition({
+    state: null,
+    target: 'cluster',
+    timestamp: 100,
+    durationMs: 300,
+  });
+  assert.equal(state.complete, false);
+  assert.deepEqual(state.representations, [
+    { band: 'culled', fade: 1 },
+    { band: 'cluster', fade: 0 },
+  ]);
 });

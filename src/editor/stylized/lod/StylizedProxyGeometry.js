@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { vec3 } from 'three/tsl';
 
 function unionBounds(parts, kind = null) {
   const box = new THREE.Box3();
@@ -12,11 +13,10 @@ function unionBounds(parts, kind = null) {
 }
 
 function makeMaterial(color, side = THREE.FrontSide) {
-  return new THREE.MeshLambertMaterial({
-    color,
-    flatShading: true,
-    side,
-  });
+  const value = new THREE.Color(color);
+  const material = new THREE.MeshLambertNodeMaterial({ side });
+  material.colorNode = vec3(value.r, value.g, value.b);
+  return material;
 }
 
 function createCrossCanopyGeometry(bounds) {
@@ -92,6 +92,8 @@ export function createTreeProxyPrototype(parts, config) {
 
   return {
     height: Math.max(0.1, combinedBounds.max.y - combinedBounds.min.y),
+    width: Math.max(0.1, combinedBounds.max.x - combinedBounds.min.x),
+    depth: Math.max(0.1, combinedBounds.max.z - combinedBounds.min.z),
     proxyParts: [
       {
         geometry: canopyGeometry,
@@ -104,7 +106,7 @@ export function createTreeProxyPrototype(parts, config) {
         kind: 'trunk',
       },
     ],
-    billboardParts: [
+    fallbackImpostorParts: [
       {
         geometry: createCrossCanopyGeometry(leafBounds),
         material: makeMaterial(config.trees.leafTop, THREE.DoubleSide),
@@ -116,6 +118,19 @@ export function createTreeProxyPrototype(parts, config) {
         kind: 'trunk',
       },
     ],
+  };
+}
+
+export function createCanopyClusterPart(config) {
+  const geometry = new THREE.DodecahedronGeometry(0.5, 1);
+  geometry.scale(1, 0.62, 1);
+  geometry.translate(0, 0.5, 0);
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return {
+    geometry,
+    material: makeMaterial(config.trees.leafBottom),
+    kind: 'leaf',
   };
 }
 

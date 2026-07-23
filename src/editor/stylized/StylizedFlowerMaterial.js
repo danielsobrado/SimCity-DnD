@@ -34,7 +34,10 @@ export function createStylizedFlowerMaterial({
 }) {
   const base = attribute('instanceBase', 'vec3');
   const parameters = attribute('instanceParams', 'vec4');
-  const flowerUv = uv();
+  const flowerUv = vec2(
+    uv().x.mul(0.5).add(parameters.w.mul(0.5)),
+    uv().y,
+  );
   const localUv = vec2(
     base.x.div(chunkWorldSize).add(0.5),
     float(0.5).sub(base.z.div(chunkWorldSize)),

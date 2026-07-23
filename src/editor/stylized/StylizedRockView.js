@@ -12,7 +12,7 @@ import {
   createInstancedRenderers,
   disposeInstancedRenderers,
   pruneStateMap,
-  writeMatrices,
+  writeInstances,
 } from './lod/StylizedLodRuntime.js';
 import { createRockProxyPrototype } from './lod/StylizedProxyGeometry.js';
 
@@ -26,7 +26,7 @@ function cloneMaterial(mesh) {
   return material;
 }
 
-function createMatrices(prototypeCount) {
+function createInstances(prototypeCount) {
   return Array.from({ length: prototypeCount }, () => []);
 }
 
@@ -38,18 +38,15 @@ function lodSettings(config) {
     enabled: config.lod?.enabled !== false,
     meshRadius,
     proxyRadius,
+    transitionMs: rock.transitionMs ?? 240,
     thresholds: {
       nearPixels: rock.nearPixels ?? 16,
       proxyPixels: rock.proxyPixels ?? 1.5,
-      billboardPixels: rock.billboardPixels ?? 0.5,
+      impostorPixels: rock.impostorPixels ?? 0.5,
+      clusterPixels: rock.clusterPixels ?? 0.25,
       hysteresisRatio: rock.hysteresisRatio ?? 0.15,
     },
   });
-}
-
-function treePlacementRadius(config) {
-  if (config.lod?.enabled === false) return config.trees.residentRadius + 1;
-  return (config.lod?.tree?.billboardRadius ?? 4) + 1;
 }
 
 function disposePrototypeParts(prototypes) {
@@ -72,6 +69,7 @@ export class StylizedRockView {
     this.meshes = [];
     this.proxyMeshes = [];
     this.placements = [];
+    this.placementsByChunk = new Map();
     this.signature = '';
     this.manifestCache = new Map();
     this.chunkLodStates = new Map();
@@ -97,7 +95,7 @@ export class StylizedRockView {
 
     const settings = lodSettings(this.config);
     const capacity = instanceCapacity({
-      residentRadius: settings.proxyRadius,
+      residentRadius: settings.proxyRadius + 1,
       perChunk: this.config.rocks.perChunk,
     });
     const proxies = this.prototypes.map((prototype) => createRockProxyPrototype(prototype));
@@ -119,21 +117,21 @@ export class StylizedRockView {
     });
   }
 
-  update(camera) {
+  update(timestamp, camera) {
     if (this.disposed || this.prototypes.length === 0 || !this.terrainView.focusChunkKey || !camera) return;
     const focus = this.terrainView.focusChunk;
     const origin = this.terrainView.floatingOrigin.getState();
     this.root.position.set(-origin.x, 0, -origin.z);
     const settings = lodSettings(this.config);
     const renderRadius = settings.enabled ? settings.proxyRadius : this.config.rocks.residentRadius;
-    const placementRadius = Math.max(renderRadius, treePlacementRadius(this.config));
+    const placementRadius = renderRadius + 1;
     const viewportHeight = this.terrainView.renderer.domElement.clientHeight
       || this.terrainView.renderer.domElement.height
       || 1;
     const plan = settings.enabled
       ? buildChunkLodPlan({
         focus,
-        radius: renderRadius,
+        radius: renderRadius + 1,
         chunkWorldSize: this.terrainView.chunkWorldSize,
         floatingOrigin: this.terrainView.floatingOrigin,
         camera,
@@ -143,9 +141,12 @@ export class StylizedRockView {
         radii: {
           meshRadius: settings.meshRadius,
           proxyRadius: settings.proxyRadius,
-          billboardRadius: settings.proxyRadius,
+          impostorRadius: settings.proxyRadius,
+          clusterRadius: settings.proxyRadius,
         },
-        previousStates: this.chunkLodStates,
+        transitionStates: this.chunkLodStates,
+        timestamp,
+        transitionMs: settings.transitionMs,
       })
       : {
         entries: this.createNearOnlyPlan(focus, renderRadius),
@@ -163,7 +164,11 @@ export class StylizedRockView {
     const entries = [];
     for (let chunkZ = focus.chunkZ - radius; chunkZ <= focus.chunkZ + radius; chunkZ += 1) {
       for (let chunkX = focus.chunkX - radius; chunkX <= focus.chunkX + radius; chunkX += 1) {
-        entries.push({ chunkX, chunkZ, band: 'near' });
+        entries.push({
+          chunkX,
+          chunkZ,
+          representations: [{ band: 'near', fade: 1 }],
+        });
       }
     }
     return entries;
@@ -176,7 +181,10 @@ export class StylizedRockView {
     ].join('|');
     const cacheKey = `${chunkX}:${chunkZ}`;
     const cached = this.manifestCache.get(cacheKey);
-    if (cached?.key === key) return cached.placements;
+    if (cached?.key === key) {
+      this.placementsByChunk.set(cacheKey, cached.placements);
+      return cached.placements;
+    }
 
     const placements = buildStableChunkManifest({
       kind: 'rock',
@@ -194,17 +202,17 @@ export class StylizedRockView {
       radiusForScale: (scale) => this.config.rocks.radius * scale,
     });
     this.manifestCache.set(cacheKey, { key, placements });
+    this.placementsByChunk.set(cacheKey, placements);
     return placements;
   }
 
   rebuild(focus, placementRadius, plan) {
     PerfCounters.inc('rockRebuilds');
-    const near = createMatrices(this.prototypes.length);
-    const proxy = createMatrices(this.prototypes.length);
+    const near = createInstances(this.prototypes.length);
+    const proxy = createInstances(this.prototypes.length);
     const placements = [];
     const activeChunks = new Set();
-    const bandByChunk = new Map(plan.entries.map((entry) => [`${entry.chunkX}:${entry.chunkZ}`, entry.band]));
-    const dummy = new THREE.Object3D();
+    const planByChunk = new Map(plan.entries.map((entry) => [`${entry.chunkX}:${entry.chunkZ}`, entry]));
 
     for (let chunkZ = focus.chunkZ - placementRadius;
       chunkZ <= focus.chunkZ + placementRadius;
@@ -216,21 +224,32 @@ export class StylizedRockView {
         activeChunks.add(key);
         const manifest = this.manifestForChunk(chunkX, chunkZ);
         placements.push(...manifest);
-        const band = bandByChunk.get(key) ?? 'culled';
-        if (band === 'culled') continue;
-        for (const placement of manifest) {
-          dummy.position.set(placement.x, placement.height, placement.z);
-          dummy.rotation.set(0, placement.rotationY, 0);
-          dummy.scale.setScalar(placement.scale);
-          dummy.updateMatrix();
-          const target = band === 'near' ? near : proxy;
-          target[placement.prototypeIndex].push(dummy.matrix.clone());
+        const entry = planByChunk.get(key);
+        if (!entry) continue;
+        for (const representation of entry.representations) {
+          if (representation.band === 'culled' || representation.fade <= 0) continue;
+          for (const placement of manifest) {
+            const instance = {
+              matrix: new THREE.Matrix4().compose(
+                new THREE.Vector3(placement.x, placement.height, placement.z),
+                new THREE.Quaternion().setFromAxisAngle(
+                  new THREE.Vector3(0, 1, 0),
+                  placement.rotationY,
+                ),
+                new THREE.Vector3(placement.scale, placement.scale, placement.scale),
+              ),
+              fade: representation.fade,
+              seed: placement.priority,
+            };
+            const target = representation.band === 'near' ? near : proxy;
+            target[placement.prototypeIndex].push(instance);
+          }
         }
       }
     }
 
-    const nearCount = writeMatrices(this.meshes, near);
-    const proxyCount = writeMatrices(this.proxyMeshes, proxy);
+    const nearCount = writeInstances(this.meshes, near);
+    const proxyCount = writeInstances(this.proxyMeshes, proxy);
     this.placements = placements;
     this.signature = placementSignature(placements);
     PerfCounters.set('rockNearInstances', nearCount);
@@ -238,12 +257,25 @@ export class StylizedRockView {
     PerfCounters.set('rockPlacementInstances', placements.length);
 
     for (const key of this.manifestCache.keys()) {
-      if (!activeChunks.has(key)) this.manifestCache.delete(key);
+      if (!activeChunks.has(key)) {
+        this.manifestCache.delete(key);
+        this.placementsByChunk.delete(key);
+      }
     }
   }
 
   getPlacements() {
     return this.placements;
+  }
+
+  getBlockersForChunk(chunkX, chunkZ, halo = 1) {
+    const placements = [];
+    for (let offsetZ = -halo; offsetZ <= halo; offsetZ += 1) {
+      for (let offsetX = -halo; offsetX <= halo; offsetX += 1) {
+        placements.push(...this.manifestForChunk(chunkX + offsetX, chunkZ + offsetZ));
+      }
+    }
+    return placements;
   }
 
   getSignature() {
@@ -264,6 +296,7 @@ export class StylizedRockView {
     disposePrototypeParts(this.proxyPrototypes);
     this.placements.length = 0;
     this.manifestCache.clear();
+    this.placementsByChunk.clear();
     this.chunkLodStates.clear();
   }
 }

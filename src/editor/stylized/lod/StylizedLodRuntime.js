@@ -1,9 +1,31 @@
 import * as THREE from 'three/webgpu';
-import { projectedPixelHeight, selectProjectedLod, clampLodToRadii } from './projectedLod.js';
+import {
+  clampLodToRadii,
+  projectedPixelHeight,
+  quantizeFade,
+  selectProjectedLod,
+  updateLodTransition,
+} from './projectedLod.js';
+import { createDitheredMaterial } from './StylizedDitheredMaterial.js';
+
+function createGeometry(source, capacity) {
+  const geometry = source.clone();
+  geometry.setAttribute(
+    'instanceLodFade',
+    new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
+  );
+  geometry.setAttribute(
+    'instanceStableSeed',
+    new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
+  );
+  return geometry;
+}
 
 export function createInstancedRenderers({ root, partsByPrototype, capacity, name, castShadow }) {
   return partsByPrototype.map((parts, prototypeIndex) => parts.map((part, partIndex) => {
-    const mesh = new THREE.InstancedMesh(part.geometry, part.material, capacity);
+    const geometry = createGeometry(part.geometry, capacity);
+    const material = createDitheredMaterial(part.material);
+    const mesh = new THREE.InstancedMesh(geometry, material, capacity);
     mesh.count = 0;
     mesh.castShadow = Boolean(castShadow && part.kind !== 'leaf');
     mesh.receiveShadow = true;
@@ -14,17 +36,24 @@ export function createInstancedRenderers({ root, partsByPrototype, capacity, nam
   }));
 }
 
-export function writeMatrices(renderers, matricesByPrototype) {
+export function writeInstances(renderers, instancesByPrototype) {
   let total = 0;
   renderers.forEach((parts, prototypeIndex) => {
-    const matrices = matricesByPrototype[prototypeIndex] ?? [];
-    total += matrices.length;
+    const instances = instancesByPrototype[prototypeIndex] ?? [];
+    total += instances.length;
     for (const mesh of parts) {
-      mesh.count = matrices.length;
-      for (let index = 0; index < matrices.length; index += 1) {
-        mesh.setMatrixAt(index, matrices[index]);
+      mesh.count = instances.length;
+      const fades = mesh.geometry.getAttribute('instanceLodFade');
+      const seeds = mesh.geometry.getAttribute('instanceStableSeed');
+      for (let index = 0; index < instances.length; index += 1) {
+        const instance = instances[index];
+        mesh.setMatrixAt(index, instance.matrix);
+        fades.array[index] = instance.fade;
+        seeds.array[index] = instance.seed;
       }
       mesh.instanceMatrix.needsUpdate = true;
+      fades.needsUpdate = true;
+      seeds.needsUpdate = true;
       mesh.computeBoundingSphere();
     }
   });
@@ -35,6 +64,8 @@ export function disposeInstancedRenderers(root, renderers) {
   for (const parts of renderers) {
     for (const mesh of parts) {
       root.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
       mesh.dispose();
     }
   }
@@ -51,7 +82,10 @@ export function buildChunkLodPlan({
   objectHeight,
   thresholds,
   radii,
-  previousStates,
+  transitionStates,
+  timestamp,
+  transitionMs,
+  fadeSteps = 8,
 }) {
   const entries = [];
   const signature = [];
@@ -74,15 +108,30 @@ export function buildChunkLodPlan({
         viewportHeight,
       });
       const key = `${chunkX}:${chunkZ}`;
-      const selected = selectProjectedLod({
-        pixels,
-        previous: previousStates.get(key) ?? null,
-        ...thresholds,
+      const previous = transitionStates.get(key)?.target ?? null;
+      const selected = selectProjectedLod({ pixels, previous, ...thresholds });
+      const target = clampLodToRadii({ band: selected, chunkDistance, ...radii });
+      const state = updateLodTransition({
+        state: transitionStates.get(key) ?? null,
+        target,
+        timestamp,
+        durationMs: transitionMs,
       });
-      const band = clampLodToRadii({ band: selected, chunkDistance, ...radii });
-      previousStates.set(key, band);
-      entries.push({ chunkX, chunkZ, band });
-      signature.push(`${key}:${band}`);
+      transitionStates.set(key, state);
+      entries.push({
+        chunkX,
+        chunkZ,
+        chunkDistance,
+        band: target,
+        representations: state.representations,
+      });
+      signature.push([
+        key,
+        target,
+        ...state.representations.map((representation) => (
+          `${representation.band}:${quantizeFade(representation.fade, fadeSteps)}`
+        )),
+      ].join(':'));
     }
   }
 
