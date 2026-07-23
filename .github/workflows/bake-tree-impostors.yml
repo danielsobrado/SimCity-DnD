@@ -1,5 +1,6 @@
 name: Bake tree impostors
 
+# One-shot production bake; the workflow commits assets and a diagnostic report.
 on:
   push:
     branches: [main]
