@@ -1,5 +1,9 @@
 import * as THREE from 'three/webgpu';
 import { normalizeBaseUrl, resolveAssetUrl } from '../../assets/assetUrl.js';
+import {
+  TREE_IMPOSTOR_MANIFEST_VERSION,
+  validateTreeImpostorManifest,
+} from './TreeImpostorManifest.js';
 
 function configureTexture(texture, colorSpace) {
   texture.colorSpace = colorSpace;
@@ -28,14 +32,38 @@ function triggerDownload(filename, content, type = 'application/json') {
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = filename;
+  anchor.hidden = true;
+  document.body.append(anchor);
   anchor.click();
+  anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+async function loadAtlasTextures(loader, resolvePath, prototype) {
+  const albedo = await loader.loadAsync(resolvePath(prototype.albedo));
+  try {
+    const normal = await loader.loadAsync(resolvePath(prototype.normal));
+    return {
+      albedo: configureTexture(albedo, THREE.SRGBColorSpace),
+      normal: configureTexture(normal, THREE.NoColorSpace),
+    };
+  } catch (error) {
+    albedo.dispose?.();
+    throw error;
+  }
+}
+
 export class TreeImpostorAssetLoader {
-  constructor({ baseUrl = '/', loader = new THREE.TextureLoader() } = {}) {
+  constructor({
+    baseUrl = '/',
+    loader = new THREE.TextureLoader(),
+    expectedPrototypeCount = null,
+    expectedSourceSignature = null,
+  } = {}) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.loader = loader;
+    this.expectedPrototypeCount = expectedPrototypeCount;
+    this.expectedSourceSignature = expectedSourceSignature;
   }
 
   resolve(path) {
@@ -49,29 +77,36 @@ export class TreeImpostorAssetLoader {
       if (response.status === 404) return null;
       throw new Error(`Tree impostor manifest failed with HTTP ${response.status}.`);
     }
-    const manifest = await response.json();
-    if (!Array.isArray(manifest.prototypes) || manifest.prototypes.length === 0) {
-      throw new Error('Tree impostor manifest contains no prototypes.');
+    const manifest = validateTreeImpostorManifest(await response.json(), {
+      expectedPrototypeCount: this.expectedPrototypeCount,
+      expectedSourceSignature: this.expectedSourceSignature,
+    });
+    const atlases = [];
+    try {
+      for (const prototype of manifest.prototypes) {
+        const textures = await loadAtlasTextures(
+          this.loader,
+          (path) => this.resolve(path),
+          prototype,
+        );
+        atlases.push(Object.freeze({
+          ...prototype,
+          ...textures,
+          source: 'asset',
+        }));
+      }
+      return Object.freeze(atlases);
+    } catch (error) {
+      disposeTreeImpostorAtlases(atlases);
+      throw error;
     }
-
-    const atlases = await Promise.all(manifest.prototypes.map(async (prototype, prototypeIndex) => {
-      const [albedo, normal] = await Promise.all([
-        this.loader.loadAsync(this.resolve(prototype.albedo)),
-        this.loader.loadAsync(this.resolve(prototype.normal)),
-      ]);
-      return Object.freeze({
-        ...prototype,
-        prototypeIndex,
-        albedo: configureTexture(albedo, THREE.SRGBColorSpace),
-        normal: configureTexture(normal, THREE.NoColorSpace),
-        source: 'asset',
-      });
-    }));
-    return Object.freeze(atlases);
   }
 }
 
-export async function createTreeImpostorBundle(atlases) {
+export async function createTreeImpostorBundle(atlases, sourceSignature) {
+  if (typeof sourceSignature !== 'string' || sourceSignature.length < 8) {
+    throw new Error('Tree impostor export requires a source signature.');
+  }
   const prototypes = [];
   for (const atlas of atlases) {
     if (!atlas.albedoCanvas || !atlas.normalCanvas) {
@@ -95,14 +130,15 @@ export async function createTreeImpostorBundle(atlases) {
     });
   }
   return Object.freeze({
-    version: 1,
+    version: TREE_IMPOSTOR_MANIFEST_VERSION,
     generatedAt: new Date().toISOString(),
+    sourceSignature,
     prototypes,
   });
 }
 
-export async function downloadTreeImpostorBundle(atlases) {
-  const bundle = await createTreeImpostorBundle(atlases);
+export async function downloadTreeImpostorBundle(atlases, sourceSignature) {
+  const bundle = await createTreeImpostorBundle(atlases, sourceSignature);
   triggerDownload('tree-impostors.bundle.json', JSON.stringify(bundle));
   return bundle;
 }
