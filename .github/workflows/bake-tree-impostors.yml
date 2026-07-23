@@ -1,166 +1,18 @@
-name: Bake tree impostors
+name: Cancel legacy tree impostor bake runs
 
-# Production bake plus diagnostic trigger paths.
 on:
   push:
     branches: [main]
     paths:
       - .github/workflows/bake-tree-impostors.yml
-  pull_request:
-    branches: [main]
-    paths:
-      - .github/workflows/offline-impostor-diagnostic.yml
-  issues:
-    types: [opened]
-  workflow_dispatch:
-
-permissions:
-  contents: write
 
 concurrency:
-  group: bake-tree-impostors-${{ github.event_name }}
-  cancel-in-progress: false
+  group: bake-tree-impostors-main
+  cancel-in-progress: true
 
 jobs:
-  bake:
-    if: github.event_name != 'issues' || github.event.issue.title == '[automation] Bake tree impostors'
+  cancel-legacy:
+    if: ${{ false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
     steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22.16.0'
-
-      - name: Install dependencies
-        id: install
-        continue-on-error: true
-        run: npm install --no-audit --no-fund 2>&1 | tee /tmp/impostor-install.log
-
-      - name: Locate Chromium
-        id: browser
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
-          if [[ -z "$browser" ]]; then
-            echo "No Chromium-family browser is installed on the runner." | tee /tmp/impostor-browser.log >&2
-            exit 1
-          fi
-          echo "CHROME_PATH=$browser" >> "$GITHUB_ENV"
-          "$browser" --version | tee /tmp/impostor-browser.log
-
-      - name: Bake offline impostor atlases
-        id: bake
-        continue-on-error: true
-        run: npm run bake:impostors 2>&1 | tee /tmp/impostor-bake.log
-
-      - name: Validate generated assets
-        id: verify
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -o pipefail
-          {
-            test -f public/assets/impostors/trees/manifest.json
-            npm run validate:assets
-            npm test
-            npm run build
-          } 2>&1 | tee /tmp/impostor-verify.log
-
-      - name: Upload generated assets and logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: offline-tree-impostors
-          path: |
-            public/assets/impostors/trees
-            /tmp/impostor-install.log
-            /tmp/impostor-browser.log
-            /tmp/impostor-bake.log
-            /tmp/impostor-verify.log
-          if-no-files-found: warn
-          retention-days: 3
-
-      - name: Commit assets and bake report
-        if: always()
-        shell: bash
-        env:
-          INSTALL_OUTCOME: ${{ steps.install.outcome }}
-          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
-          BAKE_OUTCOME: ${{ steps.bake.outcome }}
-          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
-        run: |
-          set -euo pipefail
-          mkdir -p docs/qa public/assets/impostors/trees
-          generated_count="$(find public/assets/impostors/trees -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          cat > docs/qa/offline-impostor-bake-status.md <<EOF
-          # Offline tree impostor bake
-
-          - Run: ${GITHUB_RUN_ID}
-          - Source commit: ${GITHUB_SHA}
-          - Event: ${GITHUB_EVENT_NAME}
-          - Install: ${INSTALL_OUTCOME}
-          - Browser: ${BROWSER_OUTCOME}
-          - Bake: ${BAKE_OUTCOME}
-          - Verify: ${VERIFY_OUTCOME}
-          - Generated files: ${generated_count}
-
-          ## Install log
-
-          \`\`\`
-          $(tail -n 80 /tmp/impostor-install.log 2>/dev/null || true)
-          \`\`\`
-
-          ## Browser log
-
-          \`\`\`
-          $(cat /tmp/impostor-browser.log 2>/dev/null || true)
-          \`\`\`
-
-          ## Bake log
-
-          \`\`\`
-          $(tail -n 160 /tmp/impostor-bake.log 2>/dev/null || true)
-          \`\`\`
-
-          ## Verification log
-
-          \`\`\`
-          $(tail -n 160 /tmp/impostor-verify.log 2>/dev/null || true)
-          \`\`\`
-          EOF
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A -- docs/qa/offline-impostor-bake-status.md public/assets/impostors/trees
-          if git diff --cached --quiet; then
-            echo "No asset or report changes to commit."
-            exit 0
-          fi
-          git commit -m "Record offline tree impostor bake"
-          git pull --rebase origin main
-          git push origin HEAD:main
-
-      - name: Enforce successful production bake
-        if: always()
-        shell: bash
-        env:
-          INSTALL_OUTCOME: ${{ steps.install.outcome }}
-          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
-          BAKE_OUTCOME: ${{ steps.bake.outcome }}
-          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
-        run: |
-          set -euo pipefail
-          [[ "$INSTALL_OUTCOME" == "success" ]]
-          [[ "$BROWSER_OUTCOME" == "success" ]]
-          [[ "$BAKE_OUTCOME" == "success" ]]
-          [[ "$VERIFY_OUTCOME" == "success" ]]
+      - run: echo cancelled
