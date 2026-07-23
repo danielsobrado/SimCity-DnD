@@ -1,9 +1,13 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
+import {
+  removeDirectoryWithRetry,
+  terminateChildProcess,
+} from './lib/processLifecycle.mjs';
 import {
   TREE_IMPOSTOR_MANIFEST_VERSION,
   validateTreeImpostorManifest,
@@ -106,7 +110,11 @@ class CdpClient {
 
   close() {
     this.fail(new Error('Chrome DevTools connection closed by the baker.'));
-    this.socket.close();
+    try {
+      this.socket.close();
+    } catch {
+      // The browser may have already closed the socket.
+    }
     this.listeners.clear();
   }
 }
@@ -270,7 +278,7 @@ async function writeAssets(bundle) {
     throw new Error('Impostor bundle contains no tree prototypes.');
   }
 
-  await rm(OUTPUT_DIRECTORY, { recursive: true, force: true });
+  await removeDirectoryWithRetry(OUTPUT_DIRECTORY);
   await mkdir(OUTPUT_DIRECTORY, { recursive: true });
   const prototypes = [];
   for (const source of bundle.prototypes) {
@@ -324,6 +332,26 @@ async function collectPageSnapshot(cdp, diagnostics) {
   }
 }
 
+async function closeBrowser(cdp, chrome) {
+  if (cdp) {
+    try {
+      await cdp.call('Browser.close', {}, 3_000);
+    } catch {
+      // Browser.close usually closes the DevTools socket before replying.
+    }
+    cdp.close();
+  }
+  await terminateChildProcess(chrome);
+}
+
+async function cleanupTemporaryRoot(path) {
+  try {
+    await removeDirectoryWithRetry(path);
+  } catch (error) {
+    console.warn(`[impostor-bake] Temporary profile cleanup failed: ${error.message}`);
+  }
+}
+
 async function main() {
   const diagnostics = [];
   const browser = findBrowser();
@@ -338,7 +366,7 @@ async function main() {
       prompt_for_download: false,
       directory_upgrade: true,
     },
-    safebrowsing: { enabled: true },
+    safebrowsing: { enabled: false },
   }));
 
   const vite = spawnLogged(process.execPath, [
@@ -358,9 +386,15 @@ async function main() {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
+      '--disable-component-update',
+      '--disable-component-extensions-with-background-pages',
+      '--disable-crash-reporter',
+      '--disable-breakpad',
+      '--disable-sync',
       '--disable-gpu-sandbox',
       '--enable-webgl',
       '--ignore-gpu-blocklist',
+      '--enable-unsafe-swiftshader',
       '--use-angle=swiftshader',
       `--remote-debugging-address=${HOST}`,
       `--remote-debugging-port=${DEBUG_PORT}`,
@@ -426,10 +460,9 @@ async function main() {
     }
     throw error;
   } finally {
-    cdp?.close();
-    chrome?.kill('SIGTERM');
-    vite.kill('SIGTERM');
-    await rm(temporaryRoot, { recursive: true, force: true });
+    await closeBrowser(cdp, chrome);
+    await terminateChildProcess(vite);
+    await cleanupTemporaryRoot(temporaryRoot);
   }
 }
 
