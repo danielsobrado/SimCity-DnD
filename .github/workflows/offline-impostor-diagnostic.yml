@@ -1,5 +1,6 @@
 name: Offline impostor trigger
 
+# Synchronization marker for the base-branch production bake.
 on:
   workflow_dispatch:
 
