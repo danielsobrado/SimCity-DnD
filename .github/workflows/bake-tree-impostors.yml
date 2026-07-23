@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   cancel-legacy:
-    if: ${{ false }}
     runs-on: ubuntu-latest
+    timeout-minutes: 1
     steps:
-      - run: echo cancelled
+      - run: echo "Legacy offline impostor bake queue cancelled."
