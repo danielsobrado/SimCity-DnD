@@ -1,11 +1,11 @@
-name: Bake tree impostors
+name: Tree impostor assets
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - .github/workflows/bake-tree-impostors.yml
+      - .github/workflows/tree-impostor-assets.yml
       - editor.config.yaml
       - public/assets/grass-scene.glb
       - scripts/bake-tree-impostors.mjs
@@ -15,7 +15,7 @@ on:
       - src/editor/stylized/impostor/**
   pull_request:
     paths:
-      - .github/workflows/bake-tree-impostors.yml
+      - .github/workflows/tree-impostor-assets.yml
       - docs/qa/impostor-bake-trigger.md
       - editor.config.yaml
       - public/assets/grass-scene.glb
@@ -29,7 +29,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: offline-tree-impostors-${{ github.event.pull_request.number || 'main' }}
+  group: tree-impostor-assets-${{ github.event.pull_request.number || 'main' }}
   cancel-in-progress: true
 
 jobs:
