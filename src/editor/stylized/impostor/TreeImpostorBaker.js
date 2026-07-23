@@ -19,7 +19,7 @@ function unionBounds(parts) {
   return bounds;
 }
 
-function createBakeMaterial(part, config, normalPass) {
+function createBakeMaterial(part, normalPass) {
   const sourceMap = part.sourceMap ?? null;
   if (normalPass) {
     const material = new THREE.MeshNormalMaterial({
@@ -41,10 +41,10 @@ function createBakeMaterial(part, config, normalPass) {
   return material;
 }
 
-function createPrototypeScene(parts, config, normalPass) {
+function createPrototypeScene(parts, normalPass) {
   const scene = new THREE.Scene();
   for (const part of parts) {
-    const mesh = new THREE.Mesh(part.geometry, createBakeMaterial(part, config, normalPass));
+    const mesh = new THREE.Mesh(part.geometry, createBakeMaterial(part, normalPass));
     mesh.frustumCulled = false;
     scene.add(mesh);
   }
@@ -55,18 +55,57 @@ function disposeSceneMaterials(scene) {
   scene.traverse((node) => node.material?.dispose?.());
 }
 
-function createDilatedTile(pixels, sourceSize, tileSize, gutter) {
+function sourceOffset(sourceSize, x, y) {
+  return ((sourceSize - y - 1) * sourceSize + x) * 4;
+}
+
+function nearestOpaquePixel(pixels, sourceSize, centerX, centerY, radius) {
+  let closest = null;
+  let closestDistance = Number.POSITIVE_INFINITY;
+  const minimumX = Math.max(0, centerX - radius);
+  const maximumX = Math.min(sourceSize - 1, centerX + radius);
+  const minimumY = Math.max(0, centerY - radius);
+  const maximumY = Math.min(sourceSize - 1, centerY + radius);
+
+  for (let y = minimumY; y <= maximumY; y += 1) {
+    for (let x = minimumX; x <= maximumX; x += 1) {
+      const offset = sourceOffset(sourceSize, x, y);
+      if (pixels[offset + 3] === 0) continue;
+      const distance = (x - centerX) ** 2 + (y - centerY) ** 2;
+      if (distance >= closestDistance) continue;
+      closestDistance = distance;
+      closest = offset;
+    }
+  }
+  return closest;
+}
+
+export function createDilatedTile(pixels, sourceSize, tileSize, gutter) {
   const result = new Uint8ClampedArray(tileSize * tileSize * 4);
+  const dilationRadius = Math.max(1, gutter);
   for (let y = 0; y < tileSize; y += 1) {
-    const sourceY = Math.max(0, Math.min(sourceSize - 1, y - gutter));
+    const rawSourceY = y - gutter;
+    const sourceY = Math.max(0, Math.min(sourceSize - 1, rawSourceY));
     for (let x = 0; x < tileSize; x += 1) {
-      const sourceX = Math.max(0, Math.min(sourceSize - 1, x - gutter));
-      const sourceOffset = ((sourceSize - sourceY - 1) * sourceSize + sourceX) * 4;
+      const rawSourceX = x - gutter;
+      const sourceX = Math.max(0, Math.min(sourceSize - 1, rawSourceX));
+      const directOffset = sourceOffset(sourceSize, sourceX, sourceY);
       const targetOffset = (y * tileSize + x) * 4;
-      result[targetOffset] = pixels[sourceOffset];
-      result[targetOffset + 1] = pixels[sourceOffset + 1];
-      result[targetOffset + 2] = pixels[sourceOffset + 2];
-      result[targetOffset + 3] = pixels[sourceOffset + 3];
+      const insideSource = rawSourceX >= 0
+        && rawSourceX < sourceSize
+        && rawSourceY >= 0
+        && rawSourceY < sourceSize;
+      const alpha = insideSource ? pixels[directOffset + 3] : 0;
+      const colorOffset = alpha > 0
+        ? directOffset
+        : nearestOpaquePixel(pixels, sourceSize, sourceX, sourceY, dilationRadius);
+
+      if (colorOffset !== null) {
+        result[targetOffset] = pixels[colorOffset];
+        result[targetOffset + 1] = pixels[colorOffset + 1];
+        result[targetOffset + 2] = pixels[colorOffset + 2];
+      }
+      result[targetOffset + 3] = alpha;
     }
   }
   return result;
@@ -157,8 +196,8 @@ export class TreeImpostorBaker {
     target.texture.colorSpace = THREE.NoColorSpace;
     const camera = new THREE.OrthographicCamera(-radius, radius, radius, -radius, 0.01, radius * 6);
     const directions = createCaptureDirections(settings);
-    const albedoScene = createPrototypeScene(parts, this.config, false);
-    const normalScene = createPrototypeScene(parts, this.config, true);
+    const albedoScene = createPrototypeScene(parts, false);
+    const normalScene = createPrototypeScene(parts, true);
     const previousTarget = renderer.getRenderTarget?.() ?? null;
     const previousAutoClear = renderer.autoClear;
     const previousClearColor = new THREE.Color();
