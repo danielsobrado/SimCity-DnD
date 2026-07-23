@@ -85,12 +85,12 @@ test('converts Azgaar terrain into a portable streamed macro source', () => {
   assert.equal(converted.chunks.length, 0);
   assert.equal(converted.world.baseTerrain.kind, 'azgaar-macro-v1');
   assert.equal(converted.world.baseTerrain.atlas.width, 4);
-  assert.equal(converted.world.baseTerrain.atlas.height, 4);
+  assert.equal(converted.world.baseTerrain.atlas.height, 3);
   assert.equal(converted.objects.length, 0);
   assert.equal(converted.campaign.source.mapName, 'Test Realm');
   assert.equal(converted.campaign.states[0].name, 'Northreach');
   assert.equal(converted.campaign.burgs[0].name, 'Harborwatch');
-  assert.equal(converted.importWarnings.length, 2);
+  assert.equal(converted.importWarnings.length, 3);
 
   const generator = new ProceduralWorldGenerator(converted.world.generator);
   const store = new InfiniteWorldStore({

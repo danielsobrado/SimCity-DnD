@@ -33,6 +33,11 @@ import { ProceduralWorldGenerator } from './editor/world/ProceduralWorldGenerato
 import { createSurfaceMaskConfig } from './editor/world/ChunkRenderPixels.js';
 import { WorkerBackedWorldStore } from './editor/world/WorkerBackedWorldStore.js';
 import { WorldChunkWorkerClient } from './editor/world/WorldChunkWorkerClient.js';
+import {
+  IndexedDbWorldContentProvider,
+  LocalFirstWorldContentProvider,
+  UrlWorldContentProvider,
+} from './editor/world/WorldContentProvider.js';
 
 const TERRAIN_PREFETCH_REFRESH_MS = 200;
 
@@ -57,6 +62,14 @@ async function startEditor() {
     surfaceMaskConfig,
     workerCount: config.world.workerCount ?? null,
   });
+  const localContent = new IndexedDbWorldContentProvider();
+  const remoteContent = config.world.contentBaseUrl
+    ? new UrlWorldContentProvider({ baseUrl: config.world.contentBaseUrl })
+    : null;
+  const contentProvider = new LocalFirstWorldContentProvider({
+    local: localContent,
+    remote: remoteContent,
+  });
   const worldStore = new WorkerBackedWorldStore({
     chunkWorker,
     chunkSize: config.world.chunkSize,
@@ -64,6 +77,7 @@ async function startEditor() {
     cacheLimit: config.world.maxCpuChunks,
     generator,
     surfaceMaskConfig,
+    contentProvider,
   });
   const tileMap = new ChunkedTileMap({ worldStore, defaultTileId: defaultTile.id });
   const heightField = new ChunkedHeightField({ worldStore });

@@ -1,9 +1,14 @@
 import { importAzgaarFullJson } from './AzgaarJsonImporter.js';
 
 self.addEventListener('message', (event) => {
-  const { id, document, config } = event.data ?? {};
+  const {
+    id,
+    document,
+    config,
+    options,
+  } = event.data ?? {};
   try {
-    self.postMessage({ id, world: importAzgaarFullJson(document, config) });
+    self.postMessage({ id, world: importAzgaarFullJson(document, config, options) });
   } catch (error) {
     self.postMessage({
       id,

@@ -9,8 +9,8 @@ function createValidConfig() {
       chunkSize: 32,
     },
     import: {
-      azgaarTargetWidth: 512,
-      azgaarTargetHeight: 512,
+      azgaarAtlasLongEdge: 2000,
+      azgaarOceanTransitionKilometers: 50,
     },
     world: {
       seed: 918273,
@@ -66,13 +66,13 @@ test('accepts positive nested map, world, camera, player, renderer, and terrain 
   assert.equal(validateEditorConfig(config), config);
 });
 
-test('reads import.azgaarTargetWidth through nested object paths', () => {
+test('reads import.azgaarAtlasLongEdge through nested object paths', () => {
   const config = createValidConfig();
-  config.import.azgaarTargetWidth = 0;
+  config.import.azgaarAtlasLongEdge = 0;
 
   assert.throws(
     () => validateEditorConfig(config),
-    /import\.azgaarTargetWidth must be positive/,
+    /import\.azgaarAtlasLongEdge must be positive/,
   );
 });
 

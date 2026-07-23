@@ -1,5 +1,5 @@
-import { ProceduralWorldGenerator } from './ProceduralWorldGenerator.js';
 import { chunkKey } from './WorldCoordinates.js';
+import { createWorldGenerator } from './WorldGeneratorFactory.js';
 import {
   createSurfaceMaskConfig,
   enrichPageRenderPixels,
@@ -34,7 +34,8 @@ function resolveMaskConfig(request) {
 
 export function generateBaseWorldChunk(request) {
   assertChunkRequest(request);
-  const generator = new ProceduralWorldGenerator(request.generator);
+  const generator = request.worldGenerator
+    ?? createWorldGenerator(request.generator, request.baseTerrain ?? null);
   const { chunkX, chunkZ, chunkSize } = request;
   const vertexSize = chunkSize + 1;
   const tiles = new Uint8Array(chunkSize * chunkSize);

@@ -1,6 +1,7 @@
 import { loadEditorConfig } from '../config/loadEditorConfig.js';
 import { AzgaarImportWorkerClient } from './import/AzgaarImportWorkerClient.js';
 import { isAzgaarFullJson } from './import/AzgaarJsonImporter.js';
+import { buildAzgaarImportSummary } from './import/AzgaarMacroWorldSource.js';
 
 const DATABASE_NAME = 'simcity-dnd-worlds';
 const DATABASE_VERSION = 1;
@@ -89,14 +90,20 @@ export function exportMap(worldDocument) {
   URL.revokeObjectURL(url);
 }
 
-export async function importMap(file, { config = null } = {}) {
+export async function importMap(file, {
+  config = null,
+  resolveAzgaarOptions = null,
+} = {}) {
   const document = parseDocument(await file.text());
   if (!isAzgaarFullJson(document)) {
     return document;
   }
+  const activeConfig = config ?? loadEditorConfig();
+  const summary = buildAzgaarImportSummary(document, activeConfig);
+  const options = await resolveAzgaarOptions?.(summary) ?? {};
   const worker = new AzgaarImportWorkerClient();
   try {
-    return await worker.convert(document, config ?? loadEditorConfig());
+    return await worker.convert(document, activeConfig, options);
   } finally {
     worker.dispose();
   }

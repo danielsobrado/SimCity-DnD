@@ -201,7 +201,10 @@ export class EditorUi {
       this.fileInput.value = '';
       if (!file) return;
       try {
-        controller.loadDocument(await importMap(file, { config: this.config }));
+        controller.loadDocument(await importMap(file, {
+          config: this.config,
+          resolveAzgaarOptions: (summary) => this.resolveAzgaarImportOptions(summary),
+        }));
         this.minimapCenter = controller.getFocusCell?.() ?? this.minimapCenter;
         this.updateMinimap();
         this.showToast('World imported.');
@@ -238,6 +241,28 @@ export class EditorUi {
         <span class="tile-button__shortcut">${tile.shortcut}</span>
       </button>
     `).join('');
+  }
+
+  resolveAzgaarImportOptions(summary) {
+    const defaultWidthKm = Math.round(summary.physicalWidthMeters / 1000);
+    const defaultHeightKm = Math.round(summary.physicalHeightMeters / 1000);
+    const rawWidth = window.prompt(
+      `Azgaar macro atlas: ${summary.atlasWidth} × ${summary.atlasHeight}\n`
+        + `Source scale: ${defaultWidthKm.toLocaleString()} × `
+        + `${defaultHeightKm.toLocaleString()} km\n`
+        + `Estimated raw atlas memory: `
+        + `${(summary.estimatedRawBytes / 1024 / 1024).toFixed(1)} MiB\n\n`
+        + 'Playable world width in kilometers:',
+      String(defaultWidthKm),
+    );
+    if (rawWidth === null) {
+      throw new Error('Azgaar import cancelled.');
+    }
+    const widthKm = Number(rawWidth);
+    if (!Number.isFinite(widthKm) || widthKm <= 0) {
+      throw new Error('Azgaar world width must be a positive number of kilometers.');
+    }
+    return { physicalWidthMeters: widthKm * 1000 };
   }
 
   renderObjectButtons() {

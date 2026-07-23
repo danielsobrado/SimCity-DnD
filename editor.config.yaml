@@ -3,8 +3,8 @@ map:
   defaultTile: plains
   chunkSize: 32
 import:
-  azgaarTargetWidth: 512
-  azgaarTargetHeight: 512
+  azgaarAtlasLongEdge: 2000
+  azgaarOceanTransitionKilometers: 50
 world:
   seed: 918273
   generatorVersion: 1

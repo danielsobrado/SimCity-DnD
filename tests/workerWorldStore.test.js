@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createMacroAtlasPayload } from '../src/editor/import/AzgaarMacroWorldSource.js';
 import { generateBaseWorldChunk } from '../src/editor/world/generateWorldChunk.js';
 import { ProceduralWorldGenerator } from '../src/editor/world/ProceduralWorldGenerator.js';
 import { WorkerBackedWorldStore } from '../src/editor/world/WorkerBackedWorldStore.js';
@@ -10,6 +11,11 @@ class FakeChunkWorker {
     this.generator = generator.toMetadata();
     this.requestCount = 0;
     this.disposed = false;
+    this.baseTerrain = null;
+  }
+
+  setBaseTerrain(baseTerrain) {
+    this.baseTerrain = baseTerrain;
   }
 
   request(chunkX, chunkZ) {
@@ -19,12 +25,45 @@ class FakeChunkWorker {
       chunkZ,
       chunkSize: this.chunkSize,
       generator: this.generator,
+      baseTerrain: this.baseTerrain,
     }));
   }
 
   dispose() {
     this.disposed = true;
   }
+}
+
+function createMacroSource() {
+  return {
+    kind: 'azgaar-macro-v1',
+    version: 1,
+    source: { mapId: 'stream-test' },
+    atlas: {
+      width: 2,
+      height: 2,
+      ...createMacroAtlasPayload({
+        heights: Uint8Array.from([40, 80, 40, 80]),
+        biomes: Uint8Array.from([4, 6, 4, 6]),
+        features: Uint16Array.from([1, 1, 1, 1]),
+      }),
+    },
+    physical: {
+      widthMeters: 32,
+      heightMeters: 32,
+      distanceScale: 1,
+      distanceUnit: 'km',
+    },
+    bounds: {
+      minCellX: -8,
+      minCellZ: -8,
+      widthCells: 16,
+      heightCells: 16,
+    },
+    oceanTransitionCells: 4,
+    terrain: { minHeight: -16, maxHeight: 48, seaLevel: -1.5 },
+    rivers: [],
+  };
 }
 
 function createStore(seed = 73) {
@@ -76,6 +115,26 @@ test('sparse overrides are applied after worker generation', async () => {
   const page = await store.requestChunk(0, 0);
   assert.equal(page.tiles[5], 9);
   assert.equal(page.heights[12], 18.5);
+  store.dispose();
+});
+
+test('macro base terrain streams with bounded cache and no generated overrides', async () => {
+  const { store, chunkWorker } = createStore();
+  const document = store.toDocument();
+  document.world.baseTerrain = createMacroSource();
+  store.loadDocument(document);
+
+  for (let chunkX = -10; chunkX <= 10; chunkX += 1) {
+    await store.requestChunk(chunkX, 0);
+  }
+
+  const stats = store.getStats();
+  assert.equal(chunkWorker.baseTerrain.kind, 'azgaar-macro-v1');
+  assert.ok(stats.cacheSize <= 3);
+  assert.equal(stats.tileOverrideCount, 0);
+  assert.equal(stats.heightOverrideCount, 0);
+  assert.equal(stats.baseTerrainKind, 'azgaar-macro-v1');
+  assert.equal(store.toDocument().chunks.length, 0);
   store.dispose();
 });
 

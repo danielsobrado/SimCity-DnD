@@ -1,4 +1,5 @@
 import { ProceduralWorldGenerator } from './ProceduralWorldGenerator.js';
+import { createWorldGenerator } from './WorldGeneratorFactory.js';
 import {
   cellKey,
   cellToChunk,
@@ -92,6 +93,7 @@ export class InfiniteWorldStore {
     this.tileSize = tileSize;
     this.cacheLimit = cacheLimit;
     this.generator = generator;
+    this.baseTerrain = null;
     this.tileOverrides = new Map();
     this.heightOverrides = new Map();
     this.cache = new Map();
@@ -116,6 +118,13 @@ export class InfiniteWorldStore {
   getTile(cellX, cellZ) {
     const key = cellKey(cellX, cellZ);
     return this.tileOverrides.get(key) ?? this.generator.sampleTile(cellX, cellZ);
+  }
+
+  setBaseTerrain(baseTerrain) {
+    const cloned = baseTerrain ? structuredClone(baseTerrain) : null;
+    this.generator = createWorldGenerator(this.generator.toMetadata(), cloned);
+    this.baseTerrain = cloned;
+    this.cache.clear();
   }
 
   getHeight(vertexX, vertexZ) {
@@ -403,10 +412,12 @@ export class InfiniteWorldStore {
     return Object.freeze({
       tileOverrides: Object.freeze([...this.tileOverrides.entries()]),
       heightOverrides: Object.freeze([...this.heightOverrides.entries()]),
+      baseTerrain: this.baseTerrain ? structuredClone(this.baseTerrain) : null,
     });
   }
 
   restoreSnapshot(snapshot) {
+    this.setBaseTerrain(snapshot?.baseTerrain ?? null);
     this.tileOverrides = new Map(snapshot?.tileOverrides ?? []);
     this.heightOverrides = new Map(snapshot?.heightOverrides ?? []);
     this.cache.clear();
@@ -432,6 +443,7 @@ export class InfiniteWorldStore {
         chunkSize: this.chunkSize,
         tileSize: this.tileSize,
         generator: this.generator.toMetadata(),
+        ...(this.baseTerrain ? { baseTerrain: structuredClone(this.baseTerrain) } : {}),
       },
       chunks,
       savedAt: new Date().toISOString(),
@@ -465,6 +477,7 @@ export class InfiniteWorldStore {
     if (!Array.isArray(document.chunks)) {
       throw new Error('Infinite world chunks must be an array.');
     }
+    this.setBaseTerrain(document.world?.baseTerrain ?? null);
     const tileOverrides = new Map();
     const heightOverrides = new Map();
     for (const chunk of document.chunks) {
@@ -499,6 +512,7 @@ export class InfiniteWorldStore {
       tileOverrideCount: this.tileOverrides.size,
       heightOverrideCount: this.heightOverrides.size,
       revision: this.revision,
+      baseTerrainKind: this.baseTerrain?.kind ?? null,
     });
   }
 

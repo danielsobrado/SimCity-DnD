@@ -1,4 +1,5 @@
 import { generateBaseWorldChunk } from './generateWorldChunk.js';
+import { createWorldGenerator } from './WorldGeneratorFactory.js';
 import { chunkKey } from './WorldCoordinates.js';
 
 /** Resolve the worker pool size from an explicit override or CPU cores. */
@@ -34,6 +35,8 @@ export class WorldChunkWorkerClient {
   }) {
     this.chunkSize = chunkSize;
     this.generator = generator.toMetadata();
+    this.baseTerrain = null;
+    this.worldGenerator = createWorldGenerator(this.generator);
     this.surfaceMaskConfig = surfaceMaskConfig;
     this.maxInFlightPerWorker = Math.max(1, maxInFlightPerWorker);
     this.nextId = 1;
@@ -63,6 +66,14 @@ export class WorldChunkWorkerClient {
     return this.workers.length;
   }
 
+  setBaseTerrain(baseTerrain) {
+    this.baseTerrain = baseTerrain ? structuredClone(baseTerrain) : null;
+    this.worldGenerator = createWorldGenerator(this.generator, this.baseTerrain);
+    for (const worker of this.workers) {
+      worker.postMessage({ type: 'configure', baseTerrain: this.baseTerrain });
+    }
+  }
+
   request(chunkX, chunkZ, { priority = 0 } = {}) {
     if (this.disposed) {
       return Promise.reject(new Error('World chunk worker is disposed.'));
@@ -76,7 +87,10 @@ export class WorldChunkWorkerClient {
     };
     // No workers available (Node/tests): generate synchronously.
     if (this.workers.length === 0) {
-      return Promise.resolve(generateBaseWorldChunk(request));
+      return Promise.resolve(generateBaseWorldChunk({
+        ...request,
+        worldGenerator: this.worldGenerator,
+      }));
     }
 
     const id = this.nextId;

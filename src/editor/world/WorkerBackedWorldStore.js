@@ -28,11 +28,22 @@ function assertGeneratorMetadata(actual, expected) {
 }
 
 export class WorkerBackedWorldStore extends InfiniteWorldStore {
-  constructor({ chunkWorker, surfaceMaskConfig = null, ...options }) {
+  constructor({
+    chunkWorker,
+    surfaceMaskConfig = null,
+    contentProvider = null,
+    ...options
+  }) {
     super(options);
     this.chunkWorker = chunkWorker;
+    this.contentProvider = contentProvider;
     this.surfaceMaskConfig = surfaceMaskConfig ?? createSurfaceMaskConfig(null);
     this.pendingChunks = new Map();
+  }
+
+  setBaseTerrain(baseTerrain) {
+    super.setBaseTerrain(baseTerrain);
+    this.chunkWorker.setBaseTerrain?.(this.baseTerrain);
   }
 
   requestChunk(chunkX, chunkZ, { priority = 0 } = {}) {
@@ -50,13 +61,30 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
       return pending;
     }
 
-    const request = this.chunkWorker.request(chunkX, chunkZ, { priority })
-      .then((page) => this.completeWorkerPage(page))
+    const contentRequest = this.contentProvider
+      ? this.contentProvider.getChunk(this.getContentWorldId(), chunkX, chunkZ)
+      : Promise.resolve(null);
+    const request = Promise.all([
+      this.chunkWorker.request(chunkX, chunkZ, { priority }),
+      contentRequest,
+    ])
+      .then(([page, content]) => this.completeWorkerPage({
+        ...page,
+        ...(content ? { content } : {}),
+      }))
       .finally(() => {
         this.pendingChunks.delete(key);
       });
     this.pendingChunks.set(key, request);
     return request;
+  }
+
+  getContentWorldId() {
+    return String(
+      this.baseTerrain?.source?.mapId
+      ?? this.baseTerrain?.source?.seed
+      ?? `seed-${this.generator.toMetadata().seed}`,
+    );
   }
 
   /** Drop a not-yet-started generation request for a chunk leaving residency. */

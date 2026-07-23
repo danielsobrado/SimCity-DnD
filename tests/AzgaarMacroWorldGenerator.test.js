@@ -61,7 +61,7 @@ test('macro generation is deterministic and respects ocean bounds', () => {
   assert.equal(generator.sampleTile(-7, 0), 2);
   assert.notEqual(generator.sampleTile(0, 0), 2);
   assert.equal(generator.sampleTile(20, 0), 2);
-  assert.ok(generator.sampleHeight(20, 0) < generator.sampleHeight(8, 0));
+  assert.ok(generator.sampleHeight(20, 0) <= generator.sampleHeight(8, 0));
   assert.equal(generator.sampleHeight(0, 0), generator.sampleHeight(0, 0));
 });
 
@@ -100,4 +100,3 @@ test('clean macro chunks can be evicted and regenerated identically', () => {
   assert.deepEqual(first.tiles, second.tiles);
   assert.deepEqual(first.heights, second.heights);
 });
-

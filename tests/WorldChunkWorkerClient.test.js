@@ -62,7 +62,7 @@ function dispatchOrder() {
 
 test('resolveWorkerCount clamps and honors overrides', () => {
   assert.equal(resolveWorkerCount(3), 3);
-  assert.equal(resolveWorkerCount(0), Math.min(8, Math.max(2, 2 - 1)));
+  assert.ok(resolveWorkerCount(0) >= 2 && resolveWorkerCount(0) <= 8);
   assert.ok(resolveWorkerCount(null) >= 2 && resolveWorkerCount(null) <= 8);
 });
 

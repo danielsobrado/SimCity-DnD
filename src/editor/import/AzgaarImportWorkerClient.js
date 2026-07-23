@@ -13,15 +13,15 @@ export class AzgaarImportWorkerClient {
     }
   }
 
-  convert(document, config) {
+  convert(document, config, options = {}) {
     if (!this.worker) {
-      return Promise.resolve(importAzgaarFullJson(document, config));
+      return Promise.resolve(importAzgaarFullJson(document, config, options));
     }
     const id = this.nextId;
     this.nextId += 1;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ id, document, config });
+      this.worker.postMessage({ id, document, config, options });
     });
   }
 

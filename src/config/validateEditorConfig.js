@@ -1,8 +1,8 @@
 const REQUIRED_POSITIVE_PATHS = Object.freeze([
   Object.freeze(['map', 'tileSize']),
   Object.freeze(['map', 'chunkSize']),
-  Object.freeze(['import', 'azgaarTargetWidth']),
-  Object.freeze(['import', 'azgaarTargetHeight']),
+  Object.freeze(['import', 'azgaarAtlasLongEdge']),
+  Object.freeze(['import', 'azgaarOceanTransitionKilometers']),
   Object.freeze(['world', 'chunkSize']),
   Object.freeze(['world', 'prefetchSeconds']),
   Object.freeze(['world', 'maxResidentChunks']),
