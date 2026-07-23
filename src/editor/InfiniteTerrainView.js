@@ -2,19 +2,25 @@ import * as THREE from 'three/webgpu';
 import { uniform } from 'three/tsl';
 import { PerfCounters } from './performance/qa/PerfCounters.js';
 import { createTerrainMaterial } from './terrainMaterial.js';
-import { TILE_BY_ID, hexToRgbBytes } from './tileCatalog.js';
 import { cellCenterToWorld, worldToCell } from './world/WorldCoordinates.js';
 import {
   createTerrainSlotPlan,
   selectTerrainResidentDescriptors,
 } from './world/TerrainStreamingPlan.js';
+import {
+  TERRAIN_COMMIT_BUDGET_MS,
+  TERRAIN_MAX_COMMITS_PER_FRAME,
+  TerrainCommitQueue,
+  commitPriority,
+  createTerrainCommitJob,
+} from './world/TerrainCommitQueue.js';
+import {
+  createSurfaceMaskConfig,
+  enrichPageRenderPixels,
+} from './world/ChunkRenderPixels.js';
 
 const PICK_ITERATIONS = 6;
 const PREVIEW_HEIGHT_OFFSET = 0.08;
-
-function clamp(value, minimum, maximum) {
-  return Math.max(minimum, Math.min(maximum, value));
-}
 
 function createSlot({ slotIndex, scene, geometry, worldStore, stylizedConfig }) {
   const chunkSize = worldStore.chunkSize;
@@ -95,53 +101,6 @@ function createSlot({ slotIndex, scene, geometry, worldStore, stylizedConfig }) 
   };
 }
 
-function writeTilePixels(slot, tiles) {
-  for (let index = 0; index < tiles.length; index += 1) {
-    const tile = TILE_BY_ID.get(tiles[index]);
-    if (!tile) {
-      throw new Error(`Unknown tile id: ${tiles[index]}.`);
-    }
-    const [red, green, blue] = hexToRgbBytes(tile.color);
-    const offset = index * 4;
-    slot.texturePixels[offset] = red;
-    slot.texturePixels[offset + 1] = green;
-    slot.texturePixels[offset + 2] = blue;
-    slot.texturePixels[offset + 3] = tile.id;
-  }
-}
-
-function writeSurfaceMaskPixels(slot, page, worldStore, config) {
-  const chunkSize = worldStore.chunkSize;
-  const blendCells = Math.max(0.5, config.path.blendCells);
-  const searchRadius = Math.ceil(blendCells + 1);
-  const roadTileId = config.path.tileId;
-  const waterTileId = config.water?.tileId ?? 2;
-  const grassTileIds = new Set(config.grass.tileIds);
-
-  for (let localZ = 0; localZ < chunkSize; localZ += 1) {
-    for (let localX = 0; localX < chunkSize; localX += 1) {
-      const cellIndex = localZ * chunkSize + localX;
-      const worldX = page.originX + localX;
-      const worldZ = page.originZ + localZ;
-      let nearestRoad = Number.POSITIVE_INFINITY;
-      for (let offsetZ = -searchRadius; offsetZ <= searchRadius; offsetZ += 1) {
-        for (let offsetX = -searchRadius; offsetX <= searchRadius; offsetX += 1) {
-          if (worldStore.getTile(worldX + offsetX, worldZ + offsetZ) !== roadTileId) continue;
-          nearestRoad = Math.min(nearestRoad, Math.hypot(offsetX, offsetZ));
-        }
-      }
-      const pathInfluence = Number.isFinite(nearestRoad)
-        ? clamp(1 - Math.max(0, nearestRoad - 0.35) / blendCells, 0, 1)
-        : 0;
-      const offset = cellIndex * 4;
-      slot.surfaceMaskPixels[offset] = Math.round(pathInfluence * 255);
-      slot.surfaceMaskPixels[offset + 1] = grassTileIds.has(page.tiles[cellIndex]) ? 255 : 0;
-      slot.surfaceMaskPixels[offset + 2] = page.tiles[cellIndex] === waterTileId ? 255 : 0;
-      slot.surfaceMaskPixels[offset + 3] = 255;
-    }
-  }
-}
-
 export class InfiniteTerrainView {
   constructor({
     container,
@@ -160,6 +119,7 @@ export class InfiniteTerrainView {
     this.floatingOrigin = floatingOrigin;
     this.streamingConfig = streamingConfig;
     this.stylizedConfig = stylizedConfig;
+    this.surfaceMaskConfig = createSurfaceMaskConfig(stylizedConfig);
     this.chunkSize = worldStore.chunkSize;
     this.chunkWorldSize = this.chunkSize * worldStore.tileSize;
     this.raycaster = new THREE.Raycaster();
@@ -171,6 +131,13 @@ export class InfiniteTerrainView {
     this.focusChunkKey = null;
     this.clock = 0;
     this.disposed = false;
+    this.focusChunk = { chunkX: 0, chunkZ: 0 };
+    this.focusVelocity = { x: 0, z: 0 };
+    this.commitQueue = new TerrainCommitQueue({
+      maxCommitsPerFrame: streamingConfig.maxCommitsPerFrame ?? TERRAIN_MAX_COMMITS_PER_FRAME,
+      commitBudgetMs: streamingConfig.commitBudgetMs ?? TERRAIN_COMMIT_BUDGET_MS,
+    });
+    this.pendingFetches = new Set();
 
     this.renderer = new THREE.WebGPURenderer({
       antialias: rendererConfig.antialias,
@@ -221,6 +188,7 @@ export class InfiniteTerrainView {
   async initialize() {
     await this.renderer.init();
     await this.updateStreaming({ x: 0, z: 0 }, 0, true);
+    await this.drainPendingUploads();
   }
 
   setAnimationLoop(callback) {
@@ -239,6 +207,8 @@ export class InfiniteTerrainView {
     return Object.freeze({
       resident: this.slots.filter((slot) => slot.key && slot.mesh.visible).length,
       loading: this.slots.filter((slot) => slot.loading).length,
+      pendingCommits: this.commitQueue.size,
+      maxQueuedCommitAgeMs: this.commitQueue.maxQueuedAgeMs,
       capacity: this.slots.length,
       focusChunk: this.focusChunkKey,
       cache: this.worldStore.getStats(),
@@ -248,6 +218,7 @@ export class InfiniteTerrainView {
 
   async updateStreaming(focusWorld, timestamp = performance.now(), force = false) {
     const velocity = this.calculateVelocity(focusWorld, timestamp);
+    this.focusVelocity = velocity;
     const selection = selectTerrainResidentDescriptors({
       focusWorld,
       velocity,
@@ -259,6 +230,7 @@ export class InfiniteTerrainView {
       slotCount: this.slots.length,
     });
     const nextFocusKey = `${selection.currentChunk.chunkX}:${selection.currentChunk.chunkZ}`;
+    this.focusChunk = selection.currentChunk;
     if (!force && nextFocusKey === this.focusChunkKey) {
       this.positionSlots();
       return;
@@ -273,10 +245,12 @@ export class InfiniteTerrainView {
     for (const slotIndex of plan.retained) {
       this.slots[slotIndex].lastUsed = this.clock;
     }
-    await Promise.all(plan.assignments.map((assignment) => this.assignSlot(
-      this.slots[assignment.slotIndex],
-      assignment.descriptor,
-    )));
+    for (const assignment of plan.assignments) {
+      void this.assignSlot(
+        this.slots[assignment.slotIndex],
+        assignment.descriptor,
+      );
+    }
     this.positionSlots();
   }
 
@@ -294,7 +268,7 @@ export class InfiniteTerrainView {
     return velocity;
   }
 
-  async assignSlot(slot, descriptor) {
+  async assignSlot(slot, descriptor, { immediate = false } = {}) {
     PerfCounters.inc('terrainAssignSlots');
     slot.token += 1;
     const token = slot.token;
@@ -304,30 +278,116 @@ export class InfiniteTerrainView {
     slot.loading = true;
     slot.mesh.visible = false;
     this.positionSlot(slot);
+
+    const fetchPromise = this.worldStore.requestChunk(descriptor.chunkX, descriptor.chunkZ)
+      .then((page) => {
+        if (this.disposed || slot.token !== token || slot.key !== descriptor.key) {
+          if (slot.token === token) {
+            slot.loading = false;
+          }
+          return;
+        }
+        if (immediate) {
+          this.commitPage(slot, page);
+          return;
+        }
+        this.commitQueue.enqueue(createTerrainCommitJob({
+          slot,
+          page,
+          token,
+          priority: commitPriority({
+            descriptor,
+            focusChunk: this.focusChunk,
+            velocity: this.focusVelocity,
+          }),
+        }));
+      })
+      .catch((error) => {
+        if (slot.token === token) {
+          slot.loading = false;
+        }
+        console.error('Terrain chunk request failed.', error);
+      });
+
+    this.pendingFetches.add(fetchPromise);
     try {
-      const page = await this.worldStore.requestChunk(descriptor.chunkX, descriptor.chunkZ);
-      if (this.disposed || slot.token !== token || slot.key !== descriptor.key) {
-        return;
-      }
-      this.uploadPage(slot, page);
-      slot.mesh.visible = true;
+      await fetchPromise;
     } finally {
-      if (slot.token === token) {
-        slot.loading = false;
-      }
+      this.pendingFetches.delete(fetchPromise);
     }
   }
 
-  uploadPage(slot, page) {
-    PerfCounters.inc('terrainUploadPages');
-    writeTilePixels(slot, page.tiles);
-    writeSurfaceMaskPixels(slot, page, this.worldStore, this.stylizedConfig);
-    slot.heightPixels.set(page.heights);
+  ensurePageRenderPixels(page) {
+    if (page.tilePixels && page.surfaceMaskPixels && !page.renderPixelsDirty) {
+      return page;
+    }
+    if (typeof this.worldStore.refreshPageRenderPixels === 'function') {
+      return this.worldStore.refreshPageRenderPixels(page);
+    }
+    return enrichPageRenderPixels(
+      page,
+      (cellX, cellZ) => this.worldStore.getTile(cellX, cellZ),
+      this.surfaceMaskConfig,
+    );
+  }
+
+  /**
+   * Main-thread materialization only: typed-array copies + texture flags.
+   * Must not call getTile / generate masks (worker already did that).
+   */
+  commitPage(slot, page) {
+    const ready = this.ensurePageRenderPixels(page);
+    if (!ready.tilePixels || !ready.surfaceMaskPixels) {
+      throw new Error('Terrain page commit requires tilePixels and surfaceMaskPixels.');
+    }
+    slot.texturePixels.set(ready.tilePixels);
+    slot.surfaceMaskPixels.set(ready.surfaceMaskPixels);
+    slot.heightPixels.set(ready.heights);
     slot.tileTexture.needsUpdate = true;
     slot.surfaceMaskTexture.needsUpdate = true;
     slot.heightTexture.needsUpdate = true;
-    slot.page = page;
-    slot.pageRevision = page.revision;
+    slot.page = ready;
+    slot.pageRevision = ready.revision;
+    slot.mesh.visible = true;
+    slot.loading = false;
+    PerfCounters.inc('terrainUploadPages');
+  }
+
+  flushUploadQueue(options = {}) {
+    if (this.disposed || this.commitQueue.size === 0) {
+      return { committed: 0, remaining: 0, maxQueuedAgeMs: this.commitQueue.maxQueuedAgeMs };
+    }
+    return this.commitQueue.flush(
+      (job) => this.commitPage(job.slot, job.page),
+      (job) => (
+        !this.disposed
+        && job.slot.token === job.token
+        && job.slot.key === job.slot.descriptor?.key
+      ),
+      options,
+    );
+  }
+
+  async drainPendingUploads() {
+    while (!this.disposed && (this.pendingFetches.size > 0 || this.commitQueue.size > 0)) {
+      if (this.pendingFetches.size > 0) {
+        await Promise.allSettled([...this.pendingFetches]);
+      }
+      this.commitQueue.drain(
+        (job) => this.commitPage(job.slot, job.page),
+        (job) => (
+          !this.disposed
+          && job.slot.token === job.token
+          && job.slot.key === job.slot.descriptor?.key
+        ),
+      );
+    }
+  }
+
+  /** Editor paint/sculpt path — mark dirty then memcpy commit. */
+  uploadPage(slot, page) {
+    page.renderPixelsDirty = true;
+    this.commitPage(slot, page);
   }
 
   positionSlots() {
@@ -355,7 +415,7 @@ export class InfiniteTerrainView {
     if (change.kind === 'reset') {
       for (const slot of this.slots) {
         if (slot.descriptor) {
-          this.assignSlot(slot, slot.descriptor);
+          void this.assignSlot(slot, slot.descriptor, { immediate: true });
         }
       }
       return;
@@ -376,6 +436,9 @@ export class InfiniteTerrainView {
     for (const slot of this.slots) {
       if (slot.key && affected.has(slot.key)) {
         const page = this.worldStore.getChunk(slot.descriptor.chunkX, slot.descriptor.chunkZ);
+        if (change.kind === 'tile') {
+          page.renderPixelsDirty = true;
+        }
         this.uploadPage(slot, page);
       }
     }
@@ -495,6 +558,8 @@ export class InfiniteTerrainView {
       return;
     }
     this.disposed = true;
+    this.commitQueue.clear();
+    this.pendingFetches.clear();
     this.setAnimationLoop(null);
     this.unsubscribeWorld?.();
     this.preview.geometry.dispose();

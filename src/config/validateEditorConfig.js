@@ -250,6 +250,16 @@ function validateStylizedSurface(config) {
   if (surface.sky.cloudCeiling <= surface.sky.cloudFloor || surface.sky.fogDensity < 0) {
     throw new Error('Invalid editor configuration: stylized sky cloud and fog ranges are invalid.');
   }
+  if (surface.streaming) {
+    const streaming = surface.streaming;
+    if (!Number.isInteger(streaming.grassBuildsPerFrame) || streaming.grassBuildsPerFrame < 1
+        || !Number.isInteger(streaming.flowerBuildsPerFrame) || streaming.flowerBuildsPerFrame < 1) {
+      throw new Error('Invalid editor configuration: stylizedSurface.streaming builds-per-frame must be positive integers.');
+    }
+    if (!Number.isFinite(streaming.heavyBuildBudgetMs) || streaming.heavyBuildBudgetMs <= 0) {
+      throw new Error('Invalid editor configuration: stylizedSurface.streaming.heavyBuildBudgetMs must be positive.');
+    }
+  }
 
   const assetFields = [
     ['stylizedSurface.assets.scene', surface.assets?.scene],
@@ -300,6 +310,14 @@ export function validateEditorConfig(config) {
   }
   if (config.world.maxCpuChunks < config.world.maxResidentChunks) {
     throw new Error('Invalid editor configuration: world.maxCpuChunks must cover resident GPU chunks.');
+  }
+  if (config.world.maxCommitsPerFrame !== undefined
+      && (!Number.isInteger(config.world.maxCommitsPerFrame) || config.world.maxCommitsPerFrame < 1)) {
+    throw new Error('Invalid editor configuration: world.maxCommitsPerFrame must be a positive integer.');
+  }
+  if (config.world.commitBudgetMs !== undefined
+      && (!Number.isFinite(config.world.commitBudgetMs) || config.world.commitBudgetMs <= 0)) {
+    throw new Error('Invalid editor configuration: world.commitBudgetMs must be a positive number.');
   }
   if (!Number.isFinite(config.world.seaLevel)) {
     throw new Error('Invalid editor configuration: world.seaLevel must be finite.');

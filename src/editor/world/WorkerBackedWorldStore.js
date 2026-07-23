@@ -3,7 +3,12 @@ import {
   decodeChunkDocument,
   encodeChunkDocument,
 } from './ChunkDocumentCodec.js';
-import { cellKey, chunkKey } from './WorldCoordinates.js';
+import {
+  createSurfaceMaskConfig,
+  enrichPageRenderPixels,
+  getSurfaceMaskSearchRadius,
+} from './ChunkRenderPixels.js';
+import { cellKey, chunkKey, parseCellKey } from './WorldCoordinates.js';
 import { WORLD_HEIGHT_EPSILON } from './worldConstants.js';
 
 function tileIndex(localX, localZ, chunkSize) {
@@ -24,9 +29,10 @@ function assertGeneratorMetadata(actual, expected) {
 }
 
 export class WorkerBackedWorldStore extends InfiniteWorldStore {
-  constructor({ chunkWorker, ...options }) {
+  constructor({ chunkWorker, surfaceMaskConfig = null, ...options }) {
     super(options);
     this.chunkWorker = chunkWorker;
+    this.surfaceMaskConfig = surfaceMaskConfig ?? createSurfaceMaskConfig(null);
     this.pendingChunks = new Map();
   }
 
@@ -52,17 +58,45 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
     return request;
   }
 
+  refreshPageRenderPixels(page) {
+    return enrichPageRenderPixels(
+      page,
+      (cellX, cellZ) => this.getTile(cellX, cellZ),
+      this.surfaceMaskConfig,
+    );
+  }
+
+  hasHaloTileOverrides(originX, originZ) {
+    if (this.tileOverrides.size === 0) {
+      return false;
+    }
+    const searchRadius = getSurfaceMaskSearchRadius(this.surfaceMaskConfig.blendCells);
+    const minX = originX - searchRadius;
+    const maxX = originX + this.chunkSize - 1 + searchRadius;
+    const minZ = originZ - searchRadius;
+    const maxZ = originZ + this.chunkSize - 1 + searchRadius;
+    for (const key of this.tileOverrides.keys()) {
+      const { chunkX: cellX, chunkZ: cellZ } = parseCellKey(key);
+      if (cellX >= minX && cellX <= maxX && cellZ >= minZ && cellZ <= maxZ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   completeWorkerPage(page) {
     const current = this.cache.get(page.key);
     if (current) {
       return current;
     }
     const { originX, originZ } = page;
+    let appliedOverrides = false;
     for (let localZ = 0; localZ < this.chunkSize; localZ += 1) {
       for (let localX = 0; localX < this.chunkSize; localX += 1) {
         const override = this.tileOverrides.get(cellKey(originX + localX, originZ + localZ));
         if (override !== undefined) {
           page.tiles[tileIndex(localX, localZ, this.chunkSize)] = override;
+          appliedOverrides = true;
         }
       }
     }
@@ -73,6 +107,13 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
           page.heights[heightIndex(localX, localZ, this.vertexSize)] = override;
         }
       }
+    }
+
+    const pixelsMissing = !page.tilePixels || !page.surfaceMaskPixels;
+    // Neighbor painted roads/water sit outside this page's tiles but inside the path halo.
+    const neighborHaloDirty = this.hasHaloTileOverrides(originX, originZ);
+    if (appliedOverrides || pixelsMissing || page.renderPixelsDirty || neighborHaloDirty) {
+      this.refreshPageRenderPixels(page);
     }
 
     this.clock += 1;

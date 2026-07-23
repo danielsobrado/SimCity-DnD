@@ -59,6 +59,7 @@ Report kind: `simcity-dnd-perf-qa` (version `1`).
 - **Scenario + config snapshot** — spawn, keys, hitch threshold, player/world/stylized knobs used for the run
 - **Summary** — frame count, duration, avg FPS, dt min/p50/p95/p99/max/mean, hitch count/rate
 - **Phase timings** — CPU time inside the animation loop for:
+  - `terrainCommit` (budgeted memcpy commits from the worker page queue)
   - `player`
   - `floatingOrigin`
   - `streaming` (sync kickoff of `updateStreaming` only)
@@ -87,6 +88,11 @@ npm run qa:perf -- --headed
 
 | Path | Role |
 |------|------|
+| `src/editor/world/ChunkRenderPixels.js` | Worker/main tilePixels + halo chamfer surface-mask pixels |
+| `src/editor/world/TerrainCommitQueue.js` | Frame-budgeted memcpy commits (max 1/frame, ~2 ms) |
+| `src/editor/world/generateWorldChunk.js` | Worker page generation including render pixels |
+| `src/editor/stylized/chunkRockSignature.js` | Per-chunk rock influence signatures for grass |
+| `src/editor/stylized/StylizedBuildQueue.js` | Frame-budgeted grass/flower heavy builds |
 | `src/editor/performance/qa/PerfQaHarness.js` | Orchestration, overlay, `window.__perfQa` |
 | `src/editor/performance/qa/FrameProfiler.js` | Per-frame dt + phase marks |
 | `src/editor/performance/qa/PerfCounters.js` | Global rebuild/upload counters |
@@ -95,15 +101,15 @@ npm run qa:perf -- --headed
 | `src/main.js` | Phase marks around the live animation loop |
 | `src/editor/player/PlayerController.js` | Harness input bypass (`setHarnessActive` / `setHarnessKeys` / `setPose`) |
 
-Counters are incremented from stylized rebuild paths and terrain `assignSlot` / `uploadPage`.
+Counters are incremented from stylized rebuild paths and terrain `assignSlot` / `uploadPage` commit.
 
 ## Attribution caveat
 
-Frame `dt` comes from `requestAnimationFrame` timestamps. Long **async** main-thread work that finishes *between* frames (for example `assignSlot` → `uploadPage` after a worker fetch) shows up as a large `dt` on the *next* callback, while that hitch frame’s phase timers can look cheap.
+Frame `dt` comes from `requestAnimationFrame` timestamps. Long **async** main-thread work that finishes *between* frames (for example `assignSlot` after a worker fetch) shows up as a large `dt` on the *next* callback, while that hitch frame’s phase timers can look cheap.
 
 So:
 
-- Large `dt` + `terrainUploadPages` / `loading > 0` → treat as streaming/upload hitch
+- Large `dt` + `terrainUploadPages` / `loading > 0` → treat as streaming/commit hitch
 - Large `phases.stylized` (or other phase) on a sample → sync CPU cost inside that named section
 - Expensive sync work on frame N can inflate `dt` on frame N+1
 
@@ -129,6 +135,30 @@ Captured against local Vite (`?qa=chunk-cross&warmup=2&duration=12&speed=run&hit
 5. Phase timers on those hitch frames stayed small (~2–14 ms), which matches async upload work completing outside the marked loop body.
 6. `stylized` phase max reached ~948 ms once (rebuild spike); keep samples that include counter deltas / expensive phases when diagnosing rebuild cost.
 
-### Next fix target
+### Fix landed: worker render pixels + commit queue
 
-Amortize or defer terrain `uploadPage` / slot assignment work so worker completions do not block the next animation frame when the player crosses chunk boundaries.
+**Root hitch cause:** CPU `writeSurfaceMaskPixels` did O(chunkCells × searchArea) `getTile` neighbor scans on the main thread when committing a streamed page (~331k `getTile` calls per 64² page).
+
+**Current path:**
+
+1. Worker generates **render-ready pages**: `tiles`, `heights`, `tilePixels`, `surfaceMaskPixels`.
+2. Surface mask uses halo fill + two-pass chamfer distance transform in `ChunkRenderPixels.js` (O(halo²), no nested `getTile` storms).
+3. Main-thread commit is typed-array copies + `needsUpdate` only (`TerrainCommitQueue`, default `maxCommitsPerFrame: 1`, `commitBudgetMs: 2`).
+4. Concurrent worker requests stay parallel; only commits are serialized.
+5. Per-chunk rock signatures (`chunkRockSignature.js`) and grass/flower build queues (`StylizedBuildQueue`) keep stylized rebuilds scoped and budgeted.
+
+| Path | Role |
+|------|------|
+| `src/editor/world/ChunkRenderPixels.js` | Halo + chamfer DT mask + tilePixels |
+| `src/editor/world/TerrainCommitQueue.js` | Budgeted memcpy commit queue |
+| `src/editor/InfiniteTerrainView.js` | Slot wiring, `flushUploadQueue` → commit drain, editor `uploadPage` |
+| `src/editor/stylized/StylizedBuildQueue.js` | Grass/flower builds per frame |
+
+### QA gates
+
+Re-run `npm run qa:perf` (`?qa=chunk-cross`) and check:
+
+- Chunk-boundary hitch spikes should shrink vs the ~1 s baseline (no main-thread mask storms).
+- `terrainCommit` phase should stay small (memcpy only); large `dt` with `terrainUploadPages` should be rare.
+- Grass/flower rebuilds should follow per-chunk signatures + build-queue budgets, not full resident rebuilds on every focus step.
+- Optional: lower `bladesPerCell` if grass rebuild cost still dominates hitch samples.

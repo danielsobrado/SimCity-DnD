@@ -23,6 +23,8 @@ function createValidConfig() {
       minimapCells: 192,
       heightScale: 12,
       seaLevel: -1.5,
+      maxCommitsPerFrame: 1,
+      commitBudgetMs: 2,
     },
     camera: {
       viewSize: 180,

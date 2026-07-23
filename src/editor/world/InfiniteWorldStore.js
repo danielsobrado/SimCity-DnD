@@ -333,7 +333,7 @@ export class InfiniteWorldStore {
         heights[heightIndex(localX, localZ, this.vertexSize)] = this.getHeight(originX + localX, originZ + localZ);
       }
     }
-    return {
+    const page = {
       key: chunkKey(chunkX, chunkZ),
       chunkX,
       chunkZ,
@@ -344,6 +344,7 @@ export class InfiniteWorldStore {
       revision: this.revision,
       lastUsed: this.clock,
     };
+    return page;
   }
 
   updateCachedTile(cellX, cellZ, tileId) {
@@ -352,6 +353,7 @@ export class InfiniteWorldStore {
     if (page) {
       page.tiles[tileIndex(location.localX, location.localZ, this.chunkSize)] = tileId;
       page.revision = this.revision + 1;
+      page.renderPixelsDirty = true;
     }
   }
 
@@ -369,6 +371,7 @@ export class InfiniteWorldStore {
         if (page) {
           page.heights[heightIndex(localX, localZ, this.vertexSize)] = value;
           page.revision = this.revision + 1;
+          // Heights do not affect tile/surface mask pixels.
         }
       }
     }

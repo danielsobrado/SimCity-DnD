@@ -59,6 +59,7 @@ export class StylizedFlowerSlot {
     terrainView.scene.add(this.mesh);
     this.lastKey = null;
     this.lastRevision = -1;
+    this.pendingRebuild = null;
   }
 
   update(timestamp, focusChunk) {
@@ -71,15 +72,33 @@ export class StylizedFlowerSlot {
       ) <= this.config.flowers.residentRadius
       : false;
     this.mesh.visible = Boolean(this.terrainSlot.mesh.visible && withinRadius);
-    if (!this.mesh.visible || !descriptor || !this.terrainSlot.page) return;
+    if (!this.mesh.visible || !descriptor || !this.terrainSlot.page) {
+      this.pendingRebuild = null;
+      return;
+    }
 
     this.mesh.position.copy(this.terrainSlot.mesh.position);
     this.chunkCenter.value.set(descriptor.centerWorldX, descriptor.centerWorldZ);
     if (this.lastKey !== descriptor.key || this.lastRevision !== this.terrainSlot.pageRevision) {
-      this.rebuild(this.terrainSlot.page, descriptor);
-      this.lastKey = descriptor.key;
-      this.lastRevision = this.terrainSlot.pageRevision;
+      this.pendingRebuild = {
+        key: `flower:${this.terrainSlot.slotIndex}:${this.variantIndex}`,
+        page: this.terrainSlot.page,
+        descriptor,
+        revision: this.terrainSlot.pageRevision,
+      };
     }
+  }
+
+  applyPendingRebuild() {
+    if (!this.pendingRebuild) {
+      return false;
+    }
+    const job = this.pendingRebuild;
+    this.pendingRebuild = null;
+    this.rebuild(job.page, job.descriptor);
+    this.lastKey = job.descriptor.key;
+    this.lastRevision = job.revision;
+    return true;
   }
 
   rebuild(page, descriptor) {

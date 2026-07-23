@@ -1,5 +1,11 @@
 import { vec3 } from 'three/tsl';
 import { parseChunkKey } from '../world/WorldCoordinates.js';
+import {
+  objectBoulderSignatureForChunk,
+  rockSignatureForChunk,
+  rocksInfluencingChunk,
+} from './chunkRockSignature.js';
+import { StylizedBuildQueue } from './StylizedBuildQueue.js';
 import { StylizedFlowerView } from './StylizedFlowerView.js';
 import { StylizedGrassSlot } from './StylizedGrassSlot.js';
 import { StylizedRockView } from './StylizedRockView.js';
@@ -7,14 +13,6 @@ import { StylizedSceneAssetCache } from './StylizedSceneAssetCache.js';
 import { StylizedSkyView } from './StylizedSkyView.js';
 import { StylizedTreeView } from './StylizedTreeView.js';
 import { StylizedWaterSlot } from './StylizedWaterSlot.js';
-
-function createObjectSignature(objectMap) {
-  return objectMap.list()
-    .filter((object) => object.definitionKey === 'boulder')
-    .map((object) => `${object.id}:${object.x}:${object.z}`)
-    .sort()
-    .join('|');
-}
 
 export class StylizedSurfaceView {
   constructor({ terrainView, objectMap, config, baseUrl = '/' }) {
@@ -60,14 +58,18 @@ export class StylizedSurfaceView {
       }))
       : [];
     for (const slot of this.slots) slot.mesh.receiveShadow = true;
-    this.lastObjectSignature = '';
-    this.lastObjectCheckAt = 0;
+    this.grassBuildQueue = new StylizedBuildQueue({
+      buildsPerFrame: config.streaming?.grassBuildsPerFrame ?? 1,
+      budgetMs: config.streaming?.heavyBuildBudgetMs ?? 3,
+    });
+    this.flowerBuildQueue = new StylizedBuildQueue({
+      buildsPerFrame: config.streaming?.flowerBuildsPerFrame ?? 1,
+      budgetMs: config.streaming?.heavyBuildBudgetMs ?? 3,
+    });
+    this.chunkWorldSize = terrainView.worldStore.chunkSize * terrainView.worldStore.tileSize;
+    this.tileSize = terrainView.worldStore.tileSize;
   }
 
-  /**
-   * Load grass-scene.glb once, keep it alive while rock/tree materials may still
-   * share source textures, then build both layers from the same parse.
-   */
   async bootstrapLayers() {
     if (!this.enabled) return null;
     const needsScene = this.config.rocks.enabled || this.config.trees.enabled;
@@ -98,16 +100,62 @@ export class StylizedSurfaceView {
     this.treeView?.update(timestamp, rockPlacements, rockSignature);
     this.flowerView?.update(timestamp);
     for (const slot of this.waterSlots) slot.update(timestamp);
-    if (timestamp >= this.lastObjectCheckAt) {
-      this.lastObjectSignature = createObjectSignature(this.objectMap);
-      this.lastObjectCheckAt = timestamp + 250;
-    }
+
     const focusKey = this.terrainView.focusChunkKey;
     const focusChunk = focusKey ? parseChunkKey(focusKey) : null;
-    const signature = `${this.lastObjectSignature}|${rockSignature}`;
+    const rockRadius = this.config.rocks.radius;
+    const rockFalloff = this.config.rocks.falloff;
+
     for (const slot of this.slots) {
-      slot.update(timestamp, focusChunk, signature, rockPlacements);
+      const descriptor = slot.terrainSlot.descriptor;
+      if (!descriptor) {
+        slot.update(timestamp, focusChunk, '', []);
+        continue;
+      }
+      const localRocks = rocksInfluencingChunk({
+        descriptor,
+        rockPlacements,
+        chunkWorldSize: this.chunkWorldSize,
+        radius: rockRadius,
+        falloff: rockFalloff,
+      });
+      const signature = [
+        objectBoulderSignatureForChunk({
+          objectMap: this.objectMap,
+          descriptor,
+          tileSize: this.tileSize,
+          chunkWorldSize: this.chunkWorldSize,
+          radius: rockRadius,
+          falloff: rockFalloff,
+        }),
+        rockSignatureForChunk({
+          descriptor,
+          rockPlacements,
+          chunkWorldSize: this.chunkWorldSize,
+          radius: rockRadius,
+          falloff: rockFalloff,
+        }),
+      ].join('|');
+      slot.update(timestamp, focusChunk, signature, localRocks);
+      if (slot.pendingRebuild) {
+        this.grassBuildQueue.enqueue({
+          key: slot.pendingRebuild.key,
+          slot,
+        });
+      }
     }
+
+    for (const flowerSlot of this.flowerView?.slots ?? []) {
+      if (flowerSlot.pendingRebuild) {
+        this.flowerBuildQueue.enqueue({
+          key: flowerSlot.pendingRebuild.key,
+          slot: flowerSlot,
+        });
+      }
+    }
+
+    this.grassBuildQueue.flush((job) => job.slot.applyPendingRebuild());
+    this.flowerBuildQueue.flush((job) => job.slot.applyPendingRebuild());
   }
 
   dispose() {
@@ -121,6 +169,8 @@ export class StylizedSurfaceView {
     }
     this.sceneAssets?.dispose();
     this.sceneAssets = null;
+    this.grassBuildQueue.clear();
+    this.flowerBuildQueue.clear();
     for (const slot of this.waterSlots) slot.dispose();
     this.waterSlots.length = 0;
     for (const slot of this.slots) slot.dispose();

@@ -30,6 +30,7 @@ import { ChunkedHeightField } from './editor/world/ChunkedHeightField.js';
 import { ChunkedTileMap } from './editor/world/ChunkedTileMap.js';
 import { FloatingOrigin } from './editor/world/FloatingOrigin.js';
 import { ProceduralWorldGenerator } from './editor/world/ProceduralWorldGenerator.js';
+import { createSurfaceMaskConfig } from './editor/world/ChunkRenderPixels.js';
 import { WorkerBackedWorldStore } from './editor/world/WorkerBackedWorldStore.js';
 import { WorldChunkWorkerClient } from './editor/world/WorldChunkWorkerClient.js';
 
@@ -49,9 +50,11 @@ async function startEditor() {
     heightScale: config.world.heightScale,
     seaLevel: config.world.seaLevel,
   });
+  const surfaceMaskConfig = createSurfaceMaskConfig(config.stylizedSurface);
   const chunkWorker = new WorldChunkWorkerClient({
     chunkSize: config.world.chunkSize,
     generator,
+    surfaceMaskConfig,
   });
   const worldStore = new WorkerBackedWorldStore({
     chunkWorker,
@@ -59,6 +62,7 @@ async function startEditor() {
     tileSize: config.map.tileSize,
     cacheLimit: config.world.maxCpuChunks,
     generator,
+    surfaceMaskConfig,
   });
   const tileMap = new ChunkedTileMap({ worldStore, defaultTileId: defaultTile.id });
   const heightField = new ChunkedHeightField({ worldStore });
@@ -236,6 +240,10 @@ async function startEditor() {
       frameRateDisplay.update(averageFps);
       nextFrameRateDisplayAt = frameTimestamp + FRAME_RATE_DISPLAY_INTERVAL_MS;
     }
+
+    // Continue budgeted terrain page commits (memcpy only; masks built in worker).
+    terrainView.flushUploadQueue();
+    if (profiling) perfQa.mark('terrainCommit');
 
     viewModeController.update(frameTimestamp);
     if (profiling) perfQa.mark('player');

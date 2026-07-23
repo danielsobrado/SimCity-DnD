@@ -108,6 +108,7 @@ export class StylizedGrassSlot {
     this.lastKey = null;
     this.lastRevision = -1;
     this.lastObjectSignature = '';
+    this.pendingRebuild = null;
   }
 
   ensureResources() {
@@ -136,7 +137,10 @@ export class StylizedGrassSlot {
       ) <= this.config.grass.residentRadius
       : false;
     this.mesh.visible = Boolean(this.terrainSlot.mesh.visible && withinRadius);
-    if (!this.mesh.visible || !descriptor || !this.terrainSlot.page) return;
+    if (!this.mesh.visible || !descriptor || !this.terrainSlot.page) {
+      this.pendingRebuild = null;
+      return;
+    }
 
     this.ensureResources();
     this.mesh.position.copy(this.terrainSlot.mesh.position);
@@ -144,11 +148,28 @@ export class StylizedGrassSlot {
     if (this.lastKey !== descriptor.key
         || this.lastRevision !== this.terrainSlot.pageRevision
         || this.lastObjectSignature !== objectSignature) {
-      this.rebuild(this.terrainSlot.page, descriptor, streamedRocks);
-      this.lastKey = descriptor.key;
-      this.lastRevision = this.terrainSlot.pageRevision;
-      this.lastObjectSignature = objectSignature;
+      this.pendingRebuild = {
+        key: `grass:${this.terrainSlot.slotIndex}`,
+        page: this.terrainSlot.page,
+        descriptor,
+        streamedRocks,
+        signature: objectSignature,
+        revision: this.terrainSlot.pageRevision,
+      };
     }
+  }
+
+  applyPendingRebuild() {
+    if (!this.pendingRebuild) {
+      return false;
+    }
+    const job = this.pendingRebuild;
+    this.pendingRebuild = null;
+    this.rebuild(job.page, job.descriptor, job.streamedRocks);
+    this.lastKey = job.descriptor.key;
+    this.lastRevision = job.revision;
+    this.lastObjectSignature = job.signature;
+    return true;
   }
 
   rebuild(page, descriptor, streamedRocks) {

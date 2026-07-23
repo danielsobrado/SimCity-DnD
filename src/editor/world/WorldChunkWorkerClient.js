@@ -1,9 +1,10 @@
 import { generateBaseWorldChunk } from './generateWorldChunk.js';
 
 export class WorldChunkWorkerClient {
-  constructor({ chunkSize, generator }) {
+  constructor({ chunkSize, generator, surfaceMaskConfig = null }) {
     this.chunkSize = chunkSize;
     this.generator = generator.toMetadata();
+    this.surfaceMaskConfig = surfaceMaskConfig;
     this.nextId = 1;
     this.pending = new Map();
     this.disposed = false;
@@ -26,6 +27,7 @@ export class WorldChunkWorkerClient {
       chunkZ,
       chunkSize: this.chunkSize,
       generator: this.generator,
+      surfaceMaskConfig: this.surfaceMaskConfig,
     };
     if (!this.worker) {
       return Promise.resolve(generateBaseWorldChunk(request));

@@ -17,6 +17,8 @@ world:
   minimapCells: 192
   heightScale: 12
   seaLevel: -1.5
+  maxCommitsPerFrame: 1
+  commitBudgetMs: 2
 camera:
   viewSize: 180
   minZoom: 0.3
@@ -71,6 +73,10 @@ stylizedSurface:
     maxWidth: 0.06
     minLength: 0.15
     maxLength: 0.25
+  streaming:
+    grassBuildsPerFrame: 1
+    flowerBuildsPerFrame: 1
+    heavyBuildBudgetMs: 3
   wind:
     direction: [1, 0]
     strength: 0.1

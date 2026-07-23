@@ -1,5 +1,9 @@
 import { ProceduralWorldGenerator } from './ProceduralWorldGenerator.js';
 import { chunkKey } from './WorldCoordinates.js';
+import {
+  createSurfaceMaskConfig,
+  enrichPageRenderPixels,
+} from './ChunkRenderPixels.js';
 
 function assertChunkRequest(request) {
   if (!Number.isSafeInteger(request?.chunkX) || !Number.isSafeInteger(request?.chunkZ)) {
@@ -8,6 +12,24 @@ function assertChunkRequest(request) {
   if (!Number.isInteger(request.chunkSize) || request.chunkSize < 1) {
     throw new Error('World chunk size must be a positive integer.');
   }
+}
+
+function resolveMaskConfig(request) {
+  const provided = request.surfaceMaskConfig;
+  if (
+    provided
+    && Number.isFinite(provided.blendCells)
+    && Number.isInteger(provided.roadTileId)
+    && Array.isArray(provided.grassTileIds)
+  ) {
+    return {
+      blendCells: provided.blendCells,
+      roadTileId: provided.roadTileId,
+      waterTileId: provided.waterTileId ?? 2,
+      grassTileIds: [...provided.grassTileIds],
+    };
+  }
+  return createSurfaceMaskConfig(null);
 }
 
 export function generateBaseWorldChunk(request) {
@@ -37,7 +59,7 @@ export function generateBaseWorldChunk(request) {
     }
   }
 
-  return {
+  const page = {
     key: chunkKey(chunkX, chunkZ),
     chunkX,
     chunkZ,
@@ -46,4 +68,12 @@ export function generateBaseWorldChunk(request) {
     tiles,
     heights,
   };
+
+  enrichPageRenderPixels(
+    page,
+    (cellX, cellZ) => generator.sampleTile(cellX, cellZ),
+    resolveMaskConfig(request),
+  );
+
+  return page;
 }
