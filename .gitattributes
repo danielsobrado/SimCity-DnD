@@ -1,0 +1,28 @@
+# Normalize line endings to LF for all text files, regardless of platform.
+# Prevents accidental CRLF flips from producing whole-file diffs.
+* text=auto eol=lf
+
+# Explicitly treat common source/text types as LF text.
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.ts    text eol=lf
+*.jsx   text eol=lf
+*.json  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.svg   text eol=lf
+*.py    text eol=lf
+
+# Binary assets: never touch line endings.
+*.glb   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.mp4   binary
+*.woff  binary
+*.woff2 binary
+*.map   binary
