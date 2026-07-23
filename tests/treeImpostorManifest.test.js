@@ -1,0 +1,91 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  TREE_IMPOSTOR_MANIFEST_VERSION,
+  createTreeImpostorSourceSignature,
+  validateTreeImpostorManifest,
+} from '../src/editor/stylized/impostor/TreeImpostorManifest.js';
+
+function prototype(index = 0) {
+  return {
+    prototypeIndex: index,
+    columns: 8,
+    rows: 2,
+    tileSize: 128,
+    gutter: 4,
+    lowElevationDegrees: 12,
+    highElevationDegrees: 58,
+    width: 7,
+    height: 9,
+    depth: 6,
+    centerY: 4.5,
+    radius: 5,
+    albedo: `/assets/impostors/trees/prototype-${index}-albedo.png`,
+    normal: `/assets/impostors/trees/prototype-${index}-normal.png`,
+  };
+}
+
+function manifest(prototypes = [prototype()]) {
+  return {
+    version: TREE_IMPOSTOR_MANIFEST_VERSION,
+    generatedAt: '2026-07-23T00:00:00.000Z',
+    sourceSignature: 'tree-impostor-v1-12345678',
+    prototypes,
+  };
+}
+
+function geometry(size = 1) {
+  return {
+    boundingBox: null,
+    attributes: {
+      position: { count: 10 * size },
+      normal: { count: 10 * size },
+      uv: { count: 10 * size },
+    },
+    index: { count: 18 * size },
+    computeBoundingBox() {
+      this.boundingBox = {
+        min: { x: 0, y: 0, z: 0 },
+        max: { x: size, y: size * 2, z: size },
+      };
+    },
+  };
+}
+
+test('validates a compatible contiguous manifest', () => {
+  const value = manifest([prototype(0), prototype(1)]);
+  const result = validateTreeImpostorManifest(value, {
+    expectedPrototypeCount: 2,
+    expectedSourceSignature: value.sourceSignature,
+  });
+  assert.equal(result.prototypes.length, 2);
+  assert.equal(result.prototypes[1].prototypeIndex, 1);
+});
+
+test('rejects stale source signatures', () => {
+  assert.throws(() => validateTreeImpostorManifest(manifest(), {
+    expectedSourceSignature: 'tree-impostor-v1-deadbeef',
+  }), /does not match/);
+});
+
+test('rejects missing or non-contiguous prototypes', () => {
+  assert.throws(() => validateTreeImpostorManifest(manifest([prototype(1)])), /expected index 0/);
+  assert.throws(() => validateTreeImpostorManifest(manifest(), {
+    expectedPrototypeCount: 2,
+  }), /expected 2/);
+});
+
+test('source signature changes with geometry or bake configuration', () => {
+  const config = { trees: { leafTop: '#ffffff' }, lod: { impostor: { columns: 8 } } };
+  const first = createTreeImpostorSourceSignature([
+    [{ kind: 'leaf', geometry: geometry(1), sourceMap: null }],
+  ], config);
+  const geometryChanged = createTreeImpostorSourceSignature([
+    [{ kind: 'leaf', geometry: geometry(2), sourceMap: null }],
+  ], config);
+  const configChanged = createTreeImpostorSourceSignature([
+    [{ kind: 'leaf', geometry: geometry(1), sourceMap: null }],
+  ], { ...config, lod: { impostor: { columns: 16 } } });
+  assert.notEqual(first, geometryChanged);
+  assert.notEqual(first, configChanged);
+});

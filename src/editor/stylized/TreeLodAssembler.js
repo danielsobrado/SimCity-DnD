@@ -21,6 +21,13 @@ function createMatrix({ x, y, z, rotationY = 0, scaleX = 1, scaleY = scaleX, sca
   );
 }
 
+function recordBatchStats(statsByMode, stats) {
+  const target = statsByMode[stats.mode];
+  target.requested += stats.requested;
+  target.accepted += stats.accepted;
+  target.dropped += stats.dropped;
+}
+
 export function rebuildTreeLod({
   plan,
   rockSource,
@@ -90,17 +97,20 @@ export function rebuildTreeLod({
         const seed = stableSeed(placement);
         if (representation.band === 'impostor' && impostorBatches.length > 0) {
           const atlas = impostorAtlases[placement.prototypeIndex];
-          impostors[placement.prototypeIndex].push({
-            x: placement.x,
-            y: placement.height + (atlas.centerY ?? atlas.height * 0.5) * placement.scale,
-            z: placement.z,
-            scale: placement.scale,
-            radius: atlas.radius * placement.scale,
-            yaw: placement.rotationY,
-            fade: representation.fade,
-            seed,
-          });
-          continue;
+          const batch = impostorBatches[placement.prototypeIndex];
+          if (atlas && batch) {
+            impostors[placement.prototypeIndex].push({
+              x: placement.x,
+              y: placement.height + (atlas.centerY ?? atlas.height * 0.5) * placement.scale,
+              z: placement.z,
+              scale: placement.scale,
+              radius: atlas.radius * placement.scale,
+              yaw: placement.rotationY,
+              fade: representation.fade,
+              seed,
+            });
+            continue;
+          }
         }
 
         const instance = {
@@ -128,9 +138,20 @@ export function rebuildTreeLod({
   const fallbackCount = writeInstances(fallbackImpostorRenderers, fallback);
   const clusterCount = writeInstances(clusterRenderers, clusters);
   let impostorCount = 0;
+  const statsByMode = {
+    cpu: { requested: 0, accepted: 0, dropped: 0 },
+    gpu: { requested: 0, accepted: 0, dropped: 0 },
+  };
   for (let index = 0; index < impostorBatches.length; index += 1) {
-    impostorBatches[index].setRecords(impostors[index]);
-    impostorCount += impostors[index].length;
+    const records = impostors[index] ?? [];
+    const stats = impostorBatches[index].setRecords(records);
+    recordBatchStats(statsByMode, stats);
+    impostorCount += records.length;
+  }
+  for (const mode of ['cpu', 'gpu']) {
+    PerfCounters.set(`treeImpostorRecordsRequested.${mode}`, statsByMode[mode].requested);
+    PerfCounters.set(`treeImpostorRecordsAccepted.${mode}`, statsByMode[mode].accepted);
+    PerfCounters.set(`treeImpostorRecordsDropped.${mode}`, statsByMode[mode].dropped);
   }
   PerfCounters.set('treeNearInstances', nearCount);
   PerfCounters.set('treeProxyInstances', proxyCount);

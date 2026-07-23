@@ -21,6 +21,7 @@ import {
 } from './impostor/TreeImpostorAssets.js';
 import { TreeImpostorBaker } from './impostor/TreeImpostorBaker.js';
 import { TreeImpostorBatch } from './impostor/TreeImpostorBatch.js';
+import { createTreeImpostorSourceSignature } from './impostor/TreeImpostorManifest.js';
 
 function firstMaterial(mesh, name) {
   return materialList(mesh).find((material) => material?.name === name) ?? materialList(mesh)[0];
@@ -76,6 +77,7 @@ export class StylizedTreeView {
     this.textureLoader = new THREE.TextureLoader();
     this.time = uniform(0);
     this.prototypes = [];
+    this.prototypeSignature = null;
     this.proxyPrototypes = [];
     this.fallbackImpostorPrototypes = [];
     this.renderers = [];
@@ -162,6 +164,7 @@ export class StylizedTreeView {
       throw new Error('Pine prototype extraction produced no upright renderable parts.');
     }
 
+    this.prototypeSignature = createTreeImpostorSourceSignature(this.prototypes, this.config);
     this.createRenderResources();
   }
 
@@ -222,7 +225,11 @@ export class StylizedTreeView {
     if (!settings?.enabled || this.disposed) return null;
     const forceBake = typeof location !== 'undefined'
       && new URLSearchParams(location.search).get('bakeImpostors') === '1';
-    const loader = new TreeImpostorAssetLoader({ baseUrl: this.baseUrl });
+    const loader = new TreeImpostorAssetLoader({
+      baseUrl: this.baseUrl,
+      expectedPrototypeCount: this.prototypes.length,
+      expectedSourceSignature: this.prototypeSignature,
+    });
     let atlases = forceBake ? null : await loader.load(settings.manifest).catch((error) => {
       console.warn('Tree impostor assets could not be loaded; runtime bake will be attempted.', error);
       return null;
@@ -234,15 +241,19 @@ export class StylizedTreeView {
         config: this.config,
       }).bake(this.prototypes);
     }
-    if (!atlases || this.disposed) return null;
+    if (!atlases) return null;
+    if (this.disposed) {
+      disposeTreeImpostorAtlases(atlases);
+      return null;
+    }
 
     this.impostorAtlases = [...atlases];
-    this.impostorBatches = this.impostorAtlases.map((atlas, index) => new TreeImpostorBatch({
+    this.impostorBatches = this.impostorAtlases.map((atlas) => new TreeImpostorBatch({
       renderer: this.terrainView.renderer,
       scene: this.terrainView.scene,
       atlas,
       capacity,
-      name: `stylized-pine-impostor-${index}`,
+      name: `stylized-pine-impostor-${atlas.prototypeIndex}`,
       gpuCulling: this.config.lod?.gpuCulling?.enabled !== false,
     }));
     this.impostorVersion += 1;
@@ -304,7 +315,21 @@ export class StylizedTreeView {
       });
       this.manifestStore.flush();
     }
-    for (const batch of this.impostorBatches) batch.update(camera, origin);
+
+    const submitted = { cpu: 0, gpu: 0 };
+    const known = { cpu: true, gpu: true };
+    for (const batch of this.impostorBatches) {
+      const result = batch.update(camera, origin);
+      if (Number.isFinite(result.submitted)) {
+        submitted[result.mode] += result.submitted;
+      } else {
+        known[result.mode] = false;
+      }
+    }
+    for (const mode of ['cpu', 'gpu']) {
+      PerfCounters.set(`treeImpostorSubmittedKnown.${mode}`, known[mode] ? 1 : 0);
+      if (known[mode]) PerfCounters.set(`treeImpostorSubmitted.${mode}`, submitted[mode]);
+    }
   }
 
   createNearOnlyPlan(focus, radius) {
@@ -327,7 +352,7 @@ export class StylizedTreeView {
     if (this.impostorAtlases.length === 0) {
       throw new Error('No runtime-baked tree impostors are available to export.');
     }
-    return downloadTreeImpostorBundle(this.impostorAtlases);
+    return downloadTreeImpostorBundle(this.impostorAtlases, this.prototypeSignature);
   }
 
   dispose() {

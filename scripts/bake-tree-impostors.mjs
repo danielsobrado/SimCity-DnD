@@ -2,15 +2,20 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import process from 'node:process';
+import {
+  TREE_IMPOSTOR_MANIFEST_VERSION,
+  validateTreeImpostorManifest,
+} from '../src/editor/stylized/impostor/TreeImpostorManifest.js';
 
 const PORT = 5179;
 const HOST = '127.0.0.1';
 const OUTPUT_DIRECTORY = resolve('public/assets/impostors/trees');
-const REPORT_PATH = resolve('docs/qa/offline-impostor-bake-status.md');
 const DOWNLOAD_NAME = 'tree-impostors.bundle.json';
-const TIMEOUT_MS = 180_000;
+const BAKE_TIMEOUT_MS = 180_000;
+const COMMAND_TIMEOUT_MS = 15_000;
+const FILE_TIMEOUT_MS = 30_000;
 const POLL_MS = 250;
 const DEBUG_PORT = 9237;
 const MAX_DIAGNOSTIC_LINES = 240;
@@ -21,35 +26,74 @@ class CdpClient {
     this.nextId = 1;
     this.pending = new Map();
     this.listeners = new Map();
+    this.closedError = null;
     this.ready = new Promise((resolvePromise, reject) => {
-      this.socket.addEventListener('open', resolvePromise, { once: true });
-      this.socket.addEventListener('error', reject, { once: true });
+      const onOpen = () => {
+        cleanup();
+        resolvePromise();
+      };
+      const onFailure = () => {
+        cleanup();
+        reject(new Error('Chrome DevTools connection failed before opening.'));
+      };
+      const cleanup = () => {
+        this.socket.removeEventListener('open', onOpen);
+        this.socket.removeEventListener('error', onFailure);
+        this.socket.removeEventListener('close', onFailure);
+      };
+      this.socket.addEventListener('open', onOpen, { once: true });
+      this.socket.addEventListener('error', onFailure, { once: true });
+      this.socket.addEventListener('close', onFailure, { once: true });
     });
-    this.socket.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data));
-      if (message.id !== undefined) {
-        const pending = this.pending.get(message.id);
-        if (!pending) return;
-        this.pending.delete(message.id);
-        if (message.error) {
-          pending.reject(new Error(`${pending.method} failed: ${message.error.message}`));
-        } else {
-          pending.resolve(message.result ?? {});
-        }
-        return;
-      }
-      for (const listener of this.listeners.get(message.method) ?? []) {
-        listener(message.params ?? {});
-      }
+    this.socket.addEventListener('message', (event) => this.handleMessage(event));
+    this.socket.addEventListener('error', () => {
+      this.fail(new Error('Chrome DevTools connection failed.'));
+    });
+    this.socket.addEventListener('close', () => {
+      this.fail(new Error('Chrome DevTools connection closed.'));
     });
   }
 
-  async call(method, params = {}) {
+  handleMessage(event) {
+    const message = JSON.parse(String(event.data));
+    if (message.id !== undefined) {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      clearTimeout(pending.timeout);
+      if (message.error) {
+        pending.reject(new Error(`${pending.method} failed: ${message.error.message}`));
+      } else {
+        pending.resolve(message.result ?? {});
+      }
+      return;
+    }
+    for (const listener of this.listeners.get(message.method) ?? []) {
+      listener(message.params ?? {});
+    }
+  }
+
+  fail(error) {
+    if (this.closedError) return;
+    this.closedError = error;
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  async call(method, params = {}, timeoutMs = COMMAND_TIMEOUT_MS) {
     await this.ready;
+    if (this.closedError) throw this.closedError;
     const id = this.nextId;
     this.nextId += 1;
     return new Promise((resolvePromise, reject) => {
-      this.pending.set(id, { resolve: resolvePromise, reject, method });
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`${method} timed out after ${timeoutMs}ms.`));
+      }, timeoutMs);
+      this.pending.set(id, { resolve: resolvePromise, reject, method, timeout });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -61,11 +105,8 @@ class CdpClient {
   }
 
   close() {
+    this.fail(new Error('Chrome DevTools connection closed by the baker.'));
     this.socket.close();
-    for (const pending of this.pending.values()) {
-      pending.reject(new Error('Chrome DevTools connection closed.'));
-    }
-    this.pending.clear();
     this.listeners.clear();
   }
 }
@@ -105,7 +146,7 @@ function log(message) {
   process.stdout.write(`[impostor-bake] ${message}\n`);
 }
 
-function candidates() {
+function browserCandidates() {
   const fromEnvironment = [
     process.env.CHROME_PATH,
     process.env.GOOGLE_CHROME_BIN,
@@ -137,7 +178,7 @@ function candidates() {
 }
 
 function findBrowser() {
-  const executable = candidates().find((candidate) => candidate && existsSync(candidate));
+  const executable = browserCandidates().find((candidate) => candidate && existsSync(candidate));
   if (!executable) {
     throw new Error('Chrome, Chromium or Edge was not found. Set CHROME_PATH to a browser executable.');
   }
@@ -174,6 +215,35 @@ async function waitForServer(url, timeoutMs) {
   throw new Error(`Vite did not become ready within ${timeoutMs}ms.`);
 }
 
+async function evaluateValue(cdp, expression) {
+  const result = await cdp.call('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  if (result.exceptionDetails) {
+    throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+  }
+  return result.result?.value;
+}
+
+async function waitForBakeStatus(cdp, timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const status = await evaluateValue(cdp, 'window.__treeImpostorBakeStatus ?? null');
+    if (status === 'done') return;
+    if (status === 'failed') {
+      const error = await evaluateValue(
+        cdp,
+        'window.__treeImpostorBakeError ?? "Unknown tree impostor bake failure"',
+      );
+      throw new Error(`Browser tree impostor bake failed: ${error}`);
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, POLL_MS));
+  }
+  throw new Error(`Tree impostor bake did not finish within ${timeoutMs}ms.`);
+}
+
 async function waitForFile(path, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -190,9 +260,16 @@ function decodeDataUrl(dataUrl) {
 }
 
 async function writeAssets(bundle) {
+  if (bundle.version !== TREE_IMPOSTOR_MANIFEST_VERSION) {
+    throw new Error(`Impostor bundle version ${bundle.version} is unsupported.`);
+  }
+  if (typeof bundle.sourceSignature !== 'string' || bundle.sourceSignature.length < 8) {
+    throw new Error('Impostor bundle contains no source signature.');
+  }
   if (!Array.isArray(bundle.prototypes) || bundle.prototypes.length === 0) {
     throw new Error('Impostor bundle contains no tree prototypes.');
   }
+
   await rm(OUTPUT_DIRECTORY, { recursive: true, force: true });
   await mkdir(OUTPUT_DIRECTORY, { recursive: true });
   const prototypes = [];
@@ -219,89 +296,36 @@ async function writeAssets(bundle) {
       normal: `/assets/impostors/trees/${normalFilename}`,
     });
   }
+  const manifest = validateTreeImpostorManifest({
+    version: TREE_IMPOSTOR_MANIFEST_VERSION,
+    generatedAt: bundle.generatedAt,
+    sourceSignature: bundle.sourceSignature,
+    prototypes,
+  });
   await writeFile(
     join(OUTPUT_DIRECTORY, 'manifest.json'),
-    `${JSON.stringify({ version: 1, generatedAt: bundle.generatedAt, prototypes }, null, 2)}\n`,
+    `${JSON.stringify(manifest, null, 2)}\n`,
   );
-}
-
-function runGit(args, options = {}) {
-  return execFileSync('git', args, {
-    cwd: resolve('.'),
-    encoding: 'utf8',
-    stdio: options.capture ? 'pipe' : 'inherit',
-  });
-}
-
-function hasStagedChanges() {
-  try {
-    runGit(['diff', '--cached', '--quiet'], { capture: true });
-    return false;
-  } catch (error) {
-    if (error.status === 1) return true;
-    throw error;
-  }
-}
-
-async function commitActionResult({ success, error = null, diagnostics = [] }) {
-  if (process.env.GITHUB_ACTIONS !== 'true') return;
-
-  await mkdir(dirname(REPORT_PATH), { recursive: true });
-  const errorText = error instanceof Error ? error.stack ?? error.message : String(error ?? '');
-  const report = [
-    '# Offline tree impostor bake',
-    '',
-    `- Run: ${process.env.GITHUB_RUN_ID ?? 'unknown'}`,
-    `- Source: ${process.env.GITHUB_SHA ?? 'unknown'}`,
-    `- Result: ${success ? 'success' : 'failure'}`,
-    `- Generated assets: ${success ? 'yes' : 'no'}`,
-    '',
-    '## Error',
-    '',
-    '```text',
-    errorText || 'None',
-    '```',
-    '',
-    '## Diagnostics',
-    '',
-    '```text',
-    ...diagnostics.slice(-MAX_DIAGNOSTIC_LINES),
-    '```',
-    '',
-  ].join('\n');
-  await writeFile(REPORT_PATH, report);
-
-  runGit(['config', 'user.name', 'github-actions[bot]']);
-  runGit(['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com']);
-  runGit(['add', REPORT_PATH]);
-  if (success) runGit(['add', OUTPUT_DIRECTORY]);
-  if (!hasStagedChanges()) return;
-
-  runGit(['commit', '-m', success
-    ? 'Add offline tree impostor atlases'
-    : 'Record offline tree impostor bake failure']);
-  runGit(['pull', '--rebase', 'origin', 'main']);
-  runGit(['push', 'origin', 'HEAD:main']);
 }
 
 async function collectPageSnapshot(cdp, diagnostics) {
   try {
-    const result = await cdp.call('Runtime.evaluate', {
-      expression: `JSON.stringify({
-        href: location.href,
-        title: document.title,
-        body: document.body?.innerText?.slice(0, 12000) ?? '',
-        readyState: document.readyState
-      })`,
-      returnByValue: true,
-    });
-    appendDiagnostic(diagnostics, `Page snapshot: ${result.result?.value ?? '<unavailable>'}`);
+    const snapshot = await evaluateValue(cdp, `JSON.stringify({
+      href: location.href,
+      title: document.title,
+      body: document.body?.innerText?.slice(0, 12000) ?? '',
+      readyState: document.readyState,
+      bakeStatus: window.__treeImpostorBakeStatus ?? null,
+      bakeError: window.__treeImpostorBakeError ?? null
+    })`);
+    appendDiagnostic(diagnostics, `Page snapshot: ${snapshot ?? '<unavailable>'}`);
   } catch (error) {
     appendDiagnostic(diagnostics, `Page snapshot failed: ${error.message}`);
   }
 }
 
-async function main(diagnostics) {
+async function main() {
+  const diagnostics = [];
   const browser = findBrowser();
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'simcity-dnd-impostor-'));
   const downloadDirectory = join(temporaryRoot, 'downloads');
@@ -335,9 +359,8 @@ async function main(diagnostics) {
       '--no-default-browser-check',
       '--disable-background-networking',
       '--disable-gpu-sandbox',
-      '--enable-unsafe-webgpu',
-      '--enable-dawn-features=allow_unsafe_apis',
-      '--enable-features=Vulkan',
+      '--enable-webgl',
+      '--ignore-gpu-blocklist',
       '--use-angle=swiftshader',
       `--remote-debugging-address=${HOST}`,
       `--remote-debugging-port=${DEBUG_PORT}`,
@@ -351,10 +374,10 @@ async function main(diagnostics) {
       appendDiagnostic(diagnostics, `console.${type}: ${(args ?? []).map(remoteObjectText).join(' ')}`);
     });
     cdp.on('Runtime.exceptionThrown', ({ exceptionDetails }) => {
-      const description = exceptionDetails?.exception?.description
-        ?? exceptionDetails?.text
-        ?? 'Unknown browser exception';
-      appendDiagnostic(diagnostics, `Browser exception: ${description}`);
+      appendDiagnostic(
+        diagnostics,
+        `Browser exception: ${exceptionDetails?.exception?.description ?? exceptionDetails?.text ?? 'Unknown'}`,
+      );
     });
     cdp.on('Log.entryAdded', ({ entry }) => {
       appendDiagnostic(diagnostics, `Browser log ${entry?.level ?? 'unknown'}: ${entry?.text ?? ''}`);
@@ -378,22 +401,30 @@ async function main(diagnostics) {
     const navigation = await cdp.call('Page.navigate', { url });
     if (navigation.errorText) throw new Error(`Page navigation failed: ${navigation.errorText}`);
 
-    const bundlePath = join(downloadDirectory, DOWNLOAD_NAME);
     try {
-      await waitForFile(bundlePath, TIMEOUT_MS);
+      await waitForBakeStatus(cdp, BAKE_TIMEOUT_MS);
+      await waitForFile(join(downloadDirectory, DOWNLOAD_NAME), FILE_TIMEOUT_MS);
     } catch (error) {
       await collectPageSnapshot(cdp, diagnostics);
       throw error;
     }
+
+    const bundlePath = join(downloadDirectory, DOWNLOAD_NAME);
     const bundle = JSON.parse(await readFile(bundlePath, 'utf8'));
     await writeAssets(bundle);
-    const validation = execFileSync(process.execPath, ['scripts/validate-impostors.mjs'], {
-      encoding: 'utf8',
-      stdio: 'pipe',
-    });
-    appendDiagnostic(diagnostics, validation);
+    const validation = execFileSync(
+      process.execPath,
+      ['scripts/validate-impostors.mjs', '--required'],
+      { encoding: 'utf8', stdio: 'pipe' },
+    );
+    process.stdout.write(validation);
     log(`Wrote ${bundle.prototypes.length} tree impostor atlases to ${OUTPUT_DIRECTORY}.`);
-    await commitActionResult({ success: true, diagnostics });
+  } catch (error) {
+    appendDiagnostic(diagnostics, error.stack ?? error.message ?? error);
+    if (diagnostics.length > 0) {
+      process.stderr.write(`\n[impostor-bake] Diagnostics:\n${diagnostics.join('\n')}\n`);
+    }
+    throw error;
   } finally {
     cdp?.close();
     chrome?.kill('SIGTERM');
@@ -402,14 +433,7 @@ async function main(diagnostics) {
   }
 }
 
-const diagnostics = [];
-main(diagnostics).catch(async (error) => {
+main().catch((error) => {
   console.error('[impostor-bake] Failed.', error);
-  appendDiagnostic(diagnostics, error.stack ?? error.message ?? error);
-  try {
-    await commitActionResult({ success: false, error, diagnostics });
-  } catch (commitError) {
-    console.error('[impostor-bake] Failed to commit diagnostics.', commitError);
-  }
   process.exitCode = 1;
 });

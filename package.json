@@ -9,11 +9,14 @@
     "preview": "vite preview",
     "generate:assets": "python scripts/generate-placeholder-models.py",
     "bake:impostors": "node scripts/bake-tree-impostors.mjs",
-    "validate:assets": "node scripts/validate-assets.mjs && node scripts/validate-impostors.mjs",
+    "validate:impostors": "node scripts/validate-impostors.mjs",
+    "validate:impostors:required": "node scripts/validate-impostors.mjs --required",
+    "validate:assets": "node scripts/validate-assets.mjs && npm run validate:impostors",
+    "validate:assets:production": "node scripts/validate-assets.mjs && npm run validate:impostors:required",
     "test": "node --test",
     "qa:perf": "node scripts/run-perf-qa.mjs",
     "qa:perf:parse": "node scripts/parse-perf-qa.mjs tmp/perf-qa-latest.json",
-    "verify": "npm run validate:assets && npm test && npm run build"
+    "verify": "npm run validate:assets:production && npm test && npm run build"
   },
   "dependencies": {
     "js-yaml": "4.3.0",

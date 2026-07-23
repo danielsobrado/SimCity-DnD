@@ -156,6 +156,7 @@ export class GpuTreeImpostorBatch {
     this.countUniform.value = count;
     this.transformBuffer.needsUpdate = true;
     this.parameterBuffer.needsUpdate = true;
+    return count;
   }
 
   updatePlanes(camera) {
@@ -174,7 +175,7 @@ export class GpuTreeImpostorBatch {
   }
 
   update(camera, origin) {
-    if (this.disposed) return 0;
+    if (this.disposed) return null;
     updateImpostorCameraUniforms(this.uniforms, camera);
     this.originUniform.value.set(origin.x, 0, origin.z);
     this.updatePlanes(camera);
@@ -191,7 +192,7 @@ export class GpuTreeImpostorBatch {
         this.computePending = null;
       });
     }
-    return this.recordCount;
+    return null;
   }
 
   dispose() {

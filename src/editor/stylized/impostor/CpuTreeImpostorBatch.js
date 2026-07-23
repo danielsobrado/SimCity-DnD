@@ -56,6 +56,7 @@ export class CpuTreeImpostorBatch {
 
   setRecords(records) {
     this.records = records.slice(0, this.capacity);
+    return this.records.length;
   }
 
   update(camera, origin) {

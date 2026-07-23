@@ -2,7 +2,9 @@
 
 ## Implementation status
 
-All planned phases are implemented in the renderer and asset pipeline.
+The renderer phases are implemented. Production release additionally requires a
+strictly validated offline tree-impostor manifest and atlas PNGs generated from
+the current source GLB.
 
 | Phase | Status | Delivered |
 |---|---|---|
@@ -10,7 +12,7 @@ All planned phases are implemented in the renderer and asset pipeline.
 | 1 — stable chunk manifests | Complete | Chunk-owned deterministic manifests, order-independent collision acceptance and local invalidation |
 | 2 — ground-cover optimization | Complete | Grass clumps, influence textures, sliced builds, density falloff, resource release and combined flower batches |
 | 3 — mesh LOD | Complete | Near meshes, simplified proxies, screen-space selection, hysteresis and dithered transitions |
-| 4 — impostors and canopy clusters | Complete | Multi-view albedo/normal tree atlases, runtime fallback baker, reproducible offline export and extreme-distance canopy clusters |
+| 4 — impostors and canopy clusters | Code complete; generated assets required | Multi-view albedo/normal atlases, runtime fallback baker, strict offline export, source compatibility checks and canopy clusters |
 | 5 — GPU-driven culling | Complete | WebGPU compute frustum compaction and indirect impostor draws with a CPU fallback |
 
 ## Representation ladder
@@ -27,20 +29,16 @@ Rocks use full meshes near the camera and reduced geometric proxies farther out.
 Grass and flowers use deterministic density falloff rather than object impostors.
 The terrain material carries procedural far-ground detail after geometry ends.
 
-Both orthographic editor zoom and perspective player distance are handled by the
-same projected-pixel policy. Previous and next representations overlap during a
-stable screen-door transition, so no transparency sorting is required.
+Both orthographic editor zoom and perspective player distance use the same
+projected-pixel policy. Previous and next representations overlap during a stable
+screen-door transition, so transparency sorting is not required.
 
 ## Stable placement
 
 Procedural trees and rocks use chunk-owned manifests. Every candidate has a
 stable identity and priority. A candidate survives only when no intersecting
-candidate has a lower priority. The result is independent of:
-
-- focus-window traversal order;
-- worker completion order;
-- LOD radius;
-- the direction from which a chunk is approached.
+candidate has a lower priority. The result is independent of focus-window
+traversal order, worker completion order, LOD radius and approach direction.
 
 A one-chunk halo resolves cross-boundary collisions, while only the target
 chunk's owned records are emitted. Near meshes, impostors and clusters therefore
@@ -57,12 +55,13 @@ The canonical production path is offline generation:
 
 ```bash
 npm run bake:impostors
-npm run validate:assets
+npm run validate:assets:production
 ```
 
-The baker starts the application in a headless Chromium-family browser, renders
-each tree prototype into an 8 × 2 atlas with dilated per-tile gutters, exports albedo/coverage and view-space
-normal textures, and writes:
+The baker starts the application in a headless Chromium-family browser using the
+WebGL backend for deterministic render-target readback. It renders each tree
+prototype into an 8 × 2 atlas, performs alpha-aware color dilation around the
+silhouette, exports albedo/coverage and view-space normal textures, and writes:
 
 ```text
 public/assets/impostors/trees/manifest.json
@@ -70,78 +69,71 @@ public/assets/impostors/trees/prototype-<index>-albedo.png
 public/assets/impostors/trees/prototype-<index>-normal.png
 ```
 
+Manifest version 2 contains a deterministic source signature derived from the
+current prototype geometry and tree/impostor configuration. Runtime loading
+rejects stale versions, mismatched source signatures, missing prototypes,
+non-contiguous prototype indices and invalid dimensions or paths. A rejected
+manifest is disposed and runtime baking or cross-card fallback takes over.
+
+Generated files are optional only for development. `npm run validate:assets`
+permits the runtime fallback. `npm run verify` and release CI use the strict
+production validator and fail when the generated assets are missing or stale.
+
+The production workflow is `.github/workflows/bake-tree-impostors.yml`. It bakes,
+runs the strict validator, tests and builds, uploads the generated files as an
+Actions artifact, and commits only successfully verified atlas files. The baker
+itself never changes Git state.
+
 Atlas lookup happens in the impostor shader. Camera direction is transformed by
-the stable per-tree yaw, and the four surrounding azimuth/elevation frames are blended
+the stable per-tree yaw, and the surrounding azimuth/elevation frames are blended
 without rebuilding instance records when the camera rotates. High camera angles
 blend toward spherical billboarding so the editor camera does not see edge-on
 cards.
 
-When generated files are absent, runtime baking is an explicit development
-fallback. It does not block initial mesh rendering. Opening the application with
-`?bakeImpostors=1` forces a fresh runtime bake even when an existing manifest is
-present, which keeps the offline command reproducible after source-art changes.
-
 ## GPU culling
 
-On the WebGPU backend, each impostor prototype owns:
+On the WebGPU backend, each impostor prototype owns source transform and parameter
+buffers, a compacted visible-index buffer, six frustum planes and an indirect draw
+buffer. A reset compute pass clears the indirect instance count and a culling pass
+populates visible indices without CPU readback.
 
-- source transform and parameter storage buffers;
-- a compacted visible-index storage buffer;
-- six uploaded frustum planes;
-- a five-word indirect draw buffer.
-
-A reset compute pass clears the indirect instance count. A culling pass tests
-each bounding sphere against the frustum, atomically reserves an output slot for
-visible instances, and writes the source index into the compacted buffer. The
-render then uses that indirect instance count. No visibility readback is used.
+Because the final indirect instance count remains GPU-resident, the QA counters
+do not claim a known GPU submitted count. They report requested, accepted and
+capacity-dropped records for both modes; CPU culling additionally reports the
+actual visible/submitted count.
 
 WebGL or unsupported WebGPU paths use CPU frustum culling with the same records
-and material. Performance counters distinguish source records from submitted
-instances and identify the active culling mode.
+and material.
 
 ## Grass and flowers
 
-Grass now stores clump transforms instead of one transform per blade. Multiple
-blade meshes are authored into the shared clump geometry, reducing instance
-attribute count and update traffic. Rock and placed-boulder interaction is
-rasterized into a small per-chunk RGBA influence texture containing bend
-direction and flattening strength. The grass shader samples that texture, so
-three trample floats are no longer duplicated for every instance.
+Grass stores clump transforms instead of one transform per blade. Rock and
+placed-boulder interaction is rasterized into a small per-chunk RGBA influence
+texture containing bend direction and flattening strength. The grass shader
+samples that texture instead of duplicating trample values for every instance.
 
 Grass builds are resumable and process a configured number of cells per slice.
 The previous same-chunk geometry remains visible while a replacement completes;
 stale geometry is hidden when a terrain slot changes ownership. Heavy resources
 are released after a configurable number of inactive frames.
 
-Flower variants are combined into side-by-side texture atlases and emitted by
-one slot per terrain chunk. The variant is an instance parameter, reducing the
-previous two draws per slot to one.
-
-## Configuration
-
-The active settings live in `editor.config.yaml` under:
-
-```text
-stylizedSurface.grass
-stylizedSurface.flowers
-stylizedSurface.groundCover
-stylizedSurface.lod.tree
-stylizedSurface.lod.rock
-stylizedSurface.lod.impostor
-stylizedSurface.lod.gpuCulling
-stylizedSurface.streaming
-```
-
-Configuration validation enforces ordered radii, descending pixel thresholds,
-valid transition durations, atlas dimensions, clump sizes and influence-texture
-sizes.
+Flower variants are combined into side-by-side texture atlases and emitted by one
+slot per terrain chunk.
 
 ## Verification
 
-Run the complete local gate:
+Run the production gate:
 
 ```bash
 npm run verify
+```
+
+For development without committed impostor assets, use:
+
+```bash
+npm run validate:assets
+npm test
+npm run build
 ```
 
 Then capture the movement battery:
@@ -154,7 +146,7 @@ npm run qa:perf -- --qa chunk-cross --warmup 2 --duration 20 --speed run
 npm run qa:perf:parse
 ```
 
-Inspect these gauges in the report:
+Inspect these gauges:
 
 ```text
 treeManifestBuilds
@@ -163,10 +155,15 @@ treeNearInstances
 treeProxyInstances
 treeImpostorInstances
 treeCanopyClusters
-treeImpostorRecords.cpu
-treeImpostorRecords.gpu
+treeImpostorRecordsRequested.cpu
+treeImpostorRecordsRequested.gpu
+treeImpostorRecordsAccepted.cpu
+treeImpostorRecordsAccepted.gpu
+treeImpostorRecordsDropped.cpu
+treeImpostorRecordsDropped.gpu
+treeImpostorSubmittedKnown.cpu
+treeImpostorSubmittedKnown.gpu
 treeImpostorSubmitted.cpu
-treeImpostorSubmitted.gpu
 treeImpostorAtlasBytes
 grassLastChunkClumps
 grassLastChunkEffectiveBlades
@@ -183,5 +180,5 @@ rendererTextures
 
 Acceptance requires stable manifests across approach directions, no unrelated
 world-edit rebuilds, no stale slot geometry, bounded near-mesh counts, successful
-asset validation, zero WebGPU validation errors and no chunk-cross regression in
-frame-time percentiles.
+strict asset validation, zero WebGPU validation errors and no chunk-cross
+regression in frame-time percentiles.
