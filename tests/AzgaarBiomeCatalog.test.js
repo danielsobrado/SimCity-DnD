@@ -27,8 +27,9 @@ test('defines all 13 standard Azgaar biomes as distinct terrain types', () => {
   assert.deepEqual(AZGAAR_STANDARD_BIOMES.map((biome) => biome.sourceId), [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
   ]);
-  assert.equal(new Set(AZGAAR_STANDARD_BIOMES.map((biome) => biome.tileId)).size, 13);
-  assert.equal(AZGAAR_STANDARD_BIOMES[0].tileId, 2);
+  assert.deepEqual(AZGAAR_STANDARD_BIOMES.map((biome) => biome.tileId), [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+  ]);
 });
 
 test('preserves exported standard colors and allocates deterministic custom biome ids', () => {

@@ -60,9 +60,9 @@ const metadata = {
 
 test('macro generation is deterministic and respects ocean bounds', () => {
   const generator = new AzgaarMacroWorldGenerator(createSource(), metadata);
-  assert.equal(generator.sampleTile(-7, 0), 2);
-  assert.notEqual(generator.sampleTile(0, 0), 2);
-  assert.equal(generator.sampleTile(20, 0), 2);
+  assert.equal(generator.sampleTile(-7, 0), 0);
+  assert.notEqual(generator.sampleTile(0, 0), 0);
+  assert.equal(generator.sampleTile(20, 0), 0);
   assert.ok(generator.sampleHeight(20, 0) <= generator.sampleHeight(8, 0));
   assert.equal(generator.sampleHeight(0, 0), generator.sampleHeight(0, 0));
 });
@@ -111,8 +111,75 @@ test('river vectors become local water channels without rasterizing the world', 
     points: [[1, 0], [1, 2]],
   }];
   const generator = new AzgaarMacroWorldGenerator(source, metadata);
-  assert.equal(generator.sampleTile(-4, 0), 2);
-  assert.notEqual(generator.sampleTile(0, 0), 2);
+  assert.equal(generator.sampleTile(-4, 0), 0);
+  assert.notEqual(generator.sampleTile(0, 0), 0);
+});
+
+test('all standard Azgaar biome ids remain distinct regardless of mountain elevation', () => {
+  const width = 13;
+  const source = createSource();
+  source.atlas = {
+    width,
+    height: 1,
+    ...createMacroAtlasPayload({
+      heights: Uint8Array.from([
+        5, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 90, 40,
+      ]),
+      biomes: Uint8Array.from(Array.from({ length: width }, (_, index) => index)),
+      features: new Uint16Array(width),
+    }),
+  };
+  source.bounds = {
+    minCellX: 0,
+    minCellZ: 0,
+    widthCells: width,
+    heightCells: 1,
+  };
+
+  const generator = new AzgaarMacroWorldGenerator(source, metadata);
+  const tileIds = Array.from({ length: width }, (_, x) => generator.sampleTile(x, 0));
+  assert.deepEqual(tileIds, source.biomes.map((biome) => biome.tileId));
+  assert.equal(new Set(tileIds).size, 13);
+});
+
+test('custom Azgaar biome tiles retain their exported render color', () => {
+  const source = createSource();
+  source.biomes = createAzgaarBiomeDefinitions({
+    name: [
+      'Marine', 'Hot desert', 'Cold desert', 'Savanna', 'Grassland',
+      'Tropical seasonal forest', 'Temperate deciduous forest', 'Tropical rainforest',
+      'Temperate rainforest', 'Taiga', 'Tundra', 'Glacier', 'Wetland',
+      'Crystal barrens',
+    ],
+    color: Array.from({ length: 14 }, (_, index) => (
+      index === 13 ? '#7f5ac6' : undefined
+    )),
+  });
+  source.atlas = {
+    width: 1,
+    height: 1,
+    ...createMacroAtlasPayload({
+      heights: Uint8Array.of(40),
+      biomes: Uint8Array.of(13),
+      features: Uint16Array.of(1),
+    }),
+  };
+  source.bounds = {
+    minCellX: 0,
+    minCellZ: 0,
+    widthCells: 4,
+    heightCells: 4,
+  };
+
+  const chunk = generateBaseWorldChunk({
+    chunkX: 0,
+    chunkZ: 0,
+    chunkSize: 4,
+    generator: metadata,
+    baseTerrain: source,
+  });
+  assert.deepEqual([...chunk.tiles], Array(16).fill(32));
+  assert.deepEqual([...chunk.tilePixels.slice(0, 4)], [127, 90, 198, 32]);
 });
 
 test('all standard Azgaar biome ids remain distinct regardless of mountain elevation', () => {

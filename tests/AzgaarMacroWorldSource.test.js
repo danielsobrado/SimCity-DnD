@@ -95,7 +95,7 @@ test('encodes a portable macro atlas with height, biome, feature, and river data
   assert.equal(source.rivers.length, 1);
   assert.equal(source.biomes.length, 14);
   assert.equal(source.biomes[0].name, 'Marine');
-  assert.equal(source.biomes[0].tileId, 2);
+  assert.equal(source.biomes[0].tileId, 0);
   assert.equal(source.biomes[12].name, 'Wetland');
   assert.deepEqual(
     source.biomes[13],
