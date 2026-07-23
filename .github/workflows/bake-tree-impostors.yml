@@ -32,42 +32,108 @@ jobs:
           node-version: '22.16.0'
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        id: install
+        continue-on-error: true
+        run: npm install --no-audit --no-fund 2>&1 | tee /tmp/impostor-install.log
 
       - name: Locate Chromium
+        id: browser
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
           if [[ -z "$browser" ]]; then
-            echo "No Chromium-family browser is installed on the runner." >&2
+            echo "No Chromium-family browser is installed on the runner." | tee /tmp/impostor-browser.log >&2
             exit 1
           fi
           echo "CHROME_PATH=$browser" >> "$GITHUB_ENV"
-          "$browser" --version
+          "$browser" --version | tee /tmp/impostor-browser.log
 
       - name: Bake offline impostor atlases
-        run: npm run bake:impostors
+        id: bake
+        continue-on-error: true
+        run: npm run bake:impostors 2>&1 | tee /tmp/impostor-bake.log
 
       - name: Validate generated assets
-        run: |
-          test -f public/assets/impostors/trees/manifest.json
-          npm run validate:assets
-          npm test
-          npm run build
-
-      - name: Commit generated atlases
+        id: verify
+        continue-on-error: true
         shell: bash
         run: |
+          set -o pipefail
+          {
+            test -f public/assets/impostors/trees/manifest.json
+            npm run validate:assets
+            npm test
+            npm run build
+          } 2>&1 | tee /tmp/impostor-verify.log
+
+      - name: Commit assets and bake report
+        if: always()
+        shell: bash
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+          BAKE_OUTCOME: ${{ steps.bake.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        run: |
           set -euo pipefail
+          mkdir -p docs/qa public/assets/impostors/trees
+          generated_count="$(find public/assets/impostors/trees -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          cat > docs/qa/offline-impostor-bake-status.md <<EOF
+          # Offline tree impostor bake
+
+          - Run: ${GITHUB_RUN_ID}
+          - Source commit: ${GITHUB_SHA}
+          - Install: ${INSTALL_OUTCOME}
+          - Browser: ${BROWSER_OUTCOME}
+          - Bake: ${BAKE_OUTCOME}
+          - Verify: ${VERIFY_OUTCOME}
+          - Generated files: ${generated_count}
+
+          ## Install log
+
+          \`\`\`
+          $(tail -n 80 /tmp/impostor-install.log 2>/dev/null || true)
+          \`\`\`
+
+          ## Browser log
+
+          \`\`\`
+          $(cat /tmp/impostor-browser.log 2>/dev/null || true)
+          \`\`\`
+
+          ## Bake log
+
+          \`\`\`
+          $(tail -n 160 /tmp/impostor-bake.log 2>/dev/null || true)
+          \`\`\`
+
+          ## Verification log
+
+          \`\`\`
+          $(tail -n 160 /tmp/impostor-verify.log 2>/dev/null || true)
+          \`\`\`
+          EOF
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/assets/impostors/trees/manifest.json
-          git add public/assets/impostors/trees/*.png
-          if git diff --cached --quiet; then
-            echo "Offline tree impostor assets are already current."
-            exit 0
-          fi
-          git commit -m "Add offline tree impostor atlases"
+          git add -A -- docs/qa/offline-impostor-bake-status.md public/assets/impostors/trees
+          git commit -m "Record offline tree impostor bake"
           git pull --rebase origin main
           git push origin HEAD:main
+
+      - name: Enforce successful production bake
+        if: always()
+        shell: bash
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+          BAKE_OUTCOME: ${{ steps.bake.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        run: |
+          set -euo pipefail
+          [[ "$INSTALL_OUTCOME" == "success" ]]
+          [[ "$BROWSER_OUTCOME" == "success" ]]
+          [[ "$BAKE_OUTCOME" == "success" ]]
+          [[ "$VERIFY_OUTCOME" == "success" ]]
