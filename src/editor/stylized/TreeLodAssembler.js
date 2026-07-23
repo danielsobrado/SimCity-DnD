@@ -124,9 +124,7 @@ export function rebuildTreeLod({
           fade: representation.fade,
           seed,
         };
-        const target = representation.band === 'near'
-          ? near
-          : representation.band === 'proxy' ? proxy : fallback;
+        const target = representation.band === 'near' ? near : proxy;
         target[placement.prototypeIndex].push(instance);
       }
     }
