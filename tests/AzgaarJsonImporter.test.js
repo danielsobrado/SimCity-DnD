@@ -10,7 +10,10 @@ import { ProceduralWorldGenerator } from '../src/editor/world/ProceduralWorldGen
 function createConfig() {
   return {
     map: { tileSize: 2 },
-    import: { azgaarTargetWidth: 4, azgaarTargetHeight: 4 },
+    import: {
+      azgaarAtlasLongEdge: 4,
+      azgaarOceanTransitionKilometers: 50,
+    },
     world: {
       seed: 918273,
       generatorVersion: 1,
@@ -74,12 +77,15 @@ test('detects Azgaar Full JSON documents', () => {
   assert.equal(isAzgaarFullJson({ info: {}, grid: { cells: [] } }), false);
 });
 
-test('converts Azgaar terrain into centered native chunks', () => {
+test('converts Azgaar terrain into a portable streamed macro source', () => {
   const config = createConfig();
   const converted = importAzgaarFullJson(createAzgaarDocument(), config);
   assert.equal(converted.version, 6);
   assert.equal(converted.world.chunkSize, 2);
-  assert.ok(converted.chunks.length > 0);
+  assert.equal(converted.chunks.length, 0);
+  assert.equal(converted.world.baseTerrain.kind, 'azgaar-macro-v1');
+  assert.equal(converted.world.baseTerrain.atlas.width, 4);
+  assert.equal(converted.world.baseTerrain.atlas.height, 4);
   assert.equal(converted.objects.length, 0);
   assert.equal(converted.campaign.source.mapName, 'Test Realm');
   assert.equal(converted.campaign.states[0].name, 'Northreach');
@@ -95,12 +101,9 @@ test('converts Azgaar terrain into centered native chunks', () => {
   });
   store.loadDocument(converted);
 
-  assert.equal(store.getTile(-2, -2), 2);
-  assert.equal(store.getTile(1, -2), 1);
-  assert.equal(store.getTile(-2, 1), 5);
-  assert.equal(store.getTile(1, 1), 7);
-  assert.ok(store.getHeight(-2, -2) < 0);
-  assert.ok(store.getHeight(-2, 2) > 30);
+  assert.equal(store.getStats().tileOverrideCount, 0);
+  assert.equal(store.getStats().heightOverrideCount, 0);
+  assert.equal(store.toDocument().world.baseTerrain.kind, 'azgaar-macro-v1');
 });
 
 test('rejects minimal or unrelated JSON exports', () => {
