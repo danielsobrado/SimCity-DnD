@@ -441,11 +441,13 @@ export class InfiniteWorldStore {
   loadDocument(document) {
     const previous = this.createSnapshot();
     try {
-      if (document?.version === INFINITE_WORLD_FORMAT_VERSION) {
-        this.loadInfiniteDocument(document);
-      } else {
-        this.loadLegacyDocument(document);
+      if (document?.version !== INFINITE_WORLD_FORMAT_VERSION) {
+        throw new Error(
+          'This file uses an older dense map format that is no longer supported. '
+          + 'Use a current infinite-world save, or import Azgaar Full JSON.',
+        );
       }
+      this.loadInfiniteDocument(document);
       this.cache.clear();
       this.emit({ kind: 'reset' });
     } catch (error) {
@@ -484,45 +486,6 @@ export class InfiniteWorldStore {
         const localX = index % this.vertexSize;
         const localZ = Math.floor(index / this.vertexSize);
         heightOverrides.set(cellKey(chunk.x * this.chunkSize + localX, chunk.z * this.chunkSize + localZ), value);
-      }
-    }
-    this.tileOverrides = tileOverrides;
-    this.heightOverrides = heightOverrides;
-  }
-
-  loadLegacyDocument(document) {
-    if (!document || !Number.isInteger(document.width) || !Number.isInteger(document.height) || !Array.isArray(document.tiles)) {
-      throw new Error('The selected file is not a supported native world document.');
-    }
-    if (document.tiles.length !== document.width * document.height) {
-      throw new Error('Legacy map tile payload has an invalid size.');
-    }
-    const offsetX = -Math.floor(document.width / 2);
-    const offsetZ = -Math.floor(document.height / 2);
-    const tileOverrides = new Map();
-    for (let index = 0; index < document.tiles.length; index += 1) {
-      const localX = index % document.width;
-      const localZ = Math.floor(index / document.width);
-      const worldX = offsetX + localX;
-      const worldZ = offsetZ + localZ;
-      const tileId = document.tiles[index];
-      if (tileId !== this.generator.sampleTile(worldX, worldZ)) {
-        tileOverrides.set(cellKey(worldX, worldZ), tileId);
-      }
-    }
-
-    const heightOverrides = new Map();
-    const legacyHeightfield = document.heightfield;
-    if (legacyHeightfield?.values) {
-      const vertexWidth = document.width + 1;
-      for (const [index, value] of legacyHeightfield.values) {
-        const localX = index % vertexWidth;
-        const localZ = Math.floor(index / vertexWidth);
-        const worldX = offsetX + localX;
-        const worldZ = offsetZ + localZ;
-        if (Math.abs(value - this.generator.sampleHeight(worldX, worldZ)) > WORLD_HEIGHT_EPSILON) {
-          heightOverrides.set(cellKey(worldX, worldZ), value);
-        }
       }
     }
     this.tileOverrides = tileOverrides;

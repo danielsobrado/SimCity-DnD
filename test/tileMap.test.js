@@ -28,7 +28,7 @@ test('fill skips tiles that already have the requested value', () => {
   assert.deepEqual(Array.from(map.tiles), new Array(6).fill(1));
 });
 
-test('documents round-trip with dimension and version checks', () => {
+test('documents round-trip with dimension checks', () => {
   const source = new TileMap({ width: 2, height: 2, tileSize: 2, defaultTileId: 0 });
   source.paintSquare(1, 1, 1, 4);
 

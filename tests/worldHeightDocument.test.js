@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { HeightField } from '../src/editor/HeightField.js';
-import { TileMap } from '../src/editor/TileMap.js';
+import { ChunkedHeightField } from '../src/editor/world/ChunkedHeightField.js';
+import { ChunkedTileMap } from '../src/editor/world/ChunkedTileMap.js';
+import { InfiniteWorldStore } from '../src/editor/world/InfiniteWorldStore.js';
+import { ProceduralWorldGenerator } from '../src/editor/world/ProceduralWorldGenerator.js';
+import { INFINITE_WORLD_FORMAT_VERSION } from '../src/editor/world/worldConstants.js';
 import { createWorldDocument, loadWorldDocument } from '../src/editor/WorldDocument.js';
 
 class ObjectMapStub {
@@ -26,63 +29,77 @@ class ObjectMapStub {
 }
 
 function createModels() {
+  const worldStore = new InfiniteWorldStore({
+    chunkSize: 4,
+    tileSize: 2,
+    cacheLimit: 16,
+    generator: new ProceduralWorldGenerator({ seed: 42 }),
+  });
+  const tileMap = new ChunkedTileMap({ worldStore, defaultTileId: 0 });
   return {
-    tileMap: new TileMap({ width: 4, height: 4, tileSize: 2, defaultTileId: 0 }),
-    heightField: new HeightField({ width: 4, height: 4 }),
+    worldStore,
+    tileMap,
+    heightField: new ChunkedHeightField({ worldStore }),
     objectMap: new ObjectMapStub(),
   };
 }
 
-test('world documents include sparse heightfield state', () => {
+test('world documents include sparse height overrides', () => {
   const source = createModels();
   source.tileMap.paintSquare(1, 1, 1, 2);
-  source.heightField.heights[source.heightField.indexOf(2, 2)] = 3.5;
+  source.worldStore.setHeight(2, 2, 3.5);
   source.objectMap.objects = [{ id: 1, definitionKey: 'tree', x: 0, z: 0, rotation: 0 }];
 
   const document = createWorldDocument(source.tileMap, source.heightField, source.objectMap);
+  assert.equal(document.version, INFINITE_WORLD_FORMAT_VERSION);
+
   const target = createModels();
   loadWorldDocument(document, target.tileMap, target.heightField, target.objectMap);
 
-  assert.deepEqual(Array.from(target.tileMap.tiles), Array.from(source.tileMap.tiles));
-  assert.deepEqual(Array.from(target.heightField.heights), Array.from(source.heightField.heights));
+  assert.equal(target.worldStore.getTile(1, 1), 2);
+  assert.equal(target.worldStore.getHeight(2, 2), 3.5);
   assert.deepEqual(target.objectMap.objects, source.objectMap.objects);
 });
 
-test('version two worlds load with a flat heightfield', () => {
+test('older dense native documents are rejected', () => {
   const target = createModels();
-  target.heightField.heights.fill(5);
-  loadWorldDocument({
-    version: 2,
-    width: 4,
-    height: 4,
-    tileSize: 2,
-    tiles: Array(16).fill(0),
-    objects: [],
-  }, target.tileMap, target.heightField, target.objectMap);
-
-  assert.ok(target.heightField.heights.every((value) => value === 0));
+  assert.throws(
+    () => loadWorldDocument({
+      version: 2,
+      width: 4,
+      height: 4,
+      tileSize: 2,
+      tiles: Array(16).fill(0),
+      objects: [],
+    }, target.tileMap, target.heightField, target.objectMap),
+    /older dense map format/,
+  );
 });
 
-test('failed heightfield loading restores all world models', () => {
+test('failed infinite load restores all world models', () => {
   const target = createModels();
   target.tileMap.paintSquare(0, 0, 1, 3);
-  target.heightField.heights[target.heightField.indexOf(1, 1)] = 2;
+  target.worldStore.setHeight(1, 1, 2);
   target.objectMap.objects = [{ id: 7 }];
-  const previousTiles = Array.from(target.tileMap.tiles);
-  const previousHeights = Array.from(target.heightField.heights);
+  const previousTile = target.worldStore.getTile(0, 0);
+  const previousHeight = target.worldStore.getHeight(1, 1);
   const previousObjects = target.objectMap.toDocument();
 
-  assert.throws(() => loadWorldDocument({
-    version: 3,
-    width: 4,
-    height: 4,
-    tileSize: 2,
-    tiles: Array(16).fill(1),
-    heightfield: { width: 99, height: 99, values: [] },
-    objects: [],
-  }, target.tileMap, target.heightField, target.objectMap), /Heightfield dimensions/);
+  assert.throws(
+    () => loadWorldDocument({
+      version: INFINITE_WORLD_FORMAT_VERSION,
+      world: {
+        chunkSize: 99,
+        tileSize: 2,
+        generator: target.worldStore.generator.toMetadata(),
+      },
+      chunks: [],
+      objects: [],
+    }, target.tileMap, target.heightField, target.objectMap),
+    /chunk or tile size does not match/,
+  );
 
-  assert.deepEqual(Array.from(target.tileMap.tiles), previousTiles);
-  assert.deepEqual(Array.from(target.heightField.heights), previousHeights);
+  assert.equal(target.worldStore.getTile(0, 0), previousTile);
+  assert.equal(target.worldStore.getHeight(1, 1), previousHeight);
   assert.deepEqual(target.objectMap.objects, previousObjects);
 });

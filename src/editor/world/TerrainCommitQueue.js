@@ -4,7 +4,10 @@
  */
 
 export const TERRAIN_MAX_COMMITS_PER_FRAME = 1;
+export const TERRAIN_MAX_COMMITS_PER_FRAME_IDLE = 4;
 export const TERRAIN_COMMIT_BUDGET_MS = 2;
+// Focus speed (world units/sec) below which the player counts as stationary.
+export const TERRAIN_MOVING_SPEED_EPSILON = 0.5;
 
 export function createTerrainCommitJob({
   slot,

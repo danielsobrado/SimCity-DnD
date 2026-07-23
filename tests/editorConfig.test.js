@@ -5,10 +5,12 @@ import { validateEditorConfig } from '../src/config/validateEditorConfig.js';
 function createValidConfig() {
   return {
     map: {
-      width: 512,
-      height: 512,
       tileSize: 2,
       chunkSize: 32,
+    },
+    import: {
+      azgaarTargetWidth: 512,
+      azgaarTargetHeight: 512,
     },
     world: {
       seed: 918273,
@@ -64,13 +66,13 @@ test('accepts positive nested map, world, camera, player, renderer, and terrain 
   assert.equal(validateEditorConfig(config), config);
 });
 
-test('reads map.width through nested object paths', () => {
+test('reads import.azgaarTargetWidth through nested object paths', () => {
   const config = createValidConfig();
-  config.map.width = 0;
+  config.import.azgaarTargetWidth = 0;
 
   assert.throws(
     () => validateEditorConfig(config),
-    /map\.width must be positive/,
+    /import\.azgaarTargetWidth must be positive/,
   );
 });
 

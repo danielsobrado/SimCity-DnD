@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createVoxelChunkLayout } from '../src/editor/voxel/VoxelChunkLayout.js';
 
-const MAP_CONFIG = Object.freeze({ width: 512, height: 512, tileSize: 2 });
+const MAP_CONFIG = Object.freeze({ tileSize: 2 });
 
 function createConfig() {
   return {

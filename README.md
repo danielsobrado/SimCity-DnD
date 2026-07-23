@@ -17,9 +17,9 @@ The editor now runs on an effectively unbounded logical world rather than one fi
 - Floating-origin rebasing for long-distance precision.
 - Sparse terrain, height, object, campaign, and voxel persistence.
 - Dense binary encoding for fully modified or imported chunks.
-- IndexedDB browser saves with legacy localStorage loading.
-- Automatic migration of native map versions 1 through 5.
-- Azgaar Fantasy Map Generator Full JSON import.
+- IndexedDB browser saves (localStorage is still read as a fallback for older browser saves).
+- Native saves use infinite-world document version 6 only.
+- Azgaar Fantasy Map Generator Full JSON import into the infinite streamed world.
 - Camera-driven GPU marching-cubes voxel streaming with no geometry readbacks.
 - Selectable Edit / Orbit and first-person Player modes.
 - Terrain painting, raise, lower, and smooth brushes.
@@ -82,13 +82,15 @@ Native document version 6 stores:
 
 Sparse chunks use index/value pairs. Dense imported or heavily modified chunks use base64 little-endian binary payloads with explicit empty sentinels.
 
-Browser saves use IndexedDB. Existing localStorage saves and native versions 1–5 remain loadable. Old finite maps are centered around global cell `(0, 0)` during migration, including their implicit flat height vertices.
+Browser saves use IndexedDB. Native documents must be version 6 (infinite world). Older dense map formats (versions 1–5) are no longer loadable — re-export from a current session or import Azgaar Full JSON.
 
 ## Azgaar import
 
 Use **Import** and select an Azgaar **Full JSON** export.
 
-The conversion runs in a worker and imports:
+The conversion runs in a worker and writes a **version 6 infinite-world document**: sparse chunk overrides for a raster sized by `import.azgaarTargetWidth` × `import.azgaarTargetHeight` in `editor.config.yaml`. That painted region can be large; the playable world stays infinite and streamed (only resident GPU chunks + stored overrides cost memory).
+
+The conversion imports:
 
 - Elevation into the shared heightfield.
 - Land, ocean, forest, desert, wetland, snow, and rocky terrain classes.
@@ -101,7 +103,7 @@ The conversion runs in a worker and imports:
 
 Political, settlement, river, route, marker, and note records are preserved as campaign metadata. Exact Voronoi cells, labels, heraldry, and Azgaar visual styling are not yet rendered as native overlays.
 
-The imported area occupies a finite region centered on the world origin. Procedural terrain continues outside it. Direct Azgaar `.map` files are not supported; export Full JSON from Azgaar first.
+The imported area occupies a finite painted region centered on the world origin. Procedural terrain and streaming continue outside it. Direct Azgaar `.map` files are not supported; export Full JSON from Azgaar first.
 
 ## Camera modes
 

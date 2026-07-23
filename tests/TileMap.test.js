@@ -26,7 +26,7 @@ test('paintSquare respects protected cells', () => {
   assert.equal(map.get(1, 1), 0);
 });
 
-test('documents round-trip with dimension and version checks', () => {
+test('documents round-trip with dimension checks', () => {
   const source = new TileMap({ width: 2, height: 2, tileSize: 2, defaultTileId: 0 });
   source.paintSquare(1, 1, 1, 4);
 

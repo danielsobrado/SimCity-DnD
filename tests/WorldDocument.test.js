@@ -1,27 +1,36 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { HeightField } from '../src/editor/HeightField.js';
 import { ObjectMap } from '../src/editor/ObjectMap.js';
-import { TileMap } from '../src/editor/TileMap.js';
 import { VoxelStampStore } from '../src/editor/voxel/VoxelStampStore.js';
+import { ChunkedHeightField } from '../src/editor/world/ChunkedHeightField.js';
+import { ChunkedTileMap } from '../src/editor/world/ChunkedTileMap.js';
+import { InfiniteWorldStore } from '../src/editor/world/InfiniteWorldStore.js';
+import { ProceduralWorldGenerator } from '../src/editor/world/ProceduralWorldGenerator.js';
+import { INFINITE_WORLD_FORMAT_VERSION } from '../src/editor/world/worldConstants.js';
 import { createWorldDocument, loadWorldDocument } from '../src/editor/WorldDocument.js';
 
 const catalog = [{
   key: 'tree',
   label: 'Tree',
   footprint: { width: 1, depth: 1 },
-  allowedTileIds: [0],
+  allowedTileIds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
 }];
 
 function createWorld() {
-  const tileMap = new TileMap({ width: 4, height: 4, tileSize: 2, defaultTileId: 0 });
+  const worldStore = new InfiniteWorldStore({
+    chunkSize: 4,
+    tileSize: 2,
+    cacheLimit: 16,
+    generator: new ProceduralWorldGenerator({ seed: 42 }),
+  });
+  const tileMap = new ChunkedTileMap({ worldStore, defaultTileId: 0 });
   return {
+    worldStore,
     tileMap,
-    heightField: new HeightField({ width: 4, height: 4 }),
+    heightField: new ChunkedHeightField({ worldStore }),
     objectMap: new ObjectMap({ tileMap, objectCatalog: catalog }),
     voxelStampStore: new VoxelStampStore({
       cells: [16, 8, 16],
-      legacyCells: [8, 8, 8],
       maxStamps: 8,
     }),
   };
@@ -59,6 +68,7 @@ test('world documents preserve terrain, objects, heights, voxel metadata, and st
     source.objectMap,
     source.voxelStampStore,
   );
+  assert.equal(document.version, INFINITE_WORLD_FORMAT_VERSION);
   assert.deepEqual(document.voxelWorld, { cells: [16, 8, 16] });
 
   const target = createWorld();
@@ -70,55 +80,24 @@ test('world documents preserve terrain, objects, heights, voxel metadata, and st
     target.voxelStampStore,
   );
 
-  assert.deepEqual(Array.from(target.tileMap.tiles), Array.from(source.tileMap.tiles));
-  assert.deepEqual(Array.from(target.heightField.heights), Array.from(source.heightField.heights));
+  assert.equal(target.worldStore.getTile(0, 0), 1);
+  assert.equal(target.worldStore.getHeight(1, 1), source.worldStore.getHeight(1, 1));
   assert.deepEqual(target.objectMap.toDocument(), source.objectMap.toDocument());
   assert.deepEqual(target.voxelStampStore.toDocument(), source.voxelStampStore.toDocument());
 });
 
-test('version 4 single-chunk stamps migrate to the center of the voxel world', () => {
+test('older dense native documents are rejected', () => {
   const target = createWorld();
-  const document = createWorldDocument(
-    target.tileMap,
-    target.heightField,
-    target.objectMap,
-    target.voxelStampStore,
+  assert.throws(
+    () => loadWorldDocument({
+      version: 5,
+      width: 4,
+      height: 4,
+      tileSize: 2,
+      tiles: new Array(16).fill(0),
+    }, target.tileMap, target.heightField, target.objectMap, target.voxelStampStore),
+    /older dense map format/,
   );
-  document.version = 4;
-  delete document.voxelWorld;
-  document.voxelStamps = [{
-    id: 1,
-    operation: 'subtract',
-    center: [4, 4, 4],
-    radius: 2,
-    strength: 0.8,
-    smoothness: 0.5,
-  }];
-
-  loadWorldDocument(
-    document,
-    target.tileMap,
-    target.heightField,
-    target.objectMap,
-    target.voxelStampStore,
-  );
-  assert.deepEqual(target.voxelStampStore.toDocument()[0].center, [8, 4, 8]);
-});
-
-test('legacy terrain-only documents load with empty object and voxel layers', () => {
-  const target = createWorld();
-  target.objectMap.place({ definitionKey: 'tree', x: 2, z: 2, rotation: 0 });
-  target.voxelStampStore.add(createStamp());
-  loadWorldDocument({
-    version: 1,
-    width: 4,
-    height: 4,
-    tileSize: 2,
-    tiles: new Array(16).fill(0),
-  }, target.tileMap, target.heightField, target.objectMap, target.voxelStampStore);
-
-  assert.equal(target.objectMap.size, 0);
-  assert.equal(target.voxelStampStore.size, 0);
 });
 
 test('invalid voxel stamps restore the previous world transactionally', () => {

@@ -1,5 +1,7 @@
-import { MAP_FORMAT_VERSION, SUPPORTED_MAP_FORMAT_VERSIONS } from './constants.js';
-
+/**
+ * Dense finite tile grid used only as a small unit-test / paint-math harness.
+ * Live worlds use ChunkedTileMap + InfiniteWorldStore (document version 6).
+ */
 export class TileMap {
   constructor({ width, height, tileSize, defaultTileId }) {
     this.width = width;
@@ -95,21 +97,17 @@ export class TileMap {
     this.tiles.set(tileValues);
   }
 
+  /** In-memory snapshot for harness tests — not a native world document. */
   toDocument() {
     return {
-      version: MAP_FORMAT_VERSION,
       width: this.width,
       height: this.height,
       tileSize: this.tileSize,
       tiles: Array.from(this.tiles),
-      savedAt: new Date().toISOString(),
     };
   }
 
   loadDocument(document) {
-    if (!SUPPORTED_MAP_FORMAT_VERSIONS.includes(document?.version)) {
-      throw new Error(`Unsupported map version: ${document?.version ?? 'missing'}.`);
-    }
     if (document.width !== this.width || document.height !== this.height) {
       throw new Error(`Map dimensions must be ${this.width} × ${this.height}.`);
     }

@@ -157,66 +157,40 @@ export class TerrainAwareEditorController extends EditorController {
   }
 
   clearWorld() {
-    if (this.worldStore) {
-      const beforeWorld = this.worldStore.createSnapshot();
-      const beforeObjects = this.objectMap.clear();
-      const beforeVoxelStamps = this.voxelStampStore?.clear() ?? [];
-      const beforeCampaign = cloneCampaign(this.campaign);
-      const beforeImportWarnings = [...this.importWarnings];
-      if (beforeWorld.tileOverrides.length === 0
-          && beforeWorld.heightOverrides.length === 0
-          && beforeObjects.length === 0
-          && beforeVoxelStamps.length === 0
-          && !beforeCampaign) {
-        return;
-      }
-      this.worldStore.clearOverrides();
-      this.campaign = null;
-      this.importWarnings = [];
-      const afterWorld = this.worldStore.createSnapshot();
-      this.commitHistory({
-        kind: 'infinite-world',
-        beforeWorld,
-        afterWorld,
-        beforeObjects,
-        afterObjects: [],
-        beforeVoxelStamps,
-        afterVoxelStamps: [],
-        beforeCampaign,
-        afterCampaign: null,
-        beforeImportWarnings,
-        afterImportWarnings: [],
-      });
-      this.setSelectedObject(null);
-      this.terrainView.refreshAll();
-      this.refreshObjects();
-      this.emitMap();
-      return;
+    if (!this.worldStore) {
+      throw new Error('Clearing the world requires an infinite world store.');
     }
-
+    const beforeWorld = this.worldStore.createSnapshot();
     const beforeObjects = this.objectMap.clear();
-    const terrainPatch = this.tileMap.fill(0);
-    const heightPatch = this.heightField.fill(0);
     const beforeVoxelStamps = this.voxelStampStore?.clear() ?? [];
-    if (beforeObjects.length === 0
-        && terrainPatch.indices.length === 0
-        && heightPatch.indices.length === 0
-        && beforeVoxelStamps.length === 0) {
+    const beforeCampaign = cloneCampaign(this.campaign);
+    const beforeImportWarnings = [...this.importWarnings];
+    if (beforeWorld.tileOverrides.length === 0
+        && beforeWorld.heightOverrides.length === 0
+        && beforeObjects.length === 0
+        && beforeVoxelStamps.length === 0
+        && !beforeCampaign) {
       return;
     }
-
+    this.worldStore.clearOverrides();
+    this.campaign = null;
+    this.importWarnings = [];
+    const afterWorld = this.worldStore.createSnapshot();
     this.commitHistory({
-      kind: 'world',
-      terrainPatch,
-      heightPatch,
+      kind: 'infinite-world',
+      beforeWorld,
+      afterWorld,
       beforeObjects,
       afterObjects: [],
       beforeVoxelStamps,
       afterVoxelStamps: [],
+      beforeCampaign,
+      afterCampaign: null,
+      beforeImportWarnings,
+      afterImportWarnings: [],
     });
     this.setSelectedObject(null);
-    this.terrainView.updatePatch(terrainPatch);
-    this.terrainView.updateHeightPatch(heightPatch);
+    this.terrainView.refreshAll();
     this.refreshObjects();
     this.emitMap();
   }

@@ -1,4 +1,3 @@
-import { VOXEL_STAMP_MAP_FORMAT_VERSION } from './constants.js';
 import { INFINITE_WORLD_FORMAT_VERSION } from './world/worldConstants.js';
 
 function resolveWorldModels(heightFieldOrObjectMap, objectMap, voxelStampStore) {
@@ -20,17 +19,13 @@ function resolveWorldStore(tileMap, heightField) {
   return tileMap?.worldStore ?? heightField?.worldStore ?? null;
 }
 
-function migrateLegacyObjects(document, objects) {
-  if (document?.version === INFINITE_WORLD_FORMAT_VERSION || !Array.isArray(objects)) {
-    return objects ?? [];
+function assertInfiniteWorldDocument(document) {
+  if (document?.version !== INFINITE_WORLD_FORMAT_VERSION) {
+    throw new Error(
+      'This file uses an older dense map format that is no longer supported. '
+      + 'Use a current infinite-world save, or import Azgaar Full JSON.',
+    );
   }
-  const offsetX = Number.isInteger(document.width) ? -Math.floor(document.width / 2) : 0;
-  const offsetZ = Number.isInteger(document.height) ? -Math.floor(document.height / 2) : 0;
-  return objects.map((object) => ({
-    ...object,
-    x: object.x + offsetX,
-    z: object.z + offsetZ,
-  }));
 }
 
 export function createWorldDocument(
@@ -41,14 +36,11 @@ export function createWorldDocument(
 ) {
   const models = resolveWorldModels(heightFieldOrObjectMap, objectMap, voxelStampStore);
   const worldStore = resolveWorldStore(tileMap, models.heightField);
-  const terrainDocument = worldStore
-    ? worldStore.toDocument()
-    : {
-      ...tileMap.toDocument(),
-      ...(models.heightField ? { heightfield: models.heightField.toDocument() } : {}),
-    };
+  if (!worldStore) {
+    throw new Error('World documents require an infinite world store.');
+  }
   return {
-    ...terrainDocument,
+    ...worldStore.toDocument(),
     objects: models.objectMap.toDocument(),
     ...(models.voxelStampStore
       ? {
@@ -59,16 +51,6 @@ export function createWorldDocument(
   };
 }
 
-function resolveVoxelSourceCells(document, voxelStampStore) {
-  if (!voxelStampStore) {
-    return null;
-  }
-  if (document.version === VOXEL_STAMP_MAP_FORMAT_VERSION) {
-    return voxelStampStore.legacyCells;
-  }
-  return document.voxelWorld?.cells ?? voxelStampStore.cells;
-}
-
 export function loadWorldDocument(
   document,
   tileMap,
@@ -77,43 +59,26 @@ export function loadWorldDocument(
   voxelStampStore = null,
   validate = null,
 ) {
+  assertInfiniteWorldDocument(document);
   const models = resolveWorldModels(heightFieldOrObjectMap, objectMap, voxelStampStore);
   const worldStore = resolveWorldStore(tileMap, models.heightField);
-  const previousWorld = worldStore?.createSnapshot() ?? null;
-  const previousTiles = !worldStore && tileMap.tiles ? new Uint8Array(tileMap.tiles) : null;
-  const previousHeights = !worldStore && models.heightField?.heights
-    ? new Float32Array(models.heightField.heights)
-    : null;
+  if (!worldStore) {
+    throw new Error('World documents require an infinite world store.');
+  }
+  const previousWorld = worldStore.createSnapshot();
   const previousObjects = models.objectMap.toDocument();
   const previousVoxelStamps = models.voxelStampStore?.toDocument() ?? null;
 
   try {
-    if (worldStore) {
-      worldStore.loadDocument(document);
-    } else {
-      tileMap.loadDocument(document);
-      models.heightField?.loadDocument(document.heightfield);
-    }
-    const objects = worldStore
-      ? migrateLegacyObjects(document, document.objects)
-      : document.objects ?? [];
-    models.objectMap.loadDocument(objects);
+    worldStore.loadDocument(document);
+    models.objectMap.loadDocument(document.objects ?? []);
     models.voxelStampStore?.loadDocument(document.voxelStamps ?? [], {
-      sourceCells: resolveVoxelSourceCells(document, models.voxelStampStore),
-      legacyDocument: document,
+      sourceCells: document.voxelWorld?.cells ?? null,
+      sourceUnboundedXZ: Boolean(document.voxelWorld?.unboundedXZ),
     });
     validate?.();
   } catch (error) {
-    if (worldStore && previousWorld) {
-      worldStore.restoreSnapshot(previousWorld);
-    } else {
-      if (previousTiles) {
-        tileMap.replaceTiles(previousTiles);
-      }
-      if (models.heightField && previousHeights) {
-        models.heightField.replaceHeights(previousHeights);
-      }
-    }
+    worldStore.restoreSnapshot(previousWorld);
     models.objectMap.replaceAll(previousObjects);
     if (models.voxelStampStore && previousVoxelStamps) {
       models.voxelStampStore.replaceAll(previousVoxelStamps);

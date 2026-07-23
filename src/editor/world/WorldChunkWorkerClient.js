@@ -1,24 +1,69 @@
 import { generateBaseWorldChunk } from './generateWorldChunk.js';
+import { chunkKey } from './WorldCoordinates.js';
 
+/** Resolve the worker pool size from an explicit override or CPU cores. */
+export function resolveWorkerCount(requested) {
+  if (Number.isFinite(requested) && requested > 0) {
+    return Math.max(1, Math.floor(requested));
+  }
+  const cores = (typeof navigator !== 'undefined'
+    && Number.isFinite(navigator.hardwareConcurrency))
+    ? navigator.hardwareConcurrency
+    : 4;
+  // Leave one core for the main thread; clamp to a sane range.
+  return Math.min(8, Math.max(2, cores - 1));
+}
+
+/**
+ * Pool of chunk-generation workers.
+ *
+ * Requests are held in a client-side priority queue and dispatched to the
+ * least-busy worker (up to `maxInFlightPerWorker` each). Holding jobs here —
+ * rather than posting them all into a single worker's message queue — is what
+ * makes priority and cancellation meaningful: the player's next chunk can jump
+ * ahead of far prefetch chunks, and a chunk that leaves the resident set before
+ * it starts generating can be dropped.
+ */
 export class WorldChunkWorkerClient {
-  constructor({ chunkSize, generator, surfaceMaskConfig = null }) {
+  constructor({
+    chunkSize,
+    generator,
+    surfaceMaskConfig = null,
+    workerCount = null,
+    maxInFlightPerWorker = 1,
+  }) {
     this.chunkSize = chunkSize;
     this.generator = generator.toMetadata();
     this.surfaceMaskConfig = surfaceMaskConfig;
+    this.maxInFlightPerWorker = Math.max(1, maxInFlightPerWorker);
     this.nextId = 1;
-    this.pending = new Map();
+    this.pending = new Map();      // id -> { resolve, reject, workerIndex }
+    this.queue = [];               // waiting jobs (not yet dispatched)
+    this.queuedByKey = new Map();  // chunk key -> queued job (for cancel/reprioritize)
     this.disposed = false;
-    this.worker = typeof Worker === 'function'
-      ? new Worker(new URL('./worldChunk.worker.js', import.meta.url), { type: 'module' })
-      : null;
+    this.workers = [];
+    this.inFlight = [];
 
-    if (this.worker) {
-      this.worker.addEventListener('message', (event) => this.onMessage(event));
-      this.worker.addEventListener('error', (event) => this.onError(event));
+    if (typeof Worker === 'function') {
+      const count = resolveWorkerCount(workerCount);
+      for (let index = 0; index < count; index += 1) {
+        const worker = new Worker(
+          new URL('./worldChunk.worker.js', import.meta.url),
+          { type: 'module' },
+        );
+        worker.addEventListener('message', (event) => this.onMessage(event));
+        worker.addEventListener('error', (event) => this.onError(event));
+        this.workers.push(worker);
+        this.inFlight.push(0);
+      }
     }
   }
 
-  request(chunkX, chunkZ) {
+  get workerCount() {
+    return this.workers.length;
+  }
+
+  request(chunkX, chunkZ, { priority = 0 } = {}) {
     if (this.disposed) {
       return Promise.reject(new Error('World chunk worker is disposed.'));
     }
@@ -29,16 +74,80 @@ export class WorldChunkWorkerClient {
       generator: this.generator,
       surfaceMaskConfig: this.surfaceMaskConfig,
     };
-    if (!this.worker) {
+    // No workers available (Node/tests): generate synchronously.
+    if (this.workers.length === 0) {
       return Promise.resolve(generateBaseWorldChunk(request));
     }
 
     const id = this.nextId;
     this.nextId += 1;
+    const key = chunkKey(chunkX, chunkZ);
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ id, request });
+      const job = { id, request, key, priority, resolve, reject };
+      this.queue.push(job);
+      this.queuedByKey.set(key, job);
+      this.pump();
     });
+  }
+
+  /** Raise/lower the priority of a still-queued request. No-op once dispatched. */
+  reprioritize(chunkX, chunkZ, priority) {
+    const job = this.queuedByKey.get(chunkKey(chunkX, chunkZ));
+    if (!job) {
+      return false;
+    }
+    job.priority = priority;
+    return true;
+  }
+
+  /** Drop a request that has not started generating yet. */
+  cancel(chunkX, chunkZ) {
+    const key = chunkKey(chunkX, chunkZ);
+    const job = this.queuedByKey.get(key);
+    if (!job) {
+      return false;
+    }
+    this.queuedByKey.delete(key);
+    this.queue = this.queue.filter((entry) => entry.id !== job.id);
+    const error = new Error('World chunk request cancelled.');
+    error.cancelled = true;
+    job.reject(error);
+    return true;
+  }
+
+  pickWorker() {
+    let best = -1;
+    let bestLoad = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < this.workers.length; index += 1) {
+      const load = this.inFlight[index];
+      if (load < this.maxInFlightPerWorker && load < bestLoad) {
+        best = index;
+        bestLoad = load;
+      }
+    }
+    return best;
+  }
+
+  pump() {
+    if (this.disposed) {
+      return;
+    }
+    while (this.queue.length > 0) {
+      const workerIndex = this.pickWorker();
+      if (workerIndex < 0) {
+        break; // every worker is at capacity; wait for a completion
+      }
+      this.queue.sort((left, right) => left.priority - right.priority || left.id - right.id);
+      const job = this.queue.shift();
+      this.queuedByKey.delete(job.key);
+      this.inFlight[workerIndex] += 1;
+      this.pending.set(job.id, {
+        resolve: job.resolve,
+        reject: job.reject,
+        workerIndex,
+      });
+      this.workers[workerIndex].postMessage({ id: job.id, request: job.request });
+    }
   }
 
   onMessage(event) {
@@ -48,11 +157,13 @@ export class WorldChunkWorkerClient {
       return;
     }
     this.pending.delete(id);
+    this.inFlight[pending.workerIndex] = Math.max(0, this.inFlight[pending.workerIndex] - 1);
     if (error) {
       pending.reject(new Error(error));
-      return;
+    } else {
+      pending.resolve(page);
     }
-    pending.resolve(page);
+    this.pump();
   }
 
   onError(event) {
@@ -61,6 +172,16 @@ export class WorldChunkWorkerClient {
       pending.reject(error);
     }
     this.pending.clear();
+    for (let index = 0; index < this.inFlight.length; index += 1) {
+      this.inFlight[index] = 0;
+    }
+    // Fail anything still queued rather than stranding it behind dead workers.
+    const queued = this.queue;
+    this.queue = [];
+    this.queuedByKey.clear();
+    for (const job of queued) {
+      job.reject(error);
+    }
   }
 
   dispose() {
@@ -68,12 +189,20 @@ export class WorldChunkWorkerClient {
       return;
     }
     this.disposed = true;
-    this.worker?.terminate();
-    this.worker = null;
+    for (const worker of this.workers) {
+      worker.terminate();
+    }
+    this.workers = [];
+    this.inFlight = [];
     const error = new Error('World chunk worker was disposed.');
     for (const pending of this.pending.values()) {
       pending.reject(error);
     }
     this.pending.clear();
+    for (const job of this.queue) {
+      job.reject(error);
+    }
+    this.queue = [];
+    this.queuedByKey.clear();
   }
 }

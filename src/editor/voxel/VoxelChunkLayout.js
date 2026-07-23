@@ -97,12 +97,8 @@ export function createVoxelChunkLayout(config, mapConfig) {
     throw new Error(`Voxel prototype marching-cubes output exceeds ${VOXEL_MAX_OUTPUT_VERTICES} vertices.`);
   }
 
-  if (!mapConfig
-      || !Number.isInteger(mapConfig.width)
-      || !Number.isInteger(mapConfig.height)
-      || !Number.isFinite(mapConfig.tileSize)
-      || mapConfig.tileSize <= 0) {
-    throw new Error('Voxel prototype requires valid map dimensions and tile size.');
+  if (!mapConfig || !Number.isFinite(mapConfig.tileSize) || mapConfig.tileSize <= 0) {
+    throw new Error('Voxel prototype requires a positive map.tileSize.');
   }
 
   const sampleCountX = cellsX + 1 + VOXEL_SAMPLE_HALO * 2;

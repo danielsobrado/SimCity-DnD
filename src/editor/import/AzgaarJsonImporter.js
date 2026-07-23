@@ -172,8 +172,8 @@ export function isAzgaarFullJson(document) {
 
 export function importAzgaarFullJson(document, config) {
   assertAzgaarDocument(document);
-  const targetWidth = config.map.width;
-  const targetHeight = config.map.height;
+  const targetWidth = config.import.azgaarTargetWidth;
+  const targetHeight = config.import.azgaarTargetHeight;
   const chunkSize = config.world.chunkSize;
   const offsetX = -Math.floor(targetWidth / 2);
   const offsetZ = -Math.floor(targetHeight / 2);

@@ -121,22 +121,22 @@ test('native documents reject a mismatched procedural generator', () => {
   mismatched.dispose();
 });
 
-test('legacy sparse height documents keep implicit vertices flat', () => {
+test('older dense native documents are rejected', () => {
   const { store } = createStore();
-  store.loadDocument({
-    version: 5,
-    width: 2,
-    height: 2,
-    tileSize: 2,
-    tiles: [0, 0, 0, 0],
-    heightfield: {
+  assert.throws(
+    () => store.loadDocument({
+      version: 5,
       width: 2,
       height: 2,
-      values: [[4, 7]],
-    },
-  });
-  assert.equal(store.getHeight(0, 0), 7);
-  assert.equal(store.getHeight(-1, -1), 0);
-  assert.equal(store.getHeight(1, 1), 0);
+      tileSize: 2,
+      tiles: [0, 0, 0, 0],
+      heightfield: {
+        width: 2,
+        height: 2,
+        values: [[4, 7]],
+      },
+    }),
+    /older dense map format/,
+  );
   store.dispose();
 });

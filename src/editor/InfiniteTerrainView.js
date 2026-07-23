@@ -6,10 +6,13 @@ import { cellCenterToWorld, worldToCell } from './world/WorldCoordinates.js';
 import {
   createTerrainSlotPlan,
   selectTerrainResidentDescriptors,
+  worldToTerrainChunk,
 } from './world/TerrainStreamingPlan.js';
 import {
   TERRAIN_COMMIT_BUDGET_MS,
   TERRAIN_MAX_COMMITS_PER_FRAME,
+  TERRAIN_MAX_COMMITS_PER_FRAME_IDLE,
+  TERRAIN_MOVING_SPEED_EPSILON,
   TerrainCommitQueue,
   commitPriority,
   createTerrainCommitJob,
@@ -133,8 +136,14 @@ export class InfiniteTerrainView {
     this.disposed = false;
     this.focusChunk = { chunkX: 0, chunkZ: 0 };
     this.focusVelocity = { x: 0, z: 0 };
+    this.maxCommitsPerFrameMoving = streamingConfig.maxCommitsPerFrame
+      ?? TERRAIN_MAX_COMMITS_PER_FRAME;
+    this.maxCommitsPerFrameIdle = Math.max(
+      this.maxCommitsPerFrameMoving,
+      streamingConfig.maxCommitsPerFrameIdle ?? TERRAIN_MAX_COMMITS_PER_FRAME_IDLE,
+    );
     this.commitQueue = new TerrainCommitQueue({
-      maxCommitsPerFrame: streamingConfig.maxCommitsPerFrame ?? TERRAIN_MAX_COMMITS_PER_FRAME,
+      maxCommitsPerFrame: this.maxCommitsPerFrameMoving,
       commitBudgetMs: streamingConfig.commitBudgetMs ?? TERRAIN_COMMIT_BUDGET_MS,
     });
     this.pendingFetches = new Set();
@@ -219,24 +228,45 @@ export class InfiniteTerrainView {
   async updateStreaming(focusWorld, timestamp = performance.now(), force = false) {
     const velocity = this.calculateVelocity(focusWorld, timestamp);
     this.focusVelocity = velocity;
-    const selection = selectTerrainResidentDescriptors({
-      focusWorld,
-      velocity,
-      tileSize: this.worldStore.tileSize,
-      chunkSize: this.chunkSize,
-      loadRadius: this.streamingConfig.loadRadius,
-      unloadRadius: this.streamingConfig.unloadRadius,
-      prefetchSeconds: this.streamingConfig.prefetchSeconds,
-      slotCount: this.slots.length,
-    });
-    const nextFocusKey = `${selection.currentChunk.chunkX}:${selection.currentChunk.chunkZ}`;
-    this.focusChunk = selection.currentChunk;
+
+    // The resident set is a pure function of the current + predicted chunk.
+    // Compute both cheaply and skip the expensive descriptor rebuild when
+    // neither changed, so steady-state frames don't churn Maps/sorts.
+    const tileSize = this.worldStore.tileSize;
+    const prefetchSeconds = this.streamingConfig.prefetchSeconds;
+    const currentChunk = worldToTerrainChunk(
+      focusWorld.x,
+      focusWorld.z,
+      tileSize,
+      this.chunkSize,
+    );
+    const predictedChunk = worldToTerrainChunk(
+      focusWorld.x + velocity.x * prefetchSeconds,
+      focusWorld.z + velocity.z * prefetchSeconds,
+      tileSize,
+      this.chunkSize,
+    );
+    const nextFocusKey = `${currentChunk.chunkX}:${currentChunk.chunkZ}`
+      + `|${predictedChunk.chunkX}:${predictedChunk.chunkZ}`;
+    this.focusChunk = currentChunk;
+
     if (!force && nextFocusKey === this.focusChunkKey) {
       this.positionSlots();
       return;
     }
     this.focusChunkKey = nextFocusKey;
     this.clock += 1;
+
+    const selection = selectTerrainResidentDescriptors({
+      focusWorld,
+      velocity,
+      tileSize,
+      chunkSize: this.chunkSize,
+      loadRadius: this.streamingConfig.loadRadius,
+      unloadRadius: this.streamingConfig.unloadRadius,
+      prefetchSeconds,
+      slotCount: this.slots.length,
+    });
     const plan = createTerrainSlotPlan({
       slots: this.slots,
       targets: selection.descriptors,
@@ -246,10 +276,14 @@ export class InfiniteTerrainView {
       this.slots[slotIndex].lastUsed = this.clock;
     }
     for (const assignment of plan.assignments) {
-      void this.assignSlot(
-        this.slots[assignment.slotIndex],
-        assignment.descriptor,
-      );
+      const slot = this.slots[assignment.slotIndex];
+      // If this slot held a chunk that's no longer wanted and its generation
+      // hasn't started, drop it so a wanted chunk can take the worker instead.
+      if (assignment.evictedKey && slot.descriptor
+          && typeof this.worldStore.cancelChunk === 'function') {
+        this.worldStore.cancelChunk(slot.descriptor.chunkX, slot.descriptor.chunkZ);
+      }
+      void this.assignSlot(slot, assignment.descriptor);
     }
     this.positionSlots();
   }
@@ -279,7 +313,17 @@ export class InfiniteTerrainView {
     slot.mesh.visible = false;
     this.positionSlot(slot);
 
-    const fetchPromise = this.worldStore.requestChunk(descriptor.chunkX, descriptor.chunkZ)
+    const requestPriority = this.focusChunk
+      ? Math.max(
+        Math.abs(descriptor.chunkX - this.focusChunk.chunkX),
+        Math.abs(descriptor.chunkZ - this.focusChunk.chunkZ),
+      )
+      : 0;
+    const fetchPromise = this.worldStore.requestChunk(
+      descriptor.chunkX,
+      descriptor.chunkZ,
+      { priority: requestPriority },
+    )
       .then((page) => {
         if (this.disposed || slot.token !== token || slot.key !== descriptor.key) {
           if (slot.token === token) {
@@ -306,7 +350,10 @@ export class InfiniteTerrainView {
         if (slot.token === token) {
           slot.loading = false;
         }
-        console.error('Terrain chunk request failed.', error);
+        // Cancellation is an intentional optimization, not a failure.
+        if (!error?.cancelled) {
+          console.error('Terrain chunk request failed.', error);
+        }
       });
 
     this.pendingFetches.add(fetchPromise);
@@ -353,10 +400,28 @@ export class InfiniteTerrainView {
     PerfCounters.inc('terrainUploadPages');
   }
 
+  /**
+   * Per-frame commit budget adapts to motion and backlog: stay conservative
+   * while the player is moving with no backlog (protect frame time), but drain
+   * faster when idle or when a chunk-boundary burst has queued several pages.
+   * The queue's `commitBudgetMs` still bounds wall-time per frame either way.
+   */
+  adaptiveCommitBudget() {
+    const speed = Math.hypot(this.focusVelocity.x, this.focusVelocity.z);
+    const moving = speed > TERRAIN_MOVING_SPEED_EPSILON;
+    if (!moving || this.commitQueue.size > this.maxCommitsPerFrameMoving) {
+      return this.maxCommitsPerFrameIdle;
+    }
+    return this.maxCommitsPerFrameMoving;
+  }
+
   flushUploadQueue(options = {}) {
     if (this.disposed || this.commitQueue.size === 0) {
       return { committed: 0, remaining: 0, maxQueuedAgeMs: this.commitQueue.maxQueuedAgeMs };
     }
+    const flushOptions = options.maxCommits === undefined
+      ? { ...options, maxCommits: this.adaptiveCommitBudget() }
+      : options;
     return this.commitQueue.flush(
       (job) => this.commitPage(job.slot, job.page),
       (job) => (
@@ -364,7 +429,7 @@ export class InfiniteTerrainView {
         && job.slot.token === job.token
         && job.slot.key === job.slot.descriptor?.key
       ),
-      options,
+      flushOptions,
     );
   }
 

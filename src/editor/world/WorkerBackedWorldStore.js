@@ -9,7 +9,6 @@ import {
   getSurfaceMaskSearchRadius,
 } from './ChunkRenderPixels.js';
 import { cellKey, chunkKey, parseCellKey } from './WorldCoordinates.js';
-import { WORLD_HEIGHT_EPSILON } from './worldConstants.js';
 
 function tileIndex(localX, localZ, chunkSize) {
   return localZ * chunkSize + localX;
@@ -36,7 +35,7 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
     this.pendingChunks = new Map();
   }
 
-  requestChunk(chunkX, chunkZ) {
+  requestChunk(chunkX, chunkZ, { priority = 0 } = {}) {
     const key = chunkKey(chunkX, chunkZ);
     const cached = this.cache.get(key);
     if (cached) {
@@ -46,16 +45,23 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
     }
     const pending = this.pendingChunks.get(key);
     if (pending) {
+      // Already in flight — nudge its priority in case it became more urgent.
+      this.chunkWorker.reprioritize?.(chunkX, chunkZ, priority);
       return pending;
     }
 
-    const request = this.chunkWorker.request(chunkX, chunkZ)
+    const request = this.chunkWorker.request(chunkX, chunkZ, { priority })
       .then((page) => this.completeWorkerPage(page))
       .finally(() => {
         this.pendingChunks.delete(key);
       });
     this.pendingChunks.set(key, request);
     return request;
+  }
+
+  /** Drop a not-yet-started generation request for a chunk leaving residency. */
+  cancelChunk(chunkX, chunkZ) {
+    return this.chunkWorker.cancel?.(chunkX, chunkZ) ?? false;
   }
 
   refreshPageRenderPixels(page) {
@@ -141,29 +147,6 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
       ...document,
       chunks: document.chunks?.map((chunk) => decodeChunkDocument(chunk, this.chunkSize)),
     });
-  }
-
-  loadLegacyDocument(document) {
-    super.loadLegacyDocument(document);
-    const offsetX = -Math.floor(document.width / 2);
-    const offsetZ = -Math.floor(document.height / 2);
-    const explicit = new Map(document.heightfield?.values ?? []);
-    const vertexWidth = document.width + 1;
-    const vertexHeight = document.height + 1;
-    const heightOverrides = new Map();
-
-    for (let localZ = 0; localZ < vertexHeight; localZ += 1) {
-      for (let localX = 0; localX < vertexWidth; localX += 1) {
-        const index = localZ * vertexWidth + localX;
-        const value = explicit.get(index) ?? 0;
-        const worldX = offsetX + localX;
-        const worldZ = offsetZ + localZ;
-        if (Math.abs(value - this.generator.sampleHeight(worldX, worldZ)) > WORLD_HEIGHT_EPSILON) {
-          heightOverrides.set(cellKey(worldX, worldZ), value);
-        }
-      }
-    }
-    this.heightOverrides = heightOverrides;
   }
 
   clearOverrides() {

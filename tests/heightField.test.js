@@ -76,7 +76,7 @@ test('heightfield documents are sparse and round-trip', () => {
   assert.deepEqual(Array.from(target.heights), Array.from(source.heights));
 });
 
-test('missing legacy heightfield data resets to flat terrain', () => {
+test('missing heightfield document data resets to flat terrain', () => {
   const heightField = new HeightField({ width: 2, height: 2 });
   heightField.heights.fill(3);
   heightField.loadDocument(undefined);

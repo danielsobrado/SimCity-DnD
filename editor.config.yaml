@@ -1,9 +1,10 @@
 map:
-  width: 512
-  height: 512
   tileSize: 2
   defaultTile: plains
   chunkSize: 32
+import:
+  azgaarTargetWidth: 512
+  azgaarTargetHeight: 512
 world:
   seed: 918273
   generatorVersion: 1
@@ -18,7 +19,9 @@ world:
   heightScale: 12
   seaLevel: -1.5
   maxCommitsPerFrame: 1
+  maxCommitsPerFrameIdle: 4
   commitBudgetMs: 2
+  # workerCount: null  # defaults to CPU cores - 1 (clamped 2..8)
 camera:
   viewSize: 180
   minZoom: 0.3

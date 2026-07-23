@@ -1,8 +1,8 @@
 const REQUIRED_POSITIVE_PATHS = Object.freeze([
-  Object.freeze(['map', 'width']),
-  Object.freeze(['map', 'height']),
   Object.freeze(['map', 'tileSize']),
   Object.freeze(['map', 'chunkSize']),
+  Object.freeze(['import', 'azgaarTargetWidth']),
+  Object.freeze(['import', 'azgaarTargetHeight']),
   Object.freeze(['world', 'chunkSize']),
   Object.freeze(['world', 'prefetchSeconds']),
   Object.freeze(['world', 'maxResidentChunks']),
@@ -318,6 +318,15 @@ export function validateEditorConfig(config) {
   if (config.world.commitBudgetMs !== undefined
       && (!Number.isFinite(config.world.commitBudgetMs) || config.world.commitBudgetMs <= 0)) {
     throw new Error('Invalid editor configuration: world.commitBudgetMs must be a positive number.');
+  }
+  if (config.world.maxCommitsPerFrameIdle !== undefined
+      && (!Number.isInteger(config.world.maxCommitsPerFrameIdle)
+        || config.world.maxCommitsPerFrameIdle < 1)) {
+    throw new Error('Invalid editor configuration: world.maxCommitsPerFrameIdle must be a positive integer.');
+  }
+  if (config.world.workerCount !== undefined
+      && (!Number.isInteger(config.world.workerCount) || config.world.workerCount < 1)) {
+    throw new Error('Invalid editor configuration: world.workerCount must be a positive integer.');
   }
   if (!Number.isFinite(config.world.seaLevel)) {
     throw new Error('Invalid editor configuration: world.seaLevel must be finite.');

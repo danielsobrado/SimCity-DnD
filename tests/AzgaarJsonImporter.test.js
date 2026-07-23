@@ -9,7 +9,8 @@ import { ProceduralWorldGenerator } from '../src/editor/world/ProceduralWorldGen
 
 function createConfig() {
   return {
-    map: { width: 4, height: 4, tileSize: 2 },
+    map: { tileSize: 2 },
+    import: { azgaarTargetWidth: 4, azgaarTargetHeight: 4 },
     world: {
       seed: 918273,
       generatorVersion: 1,

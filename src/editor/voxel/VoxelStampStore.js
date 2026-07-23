@@ -44,16 +44,14 @@ function assertUnitInterval(value, fieldName) {
 }
 
 export class VoxelStampStore {
-  constructor({ cells, maxStamps, legacyCells = cells, unboundedXZ = false }) {
+  constructor({ cells, maxStamps, unboundedXZ = false }) {
     assertCellDimensions(cells, 'Voxel stamp store cells', { allowUnboundedXZ: unboundedXZ });
-    assertCellDimensions(legacyCells, 'Voxel stamp store legacyCells');
     if (!Number.isInteger(maxStamps) || maxStamps < 1) {
       throw new Error('Voxel stamp store maxStamps must be a positive integer.');
     }
 
     this.unboundedXZ = Boolean(unboundedXZ);
     this.cells = Object.freeze([...cells]);
-    this.legacyCells = Object.freeze([...legacyCells]);
     this.maxStamps = maxStamps;
     this.stamps = [];
     this.nextId = 1;
@@ -155,14 +153,13 @@ export class VoxelStampStore {
       : { cells: [...this.cells] };
   }
 
-  loadDocument(document, { sourceCells = this.cells, legacyDocument = null } = {}) {
+  loadDocument(document, { sourceCells = null, sourceUnboundedXZ = false } = {}) {
     let offset = [0, 0, 0];
     if (this.unboundedXZ) {
-      const sourceIsUnbounded = legacyDocument?.voxelWorld?.unboundedXZ === true;
-      if (!sourceIsUnbounded && Array.isArray(sourceCells) && sourceCells[0] > 0 && sourceCells[2] > 0) {
+      if (!sourceUnboundedXZ && Array.isArray(sourceCells) && sourceCells[0] > 0 && sourceCells[2] > 0) {
         offset = [-sourceCells[0] * 0.5, 0, -sourceCells[2] * 0.5];
       }
-    } else {
+    } else if (sourceCells) {
       assertCellDimensions(sourceCells, 'Voxel stamp source cells');
       offset = sourceCells.map((size, axis) => {
         if (size > this.cells[axis]) {

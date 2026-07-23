@@ -5,7 +5,6 @@ import { VoxelStampStore } from '../src/editor/voxel/VoxelStampStore.js';
 function createStore(maxStamps = 4) {
   return new VoxelStampStore({
     cells: [48, 16, 48],
-    legacyCells: [24, 16, 24],
     maxStamps,
   });
 }
@@ -56,7 +55,7 @@ test('round trips a sparse voxel stamp document', () => {
   assert.equal(target.add(createStamp('smooth')).id, 3);
 });
 
-test('centers legacy single-chunk stamps in the multi-chunk world', () => {
+test('centers stamps from a smaller source volume', () => {
   const target = createStore();
   target.loadDocument([{
     id: 1,

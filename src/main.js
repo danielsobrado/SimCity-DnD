@@ -55,6 +55,7 @@ async function startEditor() {
     chunkSize: config.world.chunkSize,
     generator,
     surfaceMaskConfig,
+    workerCount: config.world.workerCount ?? null,
   });
   const worldStore = new WorkerBackedWorldStore({
     chunkWorker,
@@ -75,7 +76,6 @@ async function startEditor() {
   const voxelWorldLayout = createVoxelWorldLayout(config.voxelPrototype, config.map);
   const voxelStampStore = new VoxelStampStore({
     cells: [0, voxelWorldLayout.totalCellsY, 0],
-    legacyCells: config.voxelPrototype.cells,
     maxStamps: config.voxelPrototype.maxStamps,
     unboundedXZ: true,
   });

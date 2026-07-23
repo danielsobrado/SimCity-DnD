@@ -74,25 +74,23 @@ test('sparse overrides survive eviction and document round trip', () => {
   assert.equal(restored.toDocument().chunks.length, document.chunks.length);
 });
 
-test('legacy fixed maps migrate around the global origin', () => {
+test('older dense native documents are rejected', () => {
   const store = createStore();
-  store.loadDocument({
-    version: 5,
-    width: 2,
-    height: 2,
-    tileSize: 2,
-    tiles: [3, 4, 5, 6],
-    heightfield: {
+  assert.throws(
+    () => store.loadDocument({
+      version: 5,
       width: 2,
       height: 2,
-      values: [[4, 7]],
-    },
-  });
-  assert.equal(store.getTile(-1, -1), 3);
-  assert.equal(store.getTile(0, -1), 4);
-  assert.equal(store.getTile(-1, 0), 5);
-  assert.equal(store.getTile(0, 0), 6);
-  assert.equal(store.getHeight(0, 0), 7);
+      tileSize: 2,
+      tiles: [3, 4, 5, 6],
+      heightfield: {
+        width: 2,
+        height: 2,
+        values: [[4, 7]],
+      },
+    }),
+    /older dense map format/,
+  );
 });
 
 test('painting and sculpting patches undo across chunk borders', () => {
