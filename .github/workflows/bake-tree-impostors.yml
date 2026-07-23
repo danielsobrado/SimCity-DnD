@@ -1,18 +1,22 @@
 name: Bake tree impostors
 
-# One-shot production bake; the workflow commits assets and a diagnostic report.
+# Production bake plus a PR-visible diagnostic artifact path.
 on:
   push:
     branches: [main]
     paths:
       - .github/workflows/bake-tree-impostors.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/offline-impostor-diagnostic.yml
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: bake-tree-impostors-main
+  group: bake-tree-impostors-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -69,8 +73,22 @@ jobs:
             npm run build
           } 2>&1 | tee /tmp/impostor-verify.log
 
-      - name: Commit assets and bake report
+      - name: Upload generated assets and logs
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-tree-impostors
+          path: |
+            public/assets/impostors/trees
+            /tmp/impostor-install.log
+            /tmp/impostor-browser.log
+            /tmp/impostor-bake.log
+            /tmp/impostor-verify.log
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Commit assets and bake report
+        if: always() && github.event_name != 'pull_request'
         shell: bash
         env:
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
