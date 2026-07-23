@@ -16,6 +16,12 @@ function configureTexture(texture, colorSpace) {
   return texture;
 }
 
+function versionAssetUrl(url, version) {
+  if (!version) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${encodeURIComponent(version)}`;
+}
+
 function canvasToDataUrl(canvas) {
   if (typeof canvas.toDataURL === 'function') return canvas.toDataURL('image/png');
   return canvas.convertToBlob({ type: 'image/png' }).then((blob) => new Promise((resolve, reject) => {
@@ -40,28 +46,35 @@ function triggerDownload(filename, content, type = 'application/json') {
 }
 
 async function loadAtlasTextures(loader, resolvePath, prototype) {
-  const albedo = await loader.loadAsync(resolvePath(prototype.albedo));
-  try {
-    const normal = await loader.loadAsync(resolvePath(prototype.normal));
-    return {
-      albedo: configureTexture(albedo, THREE.SRGBColorSpace),
-      normal: configureTexture(normal, THREE.NoColorSpace),
-    };
-  } catch (error) {
-    albedo.dispose?.();
-    throw error;
+  const results = await Promise.allSettled([
+    loader.loadAsync(resolvePath(prototype.albedo)),
+    loader.loadAsync(resolvePath(prototype.normal)),
+  ]);
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure) {
+    for (const result of results) {
+      if (result.status === 'fulfilled') result.value.dispose?.();
+    }
+    throw failure.reason;
   }
+
+  return {
+    albedo: configureTexture(results[0].value, THREE.SRGBColorSpace),
+    normal: configureTexture(results[1].value, THREE.NoColorSpace),
+  };
 }
 
 export class TreeImpostorAssetLoader {
   constructor({
     baseUrl = '/',
     loader = new THREE.TextureLoader(),
+    fetchImpl = fetch,
     expectedPrototypeCount = null,
     expectedSourceSignature = null,
   } = {}) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.loader = loader;
+    this.fetchImpl = fetchImpl;
     this.expectedPrototypeCount = expectedPrototypeCount;
     this.expectedSourceSignature = expectedSourceSignature;
   }
@@ -72,7 +85,7 @@ export class TreeImpostorAssetLoader {
 
   async load(manifestPath) {
     if (!manifestPath) return null;
-    const response = await fetch(this.resolve(manifestPath), { cache: 'no-cache' });
+    const response = await this.fetchImpl(this.resolve(manifestPath), { cache: 'no-cache' });
     if (!response.ok) {
       if (response.status === 404) return null;
       throw new Error(`Tree impostor manifest failed with HTTP ${response.status}.`);
@@ -81,25 +94,25 @@ export class TreeImpostorAssetLoader {
       expectedPrototypeCount: this.expectedPrototypeCount,
       expectedSourceSignature: this.expectedSourceSignature,
     });
-    const atlases = [];
-    try {
-      for (const prototype of manifest.prototypes) {
-        const textures = await loadAtlasTextures(
-          this.loader,
-          (path) => this.resolve(path),
-          prototype,
-        );
-        atlases.push(Object.freeze({
-          ...prototype,
-          ...textures,
-          source: 'asset',
-        }));
-      }
-      return Object.freeze(atlases);
-    } catch (error) {
+    const assetVersion = manifest.generatedAt ?? manifest.sourceSignature;
+    const resolveVersionedPath = (path) => versionAssetUrl(this.resolve(path), assetVersion);
+    const results = await Promise.allSettled(manifest.prototypes.map(async (prototype) => {
+      const textures = await loadAtlasTextures(this.loader, resolveVersionedPath, prototype);
+      return Object.freeze({
+        ...prototype,
+        ...textures,
+        source: 'asset',
+      });
+    }));
+    const atlases = results
+      .filter((result) => result.status === 'fulfilled')
+      .map((result) => result.value);
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure) {
       disposeTreeImpostorAtlases(atlases);
-      throw error;
+      throw failure.reason;
     }
+    return Object.freeze(atlases);
   }
 }
 
