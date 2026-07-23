@@ -1,18 +1,47 @@
-name: Cancel legacy tree impostor bake runs
+name: Bake tree impostors
 
 on:
   push:
     branches: [main]
     paths:
       - .github/workflows/bake-tree-impostors.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 concurrency:
-  group: bake-tree-impostors-main
+  group: bake-tree-impostors-push
   cancel-in-progress: true
 
 jobs:
-  cancel-legacy:
-    if: ${{ false }}
+  bake:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
-      - run: echo cancelled
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Locate Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          test -n "$browser"
+          echo "CHROME_PATH=$browser" >> "$GITHUB_ENV"
+          "$browser" --version
+
+      - name: Generate, validate and commit offline atlases
+        run: npm run bake:impostors
