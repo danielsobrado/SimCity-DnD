@@ -6,6 +6,7 @@ import {
   rockSignatureForChunk,
   rocksInfluencingChunk,
 } from './chunkRockSignature.js';
+import { isTreeImpostorBakeMode } from './impostorBakeMode.js';
 import { StylizedBuildQueue } from './StylizedBuildQueue.js';
 import { StylizedChunkRevisionTracker } from './StylizedChunkRevisionTracker.js';
 import { StylizedFlowerView } from './StylizedFlowerView.js';
@@ -22,6 +23,7 @@ export class StylizedSurfaceView {
     this.objectMap = objectMap;
     this.config = config;
     this.enabled = Boolean(config?.enabled);
+    this.impostorBakeMode = isTreeImpostorBakeMode();
     this.sceneAssets = this.enabled
       ? new StylizedSceneAssetCache({ baseUrl })
       : null;
@@ -29,14 +31,14 @@ export class StylizedSurfaceView {
     this.revisionTracker = this.enabled
       ? new StylizedChunkRevisionTracker({ worldStore: terrainView.worldStore })
       : null;
-    if (this.enabled) {
+    if (this.enabled && !this.impostorBakeMode) {
       for (const terrainSlot of terrainView.slots) terrainSlot.mesh.receiveShadow = true;
     }
-    this.skyView = this.enabled && config.sky.enabled
+    this.skyView = this.enabled && !this.impostorBakeMode && config.sky.enabled
       ? new StylizedSkyView({ terrainView, config })
       : null;
     const sunDirection = this.skyView?.sunDirection ?? vec3(0.35, 0.85, 0.25);
-    this.rockView = this.enabled
+    this.rockView = this.enabled && !this.impostorBakeMode
       ? new StylizedRockView({ terrainView, config, revisionTracker: this.revisionTracker })
       : null;
     this.treeView = this.enabled
@@ -47,14 +49,15 @@ export class StylizedSurfaceView {
         baseUrl,
       })
       : null;
-    this.flowerView = this.enabled
+    this.flowerView = this.enabled && !this.impostorBakeMode
       ? new StylizedFlowerView({ terrainView, config, baseUrl })
       : null;
     this.ready = this.bootstrapLayers();
-    this.ready.then(() => this.maybeHandleImpostorBake()).catch((error) => {
+    this.bakeRequest = this.ready.then(() => this.maybeHandleImpostorBake());
+    this.bakeRequest.catch((error) => {
       console.error('Tree impostor export request failed.', error);
     });
-    this.slots = this.enabled
+    this.slots = this.enabled && !this.impostorBakeMode
       ? terrainView.slots.map((terrainSlot) => new StylizedGrassSlot({
         terrainSlot,
         terrainView,
@@ -63,7 +66,7 @@ export class StylizedSurfaceView {
         sunDirection,
       }))
       : [];
-    this.waterSlots = this.enabled && config.water?.enabled
+    this.waterSlots = this.enabled && !this.impostorBakeMode && config.water?.enabled
       ? terrainView.slots.map((terrainSlot) => new StylizedWaterSlot({
         terrainSlot,
         terrainView,
@@ -85,7 +88,8 @@ export class StylizedSurfaceView {
 
   async bootstrapLayers() {
     if (!this.enabled) return null;
-    const needsScene = this.config.rocks.enabled || this.config.trees.enabled;
+    const needsScene = this.config.trees.enabled
+      || (!this.impostorBakeMode && this.config.rocks.enabled);
     try {
       let sharedScene = null;
       if (needsScene) {
@@ -105,15 +109,14 @@ export class StylizedSurfaceView {
   }
 
   async maybeHandleImpostorBake() {
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('bakeImpostors') !== '1') return;
+    if (!this.impostorBakeMode || typeof window === 'undefined') return null;
     window.__treeImpostorBakeStatus = 'baking';
     try {
       const bundle = await this.exportImpostors();
       window.__treeImpostorBakeBundle = bundle;
       window.__treeImpostorBakeStatus = 'done';
       document.documentElement.dataset.impostorBake = 'done';
+      return bundle;
     } catch (error) {
       window.__treeImpostorBakeStatus = 'failed';
       window.__treeImpostorBakeError = error instanceof Error ? error.message : String(error);
@@ -147,7 +150,7 @@ export class StylizedSurfaceView {
   }
 
   update(timestamp, camera) {
-    if (!this.enabled) return;
+    if (!this.enabled || this.impostorBakeMode) return;
     this.updateRendererCounters();
     this.skyView?.update(timestamp, camera);
     this.rockView?.update(timestamp, camera);
