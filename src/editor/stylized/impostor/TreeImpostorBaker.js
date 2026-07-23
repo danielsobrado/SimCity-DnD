@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { normalView, texture, uv } from 'three/tsl';
 import { createCaptureDirections } from './impostorFrame.js';
 
 function createCanvas(width, height) {
@@ -22,12 +23,16 @@ function unionBounds(parts) {
 function createBakeMaterial(part, normalPass) {
   const sourceMap = part.sourceMap ?? null;
   if (normalPass) {
-    const material = new THREE.MeshNormalMaterial({
-      side: THREE.DoubleSide,
-      map: sourceMap,
-      alphaTest: sourceMap ? 0.5 : 0,
+    const material = new THREE.MeshBasicNodeMaterial({
+      side: part.kind === 'leaf' ? THREE.DoubleSide : THREE.FrontSide,
     });
+    material.colorNode = normalView.mul(0.5).add(0.5);
+    if (sourceMap) {
+      material.opacityNode = texture(sourceMap, uv()).a;
+      material.alphaTest = 0.5;
+    }
     material.transparent = false;
+    material.depthWrite = true;
     return material;
   }
 
@@ -38,21 +43,47 @@ function createBakeMaterial(part, normalPass) {
   material.opacityNode = part.material.opacityNode ?? null;
   material.alphaTest = part.material.alphaTest ?? (sourceMap ? 0.5 : 0);
   material.transparent = false;
+  material.depthWrite = true;
   return material;
+}
+
+function createBakeGeometry(sourceGeometry) {
+  const cloned = sourceGeometry.clone();
+  if (!cloned.index) return cloned;
+  const nonIndexed = cloned.toNonIndexed();
+  cloned.dispose();
+  nonIndexed.computeBoundingBox();
+  nonIndexed.computeBoundingSphere();
+  return nonIndexed;
 }
 
 function createPrototypeScene(parts, normalPass) {
   const scene = new THREE.Scene();
   for (const part of parts) {
-    const mesh = new THREE.Mesh(part.geometry, createBakeMaterial(part, normalPass));
+    const mesh = new THREE.Mesh(
+      createBakeGeometry(part.geometry),
+      createBakeMaterial(part, normalPass),
+    );
     mesh.frustumCulled = false;
     scene.add(mesh);
   }
   return scene;
 }
 
-function disposeSceneMaterials(scene) {
-  scene.traverse((node) => node.material?.dispose?.());
+function disposeSceneResources(scene) {
+  scene.traverse((node) => {
+    node.geometry?.dispose?.();
+    node.material?.dispose?.();
+  });
+}
+
+async function renderScene(renderer, scene, camera) {
+  if (typeof renderer.renderAsync === 'function') {
+    await renderer.renderAsync(scene, camera);
+    return;
+  }
+  const result = renderer.render(scene, camera);
+  if (result && typeof result.then === 'function') await result;
 }
 
 function sourceOffset(sourceSize, x, y) {
@@ -117,15 +148,15 @@ function writeTile(context, pixels, sourceSize, tileSize, gutter, column, row) {
 }
 
 function configureAtlasTexture(canvas, colorSpace) {
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = colorSpace;
-  texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
-  texture.wrapS = THREE.ClampToEdgeWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.needsUpdate = true;
-  return texture;
+  const textureValue = new THREE.CanvasTexture(canvas);
+  textureValue.colorSpace = colorSpace;
+  textureValue.magFilter = THREE.LinearFilter;
+  textureValue.minFilter = THREE.LinearMipmapLinearFilter;
+  textureValue.generateMipmaps = true;
+  textureValue.wrapS = THREE.ClampToEdgeWrapping;
+  textureValue.wrapT = THREE.ClampToEdgeWrapping;
+  textureValue.needsUpdate = true;
+  return textureValue;
 }
 
 export class TreeImpostorBaker {
@@ -155,6 +186,7 @@ export class TreeImpostorBaker {
     const atlases = [];
     try {
       for (let prototypeIndex = 0; prototypeIndex < prototypes.length; prototypeIndex += 1) {
+        console.info(`[tree-impostor-bake] Baking prototype ${prototypeIndex + 1}/${prototypes.length}.`);
         atlases.push(await this.bakePrototype(
           prototypes[prototypeIndex],
           prototypeIndex,
@@ -207,7 +239,11 @@ export class TreeImpostorBaker {
     try {
       renderer.autoClear = true;
       renderer.setClearColor(0x000000, 0);
-      for (const direction of directions) {
+      for (let directionIndex = 0; directionIndex < directions.length; directionIndex += 1) {
+        const direction = directions[directionIndex];
+        console.info(
+          `[tree-impostor-bake] Prototype ${prototypeIndex + 1}, frame ${directionIndex + 1}/${directions.length}.`,
+        );
         camera.position.set(
           center.x + direction.x * radius * 2.5,
           center.y + direction.y * radius * 2.5,
@@ -218,7 +254,7 @@ export class TreeImpostorBaker {
 
         renderer.setRenderTarget(target);
         renderer.clear();
-        renderer.render(albedoScene, camera);
+        await renderScene(renderer, albedoScene, camera);
         const albedoPixels = await renderer.readRenderTargetPixelsAsync(
           target,
           0,
@@ -236,8 +272,9 @@ export class TreeImpostorBaker {
           direction.row,
         );
 
+        renderer.setRenderTarget(target);
         renderer.clear();
-        renderer.render(normalScene, camera);
+        await renderScene(renderer, normalScene, camera);
         const normalPixels = await renderer.readRenderTargetPixelsAsync(
           target,
           0,
@@ -260,8 +297,8 @@ export class TreeImpostorBaker {
       renderer.autoClear = previousAutoClear;
       renderer.setClearColor(previousClearColor, previousClearAlpha);
       target.dispose();
-      disposeSceneMaterials(albedoScene);
-      disposeSceneMaterials(normalScene);
+      disposeSceneResources(albedoScene);
+      disposeSceneResources(normalScene);
     }
 
     return Object.freeze({
