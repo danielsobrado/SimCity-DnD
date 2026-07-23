@@ -1,0 +1,10 @@
+name: Offline impostor trigger
+
+on:
+  workflow_dispatch:
+
+jobs:
+  marker:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "The base-branch bake workflow handles pull-request diagnostics."
