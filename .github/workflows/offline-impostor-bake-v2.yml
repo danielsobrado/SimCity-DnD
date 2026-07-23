@@ -1,0 +1,50 @@
+name: Offline impostor bake v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/offline-impostor-bake-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: offline-impostor-bake-v2
+  cancel-in-progress: false
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Locate Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          if [[ -z "$browser" ]]; then
+            echo "No Chromium-family browser is installed on the runner." >&2
+            exit 1
+          fi
+          echo "CHROME_PATH=$browser" >> "$GITHUB_ENV"
+          "$browser" --version
+
+      - name: Generate, validate and commit offline atlases
+        run: npm run bake:impostors
