@@ -70,6 +70,9 @@ export function createObjectCatalog(rawDefinitions, tileByKey) {
       }
       return tile.id;
     });
+    const allowedTerrainClasses = rawDefinition.allowedTerrain.map(
+      (terrainKey) => tileByKey.get(terrainKey)?.terrainClass,
+    ).filter(Boolean);
 
     return Object.freeze({
       key: rawDefinition.key,
@@ -84,6 +87,7 @@ export function createObjectCatalog(rawDefinitions, tileByKey) {
       }),
       foundation: createFoundation(rawDefinition.foundation, rawDefinition),
       allowedTileIds: Object.freeze(allowedTileIds),
+      allowedTerrainClasses: Object.freeze([...new Set(allowedTerrainClasses)]),
     });
   });
 

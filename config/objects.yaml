@@ -18,7 +18,7 @@ objects:
       maxDepth: 3
       alignToNormal: false
       color: "#695442"
-    allowedTerrain: [plains, road, farm, desert, snow]
+    allowedTerrain: [savanna, grassland, road, farm, hot_desert, cold_desert, tundra]
   - key: farmstead
     label: Farmstead
     icon: "🌾"
@@ -38,7 +38,7 @@ objects:
       maxDepth: 1.5
       alignToNormal: false
       color: "#705a3d"
-    allowedTerrain: [plains, farm]
+    allowedTerrain: [savanna, grassland, farm]
   - key: inn
     label: Adventurer Inn
     icon: "🍺"
@@ -58,7 +58,7 @@ objects:
       maxDepth: 3
       alignToNormal: false
       color: "#65503e"
-    allowedTerrain: [plains, road, desert, snow]
+    allowedTerrain: [savanna, grassland, road, hot_desert, cold_desert, tundra]
   - key: wizard_tower
     label: Wizard Tower
     icon: "🧙"
@@ -78,7 +78,7 @@ objects:
       maxDepth: 4
       alignToNormal: false
       color: "#57505e"
-    allowedTerrain: [plains, stone, desert, snow, corruption]
+    allowedTerrain: [savanna, grassland, stone, hot_desert, cold_desert, tundra, glacier, corruption]
   - key: keep
     label: Stone Keep
     icon: "🏰"
@@ -98,7 +98,7 @@ objects:
       maxDepth: 4
       alignToNormal: false
       color: "#636769"
-    allowedTerrain: [plains, road, stone, desert, snow]
+    allowedTerrain: [savanna, grassland, road, stone, hot_desert, cold_desert, tundra, glacier]
   - key: wall
     label: Wall Segment
     icon: "🧱"
@@ -118,7 +118,7 @@ objects:
       maxDepth: 2
       alignToNormal: false
       color: "#5e6264"
-    allowedTerrain: [plains, road, farm, stone, desert, snow]
+    allowedTerrain: [savanna, grassland, road, farm, stone, hot_desert, cold_desert, tundra, glacier]
   - key: pine_tree
     label: Pine Tree
     icon: "🌲"
@@ -138,7 +138,7 @@ objects:
       maxDepth: 0
       alignToNormal: false
       color: "#4e4231"
-    allowedTerrain: [plains, forest, swamp, snow]
+    allowedTerrain: [savanna, grassland, tropical_seasonal_forest, temperate_deciduous_forest, tropical_rainforest, temperate_rainforest, taiga, wetland, tundra]
   - key: boulder
     label: Boulder
     icon: "🪨"
@@ -158,4 +158,4 @@ objects:
       maxDepth: 0
       alignToNormal: true
       color: "#575d5d"
-    allowedTerrain: [plains, forest, stone, desert, snow, corruption]
+    allowedTerrain: [hot_desert, cold_desert, savanna, grassland, tropical_seasonal_forest, temperate_deciduous_forest, tropical_rainforest, temperate_rainforest, taiga, tundra, glacier, wetland, stone, corruption]

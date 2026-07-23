@@ -20,16 +20,23 @@ export function getSurfaceMaskSearchRadius(blendCells) {
 export function createSurfaceMaskConfig(stylizedConfig) {
   return {
     blendCells: Math.max(0.5, stylizedConfig?.path?.blendCells ?? 2.5),
-    roadTileId: stylizedConfig?.path?.tileId ?? 3,
-    waterTileId: stylizedConfig?.water?.tileId ?? 2,
-    grassTileIds: [...(stylizedConfig?.grass?.tileIds ?? [0, 1, 4])],
+    roadTileId: stylizedConfig?.path?.tileId ?? 13,
+    waterTileId: stylizedConfig?.water?.tileId ?? 0,
+    grassTileIds: [...(stylizedConfig?.grass?.tileIds ?? [3, 4, 5, 6, 7, 8, 9, 12, 14])],
   };
 }
 
-export function buildTilePixels(tiles) {
+function resolveTile(tileId, tileDefinitions) {
+  if (typeof tileDefinitions === 'function') {
+    return tileDefinitions(tileId) ?? TILE_BY_ID.get(tileId);
+  }
+  return tileDefinitions?.get?.(tileId) ?? TILE_BY_ID.get(tileId);
+}
+
+export function buildTilePixels(tiles, tileDefinitions = null) {
   const pixels = new Uint8Array(tiles.length * 4);
   for (let index = 0; index < tiles.length; index += 1) {
-    const tile = TILE_BY_ID.get(tiles[index]);
+    const tile = resolveTile(tiles[index], tileDefinitions);
     if (!tile) {
       throw new Error(`Unknown tile id: ${tiles[index]}.`);
     }
@@ -162,9 +169,9 @@ export function buildSurfaceMaskPixels({
 /**
  * Attach tilePixels + surfaceMaskPixels to a page. Mutates and returns page.
  */
-export function enrichPageRenderPixels(page, sampleTile, maskConfig) {
+export function enrichPageRenderPixels(page, sampleTile, maskConfig, tileDefinitions = null) {
   const chunkSize = Math.sqrt(page.tiles.length) | 0;
-  page.tilePixels = buildTilePixels(page.tiles);
+  page.tilePixels = buildTilePixels(page.tiles, tileDefinitions);
   page.surfaceMaskPixels = buildSurfaceMaskPixels({
     tiles: page.tiles,
     originX: page.originX,

@@ -1,12 +1,6 @@
 import { decodeMacroAtlas } from '../import/AzgaarMacroWorldSource.js';
 
-const WATER_TILE_ID = 2;
-const PLAINS_TILE_ID = 0;
-const FOREST_TILE_ID = 1;
-const STONE_TILE_ID = 5;
-const DESERT_TILE_ID = 6;
-const SWAMP_TILE_ID = 7;
-const SNOW_TILE_ID = 8;
+const WATER_TILE_ID = 0;
 const LAND_HEIGHT = 20;
 
 function clamp(value, minimum, maximum) {
@@ -49,16 +43,6 @@ function pointSegmentDistance(px, py, ax, ay, bx, by) {
   return Math.hypot(px - (ax + dx * amount), py - (ay + dy * amount));
 }
 
-function tileForBiome(rawHeight, biome) {
-  if (rawHeight < LAND_HEIGHT) return WATER_TILE_ID;
-  if (rawHeight >= 78) return STONE_TILE_ID;
-  if (biome === 2 || biome === 10 || biome === 11) return SNOW_TILE_ID;
-  if (biome === 1) return DESERT_TILE_ID;
-  if (biome === 12) return SWAMP_TILE_ID;
-  if (biome >= 5 && biome <= 9) return FOREST_TILE_ID;
-  return PLAINS_TILE_ID;
-}
-
 function convertHeight(rawHeight, terrain) {
   if (rawHeight < LAND_HEIGHT) {
     return terrain.minHeight * clamp((LAND_HEIGHT - rawHeight) / LAND_HEIGHT, 0, 1) * 0.35;
@@ -92,13 +76,79 @@ function createRiverIndex(rivers, width, height) {
   return buckets;
 }
 
+function validateBiomeDefinitions(definitions) {
+  if (!Array.isArray(definitions) || definitions.length < 13) {
+    throw new Error('Azgaar macro source must include its biome definitions.');
+  }
+  const sourceIds = new Set();
+  const tileIds = new Set();
+  for (const definition of definitions) {
+    if (
+      !Number.isInteger(definition?.sourceId)
+      || definition.sourceId < 0
+      || definition.sourceId > 255
+      || sourceIds.has(definition.sourceId)
+    ) {
+      throw new Error('Azgaar macro source has invalid or duplicate biome source ids.');
+    }
+    if (
+      !Number.isInteger(definition.tileId)
+      || definition.tileId < 0
+      || definition.tileId > 254
+      || (definition.sourceId >= 13 && definition.tileId < 32)
+      || tileIds.has(definition.tileId)
+    ) {
+      throw new Error('Azgaar macro source has invalid or duplicate biome terrain ids.');
+    }
+    if (
+      typeof definition.name !== 'string'
+      || definition.name.trim() === ''
+      || typeof definition.color !== 'string'
+      || !/^#[0-9a-f]{6}$/i.test(definition.color)
+    ) {
+      throw new Error(`Azgaar macro source has invalid metadata for biome ${definition.sourceId}.`);
+    }
+    sourceIds.add(definition.sourceId);
+    tileIds.add(definition.tileId);
+  }
+  for (let sourceId = 0; sourceId < 13; sourceId += 1) {
+    const definition = definitions.find((entry) => entry.sourceId === sourceId);
+    if (!definition || definition.tileId !== sourceId || definition.standard !== true) {
+      throw new Error('Azgaar standard biome ids must map directly to terrain ids 0–12.');
+    }
+  }
+}
+
 export class AzgaarMacroWorldGenerator {
   constructor(source, proceduralMetadata) {
     const decoded = decodeMacroAtlas(source);
+    validateBiomeDefinitions(source.biomes);
     this.source = source;
     this.heights = decoded.heights;
-    this.biomes = decoded.biomes;
+    this.biomeAtlas = decoded.biomes;
     this.features = decoded.features;
+    this.biomeBySourceId = new Map(
+      source.biomes.map((definition) => [definition.sourceId, definition]),
+    );
+    this.tileDefinitionById = new Map(source.biomes.map((definition) => [
+      definition.tileId,
+      Object.freeze({
+        id: definition.tileId,
+        key: definition.key,
+        label: definition.name,
+        color: definition.color,
+        icon: definition.icon,
+        terrainClass: definition.terrainClass,
+        supportsGrass: definition.supportsGrass,
+        supportsTrees: definition.supportsTrees,
+        azgaarSourceId: definition.sourceId,
+      }),
+    ]));
+    for (const sourceId of new Set(this.biomeAtlas)) {
+      if (!this.biomeBySourceId.has(sourceId)) {
+        throw new Error(`Azgaar macro source has no definition for biome ${sourceId}.`);
+      }
+    }
     this.seed = proceduralMetadata.seed;
     this.version = proceduralMetadata.version;
     this.heightScale = proceduralMetadata.heightScale;
@@ -121,6 +171,20 @@ export class AzgaarMacroWorldGenerator {
 
   toBaseTerrain() {
     return structuredClone(this.source);
+  }
+
+  getTileDefinition(tileId) {
+    return this.tileDefinitionById.get(tileId) ?? null;
+  }
+
+  getSurfaceMaskConfig(maskConfig) {
+    return {
+      ...maskConfig,
+      waterTileId: WATER_TILE_ID,
+      grassTileIds: this.source.biomes
+        .filter((definition) => definition.supportsGrass)
+        .map((definition) => definition.tileId),
+    };
   }
 
   toAtlasPosition(cellX, cellZ) {
@@ -217,6 +281,7 @@ export class AzgaarMacroWorldGenerator {
     const index = this.atlasIndex(Math.floor(position.x), Math.floor(position.y));
     const rawHeight = this.heights[index];
     if (rawHeight >= LAND_HEIGHT && this.isRiver(cellX, cellZ)) return WATER_TILE_ID;
-    return tileForBiome(rawHeight, this.biomes[index]);
+    if (rawHeight < LAND_HEIGHT) return WATER_TILE_ID;
+    return this.biomeBySourceId.get(this.biomeAtlas[index]).tileId;
   }
 }

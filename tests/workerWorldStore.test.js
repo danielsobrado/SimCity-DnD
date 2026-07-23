@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createAzgaarBiomeDefinitions } from '../src/editor/AzgaarBiomeCatalog.js';
 import { createMacroAtlasPayload } from '../src/editor/import/AzgaarMacroWorldSource.js';
 import { generateBaseWorldChunk } from '../src/editor/world/generateWorldChunk.js';
 import { ProceduralWorldGenerator } from '../src/editor/world/ProceduralWorldGenerator.js';
@@ -62,6 +63,7 @@ function createMacroSource() {
     },
     oceanTransitionCells: 4,
     terrain: { minHeight: -16, maxHeight: 48, seaLevel: -1.5 },
+    biomes: createAzgaarBiomeDefinitions(),
     rivers: [],
   };
 }

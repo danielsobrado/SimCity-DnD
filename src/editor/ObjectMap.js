@@ -89,7 +89,14 @@ export class ObjectMap {
       if (occupantId !== undefined && occupantId !== ignoreObjectId) {
         return { valid: false, reason: 'Footprint overlaps another object.', cells };
       }
-      if (!definition.allowedTileIds.includes(this.tileMap.get(cell.x, cell.z))) {
+      const tileId = this.tileMap.get(cell.x, cell.z);
+      const tileDefinition = this.tileMap.getTileDefinition?.(tileId);
+      const supportsTerrain = definition.allowedTileIds.includes(tileId)
+        || (
+          tileDefinition?.terrainClass
+          && definition.allowedTerrainClasses?.includes(tileDefinition.terrainClass)
+        );
+      if (!supportsTerrain) {
         return { valid: false, reason: 'The terrain does not support this object.', cells };
       }
     }

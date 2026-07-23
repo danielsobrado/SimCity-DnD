@@ -25,10 +25,10 @@ test('getSurfaceMaskSearchRadius matches prior CPU blend search', () => {
 });
 
 test('buildTilePixels writes RGBA color + tile id', () => {
-  const plains = TILE_BY_KEY.get('plains');
-  const pixels = buildTilePixels(Uint8Array.of(plains.id));
+  const grassland = TILE_BY_KEY.get('grassland');
+  const pixels = buildTilePixels(Uint8Array.of(grassland.id));
   assert.equal(pixels.length, 4);
-  assert.equal(pixels[3], plains.id);
+  assert.equal(pixels[3], grassland.id);
 });
 
 test('buildTilePixels accepts an imported custom biome definition', () => {
@@ -69,9 +69,9 @@ test('buildSurfaceMaskPixels samples halo exterior at most O(halo² - chunk²)',
       return 0;
     },
     maskConfig: createSurfaceMaskConfig({
-      path: { blendCells, tileId: 3 },
-      water: { tileId: 2 },
-      grass: { tileIds: [0, 1, 4] },
+      path: { blendCells, tileId: 13 },
+      water: { tileId: 0 },
+      grass: { tileIds: [3, 4, 5, 6, 7, 8, 9, 12, 14] },
     }),
   });
   const exteriorCells = haloSize * haloSize - chunkSize * chunkSize;

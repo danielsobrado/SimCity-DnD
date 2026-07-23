@@ -1,6 +1,6 @@
 import { MINIMAP_SIZE } from './constants.js';
 import { exportMap, importMap, loadFromBrowser, saveToBrowser } from './storage.js';
-import { TILE_BY_ID, hexToRgbBytes } from './tileCatalog.js';
+import { hexToRgbBytes } from './tileCatalog.js';
 
 const TERRAIN_MODE_LABELS = Object.freeze({
   paint: 'Paint',
@@ -16,11 +16,21 @@ function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
 export class EditorUi {
   constructor({ root, config, tileCatalog, tileMap, heightField, objectCatalog, objectMap }) {
     this.root = root;
     this.config = config;
-    this.tileCatalog = tileCatalog;
+    this.baseTileCatalog = [...tileCatalog];
+    this.tileCatalog = [...tileCatalog];
     this.tileMap = tileMap;
     this.heightField = heightField;
     this.objectCatalog = objectCatalog;
@@ -201,10 +211,12 @@ export class EditorUi {
       this.fileInput.value = '';
       if (!file) return;
       try {
-        controller.loadDocument(await importMap(file, {
+        const document = await importMap(file, {
           config: this.config,
           resolveAzgaarOptions: (summary) => this.resolveAzgaarImportOptions(summary),
-        }));
+        });
+        controller.loadDocument(document);
+        this.syncImportedBiomeTiles(document);
         this.minimapCenter = controller.getFocusCell?.() ?? this.minimapCenter;
         this.updateMinimap();
         this.showToast('World imported.');
@@ -235,12 +247,30 @@ export class EditorUi {
 
   renderTileButtons() {
     this.palette.innerHTML = this.tileCatalog.map((tile) => `
-      <button class="tile-button" type="button" data-tile-id="${tile.id}" title="${tile.label}">
+      <button class="tile-button" type="button" data-tile-id="${tile.id}" title="${escapeHtml(tile.label)}">
         <span class="tile-button__swatch" style="background:${tile.color}"></span>
-        <span class="tile-button__label">${tile.icon} ${tile.label}</span>
-        <span class="tile-button__shortcut">${tile.shortcut}</span>
+        <span class="tile-button__label">${escapeHtml(tile.icon)} ${escapeHtml(tile.label)}</span>
+        <span class="tile-button__shortcut">${escapeHtml(tile.shortcut)}</span>
       </button>
     `).join('');
+  }
+
+  syncImportedBiomeTiles(document) {
+    const importedTiles = (document.world?.baseTerrain?.biomes ?? []).map((biome) => ({
+      id: biome.tileId,
+      key: biome.key,
+      label: biome.name,
+      shortcut: '',
+      color: biome.color,
+      icon: biome.icon,
+      terrainClass: biome.terrainClass,
+    }));
+    const importedById = new Map(importedTiles.map((tile) => [tile.id, tile]));
+    this.tileCatalog = [
+      ...this.baseTileCatalog.map((tile) => importedById.get(tile.id) ?? tile),
+      ...importedTiles.filter((tile) => !this.baseTileCatalog.some(({ id }) => id === tile.id)),
+    ];
+    this.renderTileButtons();
   }
 
   resolveAzgaarImportOptions(summary) {
@@ -250,6 +280,8 @@ export class EditorUi {
       `Azgaar macro atlas: ${summary.atlasWidth} × ${summary.atlasHeight}\n`
         + `Source scale: ${defaultWidthKm.toLocaleString()} × `
         + `${defaultHeightKm.toLocaleString()} km\n`
+        + `Biomes: ${summary.standardBiomeCount} standard`
+        + `${summary.customBiomeCount ? ` + ${summary.customBiomeCount} custom` : ''}\n`
         + `Estimated raw atlas memory: `
         + `${(summary.estimatedRawBytes / 1024 / 1024).toFixed(1)} MiB\n\n`
         + 'Playable world width in kilometers:',
@@ -308,7 +340,7 @@ export class EditorUi {
     this.root.querySelector('[data-action="delete-selected"]').disabled = !state.selectedObject;
 
     this.objectCount.textContent = `${state.objectCount} object${state.objectCount === 1 ? '' : 's'}`;
-    const tile = TILE_BY_ID.get(state.selectedTileId);
+    const tile = this.tileMap.getTileDefinition(state.selectedTileId);
     const objectDefinition = this.objectByKey.get(state.selectedObjectKey);
     const rotatedFootprint = state.objectRotation % 2 === 0
       ? objectDefinition.footprint
@@ -390,6 +422,7 @@ export class EditorUi {
             return;
           }
           this.controller.loadDocument(worldDocument);
+          this.syncImportedBiomeTiles(worldDocument);
           this.showToast('Browser save loaded.');
           break;
         }
@@ -431,7 +464,7 @@ export class EditorUi {
       for (let pixelX = 0; pixelX < MINIMAP_SIZE; pixelX += 1) {
         const x = minimumX + Math.floor(pixelX * this.minimapCells / MINIMAP_SIZE);
         const z = minimumZ + Math.floor(pixelZ * this.minimapCells / MINIMAP_SIZE);
-        const tile = TILE_BY_ID.get(this.tileMap.get(x, z));
+        const tile = this.tileMap.getTileDefinition(this.tileMap.get(x, z));
         const [red, green, blue] = hexToRgbBytes(tile.color);
         const height = this.heightField.getCellHeight(x, z) ?? 0;
         const shade = clamp(

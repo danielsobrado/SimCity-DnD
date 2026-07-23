@@ -9,7 +9,7 @@ import {
   VALID_TERRAIN_MODES,
 } from './constants.js';
 import { createWorldDocument, loadWorldDocument } from './WorldDocument.js';
-import { TILE_BY_ID, TILE_BY_SHORTCUT } from './tileCatalog.js';
+import { TILE_BY_SHORTCUT } from './tileCatalog.js';
 
 export class EditorController {
   constructor({
@@ -35,7 +35,7 @@ export class EditorController {
     this.terrainConfig = terrainConfig;
     this.tool = 'terrain';
     this.terrainMode = 'paint';
-    this.selectedTileId = 0;
+    this.selectedTileId = 4;
     this.selectedObjectKey = objectCatalog[0].key;
     this.objectRotation = 0;
     this.selectedObjectId = null;
@@ -140,7 +140,7 @@ export class EditorController {
   }
 
   selectTile(tileId) {
-    if (!TILE_BY_ID.has(tileId)) {
+    if (!this.tileMap.getTileDefinition?.(tileId)) {
       return;
     }
     this.selectedTileId = tileId;
@@ -689,7 +689,7 @@ export class EditorController {
   updatePreviews() {
     if (this.tool === 'terrain') {
       const color = this.terrainMode === 'paint'
-        ? TILE_BY_ID.get(this.selectedTileId).color
+        ? this.tileMap.getTileDefinition(this.selectedTileId).color
         : TERRAIN_PREVIEW_COLORS[this.terrainMode];
       this.terrainView.setPreview(this.hoveredCell, this.brushSize, color);
       this.objectView.setPreview(null);
@@ -775,7 +775,7 @@ export class EditorController {
 
   emitHover(cell) {
     const tileId = cell ? this.tileMap.get(cell.x, cell.z) : null;
-    const tile = tileId === null ? null : TILE_BY_ID.get(tileId);
+    const tile = tileId === null ? null : this.tileMap.getTileDefinition?.(tileId);
     const object = cell ? this.objectMap.findAt(cell.x, cell.z) : null;
     const objectDefinition = object
       ? this.objectMap.getDefinition(object.definitionKey)

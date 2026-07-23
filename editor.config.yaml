@@ -1,6 +1,6 @@
 map:
   tileSize: 2
-  defaultTile: plains
+  defaultTile: grassland
   chunkSize: 32
 import:
   azgaarAtlasLongEdge: 2000
@@ -70,7 +70,7 @@ stylizedSurface:
     bladesPerClump: 8
     influenceTextureSize: 32
     outerRingDensity: 0.45
-    tileIds: [0, 1, 4]
+    tileIds: [3, 4, 5, 6, 7, 8, 9, 12, 14]
     minWidth: 0.06
     maxWidth: 0.06
     minLength: 0.15
@@ -151,13 +151,13 @@ stylizedSurface:
     bladeCut: 0.85
     bladeBlend: 0.65
   path:
-    tileId: 3
+    tileId: 13
     blendCells: 2.5
   rocks:
     enabled: true
     residentRadius: 1
     perChunk: 5
-    tileIds: [0, 1, 5]
+    tileIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15]
     minScale: 0.65
     maxScale: 1.2
     radius: 1.8
@@ -169,7 +169,7 @@ stylizedSurface:
     residentRadius: 1
     perChunk: 480
     outerRingDensity: 0.5
-    tileIds: [0, 1, 4]
+    tileIds: [3, 4, 5, 6, 7, 8, 9, 12, 14]
     minSize: 0.45
     maxSize: 0.6
     dirtMax: 0.2
@@ -187,7 +187,7 @@ stylizedSurface:
     residentRadius: 1
     perChunk: 12
     clearRadius: 3.5
-    tileIds: [1]
+    tileIds: [5, 6, 7, 8, 9, 12]
     minScale: 0.85
     maxScale: 1.15
     leafBottom: '#1c3b23'
@@ -209,7 +209,7 @@ stylizedSurface:
     barkRelief: 1.0
   water:
     enabled: true
-    tileId: 2
+    tileId: 0
     heightOffset: 0.12
     scale: 0.23
     cellSmoothness: 0.46

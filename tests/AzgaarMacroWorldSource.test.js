@@ -52,6 +52,10 @@ function createDocument() {
       color: ['#466eab', '#fbe79f', '#b5b887', '#d2d082', '#c8d68f', '#b6d95d',
         '#29bc56', '#7dcb35', '#409c43', '#4b6b32', '#96784b', '#d5e7eb',
         '#0b9131', '#7f5ac6'],
+      habitability: [...Array(13), 44],
+      cost: [...Array(13), 275],
+      iconsDensity: [...Array(13), 75],
+      icons: [...Array.from({ length: 13 }, () => []), ['crystal', 'crystal', 'deadTree']],
     },
   };
 }
@@ -73,6 +77,8 @@ test('summarizes a non-square Azgaar atlas and preserves its physical scale', ()
   assert.equal(summary.physicalWidthMeters, 3_000_000);
   assert.equal(summary.physicalHeightMeters, 1_800_000);
   assert.equal(summary.distanceUnit, 'km');
+  assert.equal(summary.standardBiomeCount, 13);
+  assert.equal(summary.customBiomeCount, 1);
   assert.ok(summary.estimatedRawBytes >= 10 * 6 * 4);
 });
 
@@ -110,6 +116,10 @@ test('encodes a portable macro atlas with height, biome, feature, and river data
       terrainClass: 'plains',
       supportsGrass: true,
       supportsTrees: false,
+      habitability: 44,
+      movementCost: 275,
+      reliefIconDensity: 75,
+      reliefIcons: ['crystal', 'crystal', 'deadTree'],
     },
   );
 

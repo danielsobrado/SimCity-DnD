@@ -1,3 +1,5 @@
+import { createAzgaarBiomeDefinitions } from '../AzgaarBiomeCatalog.js';
+
 const MACRO_SOURCE_KIND = 'azgaar-macro-v1';
 const MACRO_SOURCE_VERSION = 1;
 const UINT8_RAW = 'base64-u8-v1';
@@ -264,6 +266,7 @@ export function decodeMacroAtlas(source) {
 export function buildAzgaarImportSummary(document, config, options = {}) {
   const atlas = resolveAtlasDimensions(document, config);
   const physical = resolvePhysicalDimensions(document, options);
+  const biomeDefinitions = createAzgaarBiomeDefinitions(document.biomesData);
   return Object.freeze({
     atlasWidth: atlas.width,
     atlasHeight: atlas.height,
@@ -272,6 +275,8 @@ export function buildAzgaarImportSummary(document, config, options = {}) {
     distanceScale: physical.distanceScale,
     distanceUnit: physical.distanceUnit,
     usedCustomUnitFallback: physical.usedCustomUnitFallback,
+    standardBiomeCount: biomeDefinitions.filter((biome) => biome.standard).length,
+    customBiomeCount: biomeDefinitions.filter((biome) => !biome.standard).length,
     estimatedRawBytes: atlas.width * atlas.height * 4,
   });
 }
@@ -282,6 +287,7 @@ export function createAzgaarMacroWorldSource(document, config, options = {}) {
   const heights = new Uint8Array(length);
   const biomes = new Uint8Array(length);
   const features = new Uint16Array(length);
+  const observedBiomeIds = new Set();
   const lookup = buildGridCellLookup(document.grid);
   const packByGrid = buildPackByGrid(document.pack);
 
@@ -294,6 +300,7 @@ export function createAzgaarMacroWorldSource(document, config, options = {}) {
       const index = y * summary.atlasWidth + x;
       heights[index] = clamp(Math.round(Number(packCell?.h ?? gridCell.h ?? 0)), 0, 100);
       biomes[index] = clamp(Number(packCell?.biome ?? 0), 0, 255);
+      observedBiomeIds.add(biomes[index]);
       features[index] = clamp(Number(packCell?.f ?? gridCell.f ?? 0), 0, 0xffff);
     }
   }
@@ -336,6 +343,7 @@ export function createAzgaarMacroWorldSource(document, config, options = {}) {
       maxHeight: config.terrain.maxHeight,
       seaLevel: config.world.seaLevel,
     },
+    biomes: createAzgaarBiomeDefinitions(document.biomesData, observedBiomeIds),
     rivers: createRiverData(
       document,
       summary.atlasWidth,

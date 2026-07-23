@@ -66,6 +66,23 @@ test('terrain changes are rejected beneath incompatible objects', () => {
   assert.equal(objectMap.canSetTerrain(0, 0, 2), true);
 });
 
+test('custom Azgaar biomes use their semantic terrain class for placement', () => {
+  const tileMap = new TileMap({ width: 8, height: 8, tileSize: 2, defaultTileId: 32 });
+  tileMap.getTileDefinition = (tileId) => (
+    tileId === 32 ? { id: 32, terrainClass: 'plains' } : null
+  );
+  const objectCatalog = [{
+    ...catalog[0],
+    allowedTileIds: Object.freeze([4]),
+    allowedTerrainClasses: Object.freeze(['plains']),
+  }];
+  const objectMap = new ObjectMap({ tileMap, objectCatalog });
+  assert.equal(
+    objectMap.validatePlacement({ definitionKey: 'house', x: 3, z: 3, rotation: 0 }).valid,
+    true,
+  );
+});
+
 test('object documents round-trip without overlaps', () => {
   const { objectMap } = createMaps();
   objectMap.place({ definitionKey: 'house', x: 3, z: 3, rotation: 0 });

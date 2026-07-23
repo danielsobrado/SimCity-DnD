@@ -4,6 +4,7 @@ import {
   AZGAAR_STANDARD_BIOMES,
   createAzgaarBiomeDefinitions,
 } from '../src/editor/AzgaarBiomeCatalog.js';
+import { TILE_BY_KEY, TILE_CATALOG } from '../src/editor/tileCatalog.js';
 
 const STANDARD_NAMES = [
   'Marine',
@@ -30,6 +31,11 @@ test('defines all 13 standard Azgaar biomes as distinct terrain types', () => {
   assert.deepEqual(AZGAAR_STANDARD_BIOMES.map((biome) => biome.tileId), [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
   ]);
+  assert.deepEqual(TILE_CATALOG.slice(0, 13).map((tile) => tile.id), [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+  ]);
+  assert.equal(TILE_BY_KEY.get('road').id, 13);
+  assert.equal(TILE_BY_KEY.get('farm').id, 14);
 });
 
 test('preserves exported standard colors and allocates deterministic custom biome ids', () => {
@@ -77,4 +83,13 @@ test('creates definitions for custom biome ids used by cells even when metadata 
   assert.equal(custom.tileId, 32);
   assert.equal(custom.name, 'Custom biome 19');
   assert.match(custom.color, /^#[0-9a-f]{6}$/);
+});
+
+test('rejects custom biome metadata outside Azgaar unsigned-byte ids', () => {
+  const names = [...STANDARD_NAMES];
+  names[256] = 'Out of range';
+  assert.throws(
+    () => createAzgaarBiomeDefinitions({ name: names }),
+    /unsigned byte/i,
+  );
 });

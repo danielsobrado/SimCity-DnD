@@ -1,5 +1,6 @@
 import { cellKey, parseCellKey } from './WorldCoordinates.js';
 import { WORLD_MAX_SAFE_CELL_COORDINATE } from './worldConstants.js';
+import { TILE_BY_ID } from '../tileCatalog.js';
 
 export class ChunkedTileMap {
   constructor({ worldStore, defaultTileId }) {
@@ -34,6 +35,10 @@ export class ChunkedTileMap {
 
   get(x, z) {
     return this.inBounds(x, z) ? this.worldStore.getTile(x, z) : null;
+  }
+
+  getTileDefinition(tileId) {
+    return this.worldStore.generator.getTileDefinition?.(tileId) ?? TILE_BY_ID.get(tileId) ?? null;
   }
 
   paintSquare(centerX, centerZ, brushSize, tileId, canPaint = null) {

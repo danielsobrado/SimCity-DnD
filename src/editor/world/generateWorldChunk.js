@@ -25,7 +25,7 @@ function resolveMaskConfig(request) {
     return {
       blendCells: provided.blendCells,
       roadTileId: provided.roadTileId,
-      waterTileId: provided.waterTileId ?? 2,
+      waterTileId: provided.waterTileId ?? 0,
       grassTileIds: [...provided.grassTileIds],
     };
   }
@@ -70,10 +70,12 @@ export function generateBaseWorldChunk(request) {
     heights,
   };
 
+  const maskConfig = resolveMaskConfig(request);
   enrichPageRenderPixels(
     page,
     (cellX, cellZ) => generator.sampleTile(cellX, cellZ),
-    resolveMaskConfig(request),
+    generator.getSurfaceMaskConfig?.(maskConfig) ?? maskConfig,
+    (tileId) => generator.getTileDefinition?.(tileId),
   );
 
   return page;

@@ -36,7 +36,7 @@ test('stylized environment config validates all enabled layers', async () => {
   assert.ok(surface.grass.bladesPerCell > 0);
   assert.ok(surface.translucency.strength > 0);
   assert.ok(surface.path.blendCells > 0);
-  assert.equal(surface.water.tileId, 2);
+  assert.equal(surface.water.tileId, 0);
   assert.ok(Array.isArray(surface.flowers.tileIds) && surface.flowers.tileIds.length > 0);
 });
 

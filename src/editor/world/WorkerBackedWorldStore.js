@@ -106,10 +106,13 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
   }
 
   refreshPageRenderPixels(page) {
+    const maskConfig = this.generator.getSurfaceMaskConfig?.(this.surfaceMaskConfig)
+      ?? this.surfaceMaskConfig;
     return enrichPageRenderPixels(
       page,
       (cellX, cellZ) => this.getTile(cellX, cellZ),
-      this.surfaceMaskConfig,
+      maskConfig,
+      (tileId) => this.generator.getTileDefinition?.(tileId),
     );
   }
 

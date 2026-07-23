@@ -105,10 +105,17 @@ approaches them. Generated clean pages are evicted and regenerated
 deterministically. Only edits remain as sparse overrides, so memory and save
 growth are not proportional to the physical world area.
 
+Azgaar biome IDs are the canonical terrain IDs. All 13 standard biomes remain
+distinct, including savanna versus grassland, every forest type, cold desert,
+tundra, glacier, and wetland. Exported biome colors are retained. Maps with
+additional biome definitions receive deterministic terrain IDs in the reserved
+`32–254` range. Names, colors, habitability, movement cost, and relief-icon
+metadata travel with the world document.
+
 The macro source imports:
 
 - Interpolated elevation with deterministic local relief.
-- Land, ocean, forest, desert, wetland, snow, and rocky terrain.
+- All 13 standard Azgaar biomes plus map-defined custom biomes.
 - River centerlines used to generate local water channels.
 - Feature identifiers for future overlays and simulation.
 - Source map information.
