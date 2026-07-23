@@ -19,6 +19,7 @@ import { PerfQaHarness } from './editor/performance/qa/PerfQaHarness.js';
 import { PlayerController } from './editor/player/PlayerController.js';
 import { ViewModeController } from './editor/player/ViewModeController.js';
 import { ViewModeUi } from './editor/player/ViewModeUi.js';
+import { isTreeImpostorBakeMode } from './editor/stylized/impostorBakeMode.js';
 import { StylizedSurfaceView } from './editor/stylized/StylizedSurfaceView.js';
 import { TerrainAwareEditorController } from './editor/TerrainAwareEditorController.js';
 import { TILE_BY_KEY, TILE_CATALOG } from './editor/tileCatalog.js';
@@ -43,6 +44,7 @@ const TERRAIN_PREFETCH_REFRESH_MS = 200;
 
 async function startEditor() {
   const config = loadEditorConfig();
+  const impostorBakeMode = isTreeImpostorBakeMode();
   const defaultTile = TILE_BY_KEY.get(config.map.defaultTile);
   if (!defaultTile) {
     throw new Error(`Unknown default tile: ${config.map.defaultTile}.`);
@@ -139,6 +141,11 @@ async function startEditor() {
     baseUrl: import.meta.env.BASE_URL,
   });
 
+  if (impostorBakeMode) {
+    await stylizedSurface.bakeRequest;
+    return;
+  }
+
   const editorCamera = new EditorCamera({
     canvas: terrainView.renderer.domElement,
     viewSize: config.camera.viewSize,
@@ -217,7 +224,6 @@ async function startEditor() {
     perfQa.mount(root);
     perfQa.publishApi();
     if (perfQa.config.autostart) {
-      // Let the first streaming/render pass settle before scripted motion.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => perfQa.start());
       });
@@ -255,7 +261,6 @@ async function startEditor() {
       nextFrameRateDisplayAt = frameTimestamp + FRAME_RATE_DISPLAY_INTERVAL_MS;
     }
 
-    // Continue budgeted terrain page commits (memcpy only; masks built in worker).
     terrainView.flushUploadQueue();
     if (profiling) perfQa.mark('terrainCommit');
 
