@@ -31,6 +31,15 @@ test('buildTilePixels writes RGBA color + tile id', () => {
   assert.equal(pixels[3], plains.id);
 });
 
+test('buildTilePixels accepts an imported custom biome definition', () => {
+  const definitions = new Map([[
+    32,
+    { id: 32, color: '#7f5ac6' },
+  ]]);
+  const pixels = buildTilePixels(Uint8Array.of(32), definitions);
+  assert.deepEqual([...pixels], [127, 90, 198, 32]);
+});
+
 test('computeRoadDistanceField zeros roads and spreads outward', () => {
   const width = 3;
   const height = 3;

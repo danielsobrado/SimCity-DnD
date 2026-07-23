@@ -47,7 +47,11 @@ function createDocument() {
     },
     biomesData: {
       name: ['Marine', 'Hot desert', 'Cold desert', 'Savanna', 'Grassland',
-        'Tropical seasonal forest', 'Temperate deciduous forest'],
+        'Tropical seasonal forest', 'Temperate deciduous forest', 'Tropical rainforest',
+        'Temperate rainforest', 'Taiga', 'Tundra', 'Glacier', 'Wetland', 'Crystal barrens'],
+      color: ['#466eab', '#fbe79f', '#b5b887', '#d2d082', '#c8d68f', '#b6d95d',
+        '#29bc56', '#7dcb35', '#409c43', '#4b6b32', '#96784b', '#d5e7eb',
+        '#0b9131', '#7f5ac6'],
     },
   };
 }
@@ -89,6 +93,25 @@ test('encodes a portable macro atlas with height, biome, feature, and river data
   assert.equal(source.bounds.heightCells, 900_000);
   assert.ok(source.oceanTransitionCells > 0);
   assert.equal(source.rivers.length, 1);
+  assert.equal(source.biomes.length, 14);
+  assert.equal(source.biomes[0].name, 'Marine');
+  assert.equal(source.biomes[0].tileId, 2);
+  assert.equal(source.biomes[12].name, 'Wetland');
+  assert.deepEqual(
+    source.biomes[13],
+    {
+      sourceId: 13,
+      tileId: 32,
+      key: 'azgaar_custom_13',
+      name: 'Crystal barrens',
+      color: '#7f5ac6',
+      icon: '🗺️',
+      standard: false,
+      terrainClass: 'plains',
+      supportsGrass: true,
+      supportsTrees: false,
+    },
+  );
 
   const decoded = decodeMacroAtlas(source);
   assert.equal(decoded.heights.length, 60);
@@ -98,4 +121,3 @@ test('encodes a portable macro atlas with height, biome, feature, and river data
   assert.ok(decoded.biomes.includes(6));
   assert.ok(decoded.features.includes(1));
 });
-
