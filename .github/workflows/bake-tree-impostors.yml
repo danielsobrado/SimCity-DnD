@@ -13,12 +13,23 @@ on:
       - src/editor/stylized/StylizedTreeView.js
       - src/editor/stylized/TreeLodAssembler.js
       - src/editor/stylized/impostor/**
+  pull_request:
+    paths:
+      - .github/workflows/bake-tree-impostors.yml
+      - docs/qa/impostor-bake-trigger.md
+      - editor.config.yaml
+      - public/assets/grass-scene.glb
+      - scripts/bake-tree-impostors.mjs
+      - scripts/validate-impostors.mjs
+      - src/editor/stylized/StylizedTreeView.js
+      - src/editor/stylized/TreeLodAssembler.js
+      - src/editor/stylized/impostor/**
 
 permissions:
   contents: write
 
 concurrency:
-  group: offline-tree-impostors-main
+  group: offline-tree-impostors-${{ github.event.pull_request.number || 'main' }}
   cancel-in-progress: true
 
 jobs:
@@ -27,10 +38,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout current main
+      - name: Checkout event revision
         uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -68,6 +78,7 @@ jobs:
           retention-days: 7
 
       - name: Commit generated assets
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
