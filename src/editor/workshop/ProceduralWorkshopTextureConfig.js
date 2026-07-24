@@ -3,7 +3,7 @@ const MAX_SOURCE_INPUT_COUNT = 8;
 const MAX_SOURCE_DATA_URL_LENGTH = 800_000;
 const MAX_TOTAL_DATA_URL_LENGTH = 2_400_000;
 const VALID_SOURCE_ID = /^albedo-[a-z0-9-]+$/;
-const VALID_DATA_URL = /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i;
+const VALID_DATA_URL = /^data:image\/(png|jpeg|webp);base64,([a-z0-9+/]+={0,2})$/i;
 const VALID_TINT = /^#[0-9a-f]{6}$/i;
 const VALID_MAPPINGS = new Set(['repeat', 'mirror', 'clamp']);
 const VALID_ROTATIONS = new Set([0, 90, 180, 270]);
@@ -34,18 +34,51 @@ function requireFinite(value, field, minimum, maximum) {
   return number;
 }
 
+function decodeBase64Prefix(payload, byteCount = 12) {
+  if (payload.length % 4 === 1) {
+    throw new Error('Workshop albedo image data is not valid base64.');
+  }
+  const encodedLength = Math.ceil(byteCount / 3) * 4;
+  const encoded = payload.slice(0, encodedLength);
+  try {
+    const decoded = atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '='));
+    return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+  } catch {
+    throw new Error('Workshop albedo image data is not valid base64.');
+  }
+}
+
+function matchesBytes(bytes, offset, expected) {
+  return expected.every((value, index) => bytes[offset + index] === value);
+}
+
+function validateImageSignature(mimeType, payload) {
+  const bytes = decodeBase64Prefix(payload);
+  const valid = mimeType === 'png'
+    ? matchesBytes(bytes, 0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    : mimeType === 'jpeg'
+      ? matchesBytes(bytes, 0, [0xff, 0xd8, 0xff])
+      : matchesBytes(bytes, 0, [0x52, 0x49, 0x46, 0x46])
+        && matchesBytes(bytes, 8, [0x57, 0x45, 0x42, 0x50]);
+  if (!valid) {
+    throw new Error('Workshop albedo image data does not match its declared format.');
+  }
+}
+
 function normalizeSource(id, input) {
   if (!VALID_SOURCE_ID.test(id)) {
     throw new Error(`Invalid workshop albedo source id: ${id}.`);
   }
   const source = requireObject(input, `Albedo source ${id}`);
   const dataUrl = String(source.dataUrl ?? '');
-  if (!VALID_DATA_URL.test(dataUrl)) {
+  const match = VALID_DATA_URL.exec(dataUrl);
+  if (!match) {
     throw new Error('Workshop albedo textures must be PNG, JPEG, or WebP images.');
   }
   if (dataUrl.length > MAX_SOURCE_DATA_URL_LENGTH) {
     throw new Error('A workshop albedo texture is too large after processing.');
   }
+  validateImageSignature(match[1].toLowerCase(), match[2]);
   return Object.freeze({
     name: String(source.name ?? 'Imported texture').trim().slice(0, 80) || 'Imported texture',
     dataUrl,
