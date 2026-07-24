@@ -374,6 +374,7 @@ export class ProceduralWorkshopUi {
       camera: this.camera,
       orbitControls: this.controls,
       transformControls: this.transformControls,
+      onModeChange: (mode) => this.syncTransformModeButtons(mode),
       onChange: (component) => {
         this.status.textContent = component
           ? `${component.label} edit stored in the object recipe.`
@@ -407,7 +408,14 @@ export class ProceduralWorkshopUi {
       const nextParts = this.manager.createPreviewParts(recipe);
       this.clearPreview();
       this.previewParts = nextParts;
-      this.componentController.replaceParts(nextParts);
+      try {
+        this.componentController.replaceParts(nextParts);
+      } catch (error) {
+        this.componentController.clear();
+        disposeModelParts(nextParts);
+        this.previewParts = [];
+        throw error;
+      }
       this.syncTransformModeButtons(this.componentController.mode);
       this.framePreview();
       const stats = nextParts.stats;
