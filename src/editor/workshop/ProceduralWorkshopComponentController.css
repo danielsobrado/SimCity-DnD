@@ -1,7 +1,7 @@
 .workshop-component-editor {
   position: absolute;
   left: 18px;
-  bottom: 18px;
+  bottom: 52px;
   z-index: 5;
   display: grid;
   gap: 6px;
@@ -40,14 +40,26 @@
   line-height: 1.35;
 }
 
+.workshop-gizmo-tools {
+  max-width: calc(100% - 56px);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .workshop-gizmo-tools [data-workshop-action="scale"] {
   min-width: 48px;
 }
 
 @media (max-width: 860px) {
   .workshop-component-editor {
-    bottom: 12px;
+    bottom: 48px;
     left: 12px;
     width: calc(100% - 24px);
+  }
+
+  .workshop-gizmo-tools {
+    top: 54px;
+    right: 22px;
+    max-width: calc(100% - 44px);
   }
 }
