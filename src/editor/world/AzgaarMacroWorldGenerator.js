@@ -2,6 +2,9 @@ import { decodeMacroAtlas } from '../import/AzgaarMacroWorldSource.js';
 
 const WATER_TILE_ID = 0;
 const LAND_HEIGHT = 20;
+// Fraction of the vertical exaggeration that also drives high-frequency
+// ruggedness. Keeps peaks jagged without turning them into unwalkable spikes.
+const MOUNTAIN_RUGGEDNESS = 0.25;
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
@@ -43,12 +46,18 @@ function pointSegmentDistance(px, py, ax, ay, bx, by) {
   return Math.hypot(px - (ax + dx * amount), py - (ay + dy * amount));
 }
 
+function landReliefFraction(rawHeight, terrain) {
+  const normalized = clamp((rawHeight - LAND_HEIGHT) / (100 - LAND_HEIGHT), 0, 1);
+  const exponent = terrain.reliefExponent ?? 1;
+  return exponent === 1 ? normalized : normalized ** exponent;
+}
+
 function convertHeight(rawHeight, terrain) {
   if (rawHeight < LAND_HEIGHT) {
     return terrain.minHeight * clamp((LAND_HEIGHT - rawHeight) / LAND_HEIGHT, 0, 1) * 0.35;
   }
-  return clamp((rawHeight - LAND_HEIGHT) / (100 - LAND_HEIGHT), 0, 1)
-    * terrain.maxHeight * 0.85;
+  const exaggeration = terrain.verticalExaggeration ?? 1;
+  return landReliefFraction(rawHeight, terrain) * terrain.maxHeight * 0.85 * exaggeration;
 }
 
 function createRiverIndex(rivers, width, height) {
@@ -253,11 +262,17 @@ export class AzgaarMacroWorldGenerator {
     }
     if (rawHeight < LAND_HEIGHT) return base;
     const coastFade = clamp((rawHeight - LAND_HEIGHT) / 10, 0, 1);
+    // Rugged high country: extra relief grows with elevation and exaggeration
+    // so peaks stay jagged while plains stay smooth. ruggedness === 1 when
+    // verticalExaggeration === 1, keeping unscaled imports bit-identical.
+    const exaggeration = this.source.terrain.verticalExaggeration ?? 1;
+    const elevationFraction = landReliefFraction(rawHeight, this.source.terrain);
+    const ruggedness = 1 + (exaggeration - 1) * elevationFraction * MOUNTAIN_RUGGEDNESS;
     const detail = (
       valueNoise(vertexX / 96, vertexZ / 96, this.seed + 1709) * 1.4
       + valueNoise(vertexX / 24, vertexZ / 24, this.seed + 1877) * 0.35
     );
-    return base + detail * coastFade;
+    return base + detail * coastFade * ruggedness;
   }
 
   isRiver(cellX, cellZ) {

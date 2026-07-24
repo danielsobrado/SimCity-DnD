@@ -1,4 +1,5 @@
 import { INFINITE_WORLD_FORMAT_VERSION } from '../world/worldConstants.js';
+import { createAzgaarCartographySource } from './AzgaarCartographySource.js';
 import {
   buildAzgaarImportSummary,
   createAzgaarMacroWorldSource,
@@ -19,7 +20,7 @@ function cloneCampaignArray(value) {
   return Array.isArray(value) ? structuredClone(value) : [];
 }
 
-function createCampaign(document, baseTerrain, summary) {
+function createCampaign(document, baseTerrain, summary, cartography) {
   return {
     source: {
       type: 'azgaar-full-json',
@@ -39,6 +40,7 @@ function createCampaign(document, baseTerrain, summary) {
         boundary: 'ocean',
       },
     },
+    ...(cartography ? { cartography } : {}),
     states: cloneCampaignArray(document.pack?.states),
     provinces: cloneCampaignArray(document.pack?.provinces),
     cultures: cloneCampaignArray(document.pack?.cultures),
@@ -69,6 +71,9 @@ export function importAzgaarFullJson(document, config, options = {}) {
   const chunkSize = config.world.chunkSize;
   const summary = buildAzgaarImportSummary(document, config, options);
   const baseTerrain = createAzgaarMacroWorldSource(document, config, options);
+  const cartography = Array.isArray(document.pack?.vertices)
+    ? createAzgaarCartographySource(document)
+    : null;
   return {
     version: INFINITE_WORLD_FORMAT_VERSION,
     world: {
@@ -86,7 +91,7 @@ export function importAzgaarFullJson(document, config, options = {}) {
     objects: [],
     voxelWorld: { unboundedXZ: true, cellsY: config.voxelPrototype.cells[1] },
     voxelStamps: [],
-    campaign: createCampaign(document, baseTerrain, summary),
+    campaign: createCampaign(document, baseTerrain, summary, cartography),
     importWarnings: [
       `Azgaar macro atlas ${summary.atlasWidth}×${summary.atlasHeight}; `
         + `${Math.round(summary.physicalWidthMeters / 1000)}×`

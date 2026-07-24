@@ -134,6 +134,24 @@ bounds transitions into deep ocean over
 `import.azgaarOceanTransitionKilometers`. Direct Azgaar `.map` files are not
 supported; export Full JSON from Azgaar first.
 
+### Mountain relief
+
+Azgaar worlds are often thousands of kilometers wide, which compresses real
+mountain ranges into imperceptible bumps. Two import settings rescale imported
+land elevation into dramatic, walkable mountains without shrinking the world or
+altering coastlines:
+
+- `import.azgaarVerticalExaggeration` multiplies land height (default `1`; at
+  `48`, Eldara's peaks reach roughly 2 km).
+- `import.azgaarReliefExponent` (default `1`) concentrates height into peaks
+  when greater than `1`, so plains stay flat while summits tower.
+
+Both default to `1` (no rescale) and are baked into the version 6 document at
+import time, so streamed terrain reproduces the same relief deterministically.
+High-frequency ruggedness scales with elevation, keeping peaks jagged and
+lowlands smooth. Manual terrain sculpting still clamps to `terrain.maxHeight`,
+so raising already-exaggerated mountains by hand is limited.
+
 ## World content providers
 
 Terrain is deterministic and does not need to be downloaded or cached on disk.

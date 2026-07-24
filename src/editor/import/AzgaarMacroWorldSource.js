@@ -20,6 +20,11 @@ function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
+function resolvePositive(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+}
+
 function bytesToBase64(bytes) {
   if (typeof Buffer !== 'undefined') {
     return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
@@ -342,6 +347,8 @@ export function createAzgaarMacroWorldSource(document, config, options = {}) {
       minHeight: config.terrain.minHeight,
       maxHeight: config.terrain.maxHeight,
       seaLevel: config.world.seaLevel,
+      verticalExaggeration: resolvePositive(config.import?.azgaarVerticalExaggeration, 1),
+      reliefExponent: resolvePositive(config.import?.azgaarReliefExponent, 1),
     },
     biomes: createAzgaarBiomeDefinitions(document.biomesData, observedBiomeIds),
     rivers: createRiverData(

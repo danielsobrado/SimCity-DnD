@@ -340,6 +340,17 @@ export function validateEditorConfig(config) {
     throw new Error('Invalid editor configuration: world.seaLevel must be finite.');
   }
 
+  if (config.import.azgaarVerticalExaggeration !== undefined
+      && (!Number.isFinite(config.import.azgaarVerticalExaggeration)
+        || config.import.azgaarVerticalExaggeration <= 0)) {
+    throw new Error('Invalid editor configuration: import.azgaarVerticalExaggeration must be positive.');
+  }
+  if (config.import.azgaarReliefExponent !== undefined
+      && (!Number.isFinite(config.import.azgaarReliefExponent)
+        || config.import.azgaarReliefExponent <= 0)) {
+    throw new Error('Invalid editor configuration: import.azgaarReliefExponent must be positive.');
+  }
+
   if (config.player.fovDegrees >= 180) {
     throw new Error('Invalid editor configuration: player.fovDegrees must be below 180.');
   }

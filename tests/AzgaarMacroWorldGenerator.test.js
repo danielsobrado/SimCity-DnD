@@ -58,6 +58,12 @@ const metadata = {
   seaLevel: -1.5,
 };
 
+function createReliefSource({ verticalExaggeration = 1, reliefExponent = 1 } = {}) {
+  const source = createSource();
+  source.terrain = { ...source.terrain, verticalExaggeration, reliefExponent };
+  return source;
+}
+
 test('macro generation is deterministic and respects ocean bounds', () => {
   const generator = new AzgaarMacroWorldGenerator(createSource(), metadata);
   assert.equal(generator.sampleTile(-7, 0), 0);
@@ -101,6 +107,67 @@ test('clean macro chunks can be evicted and regenerated identically', () => {
   const second = generateBaseWorldChunk(request);
   assert.deepEqual(first.tiles, second.tiles);
   assert.deepEqual(first.heights, second.heights);
+});
+
+test('unscaled imports match explicit neutral relief bit-for-bit', () => {
+  const plain = new AzgaarMacroWorldGenerator(createSource(), metadata);
+  const neutral = new AzgaarMacroWorldGenerator(
+    createReliefSource({ verticalExaggeration: 1, reliefExponent: 1 }),
+    metadata,
+  );
+  for (const [x, z] of [[0, 0], [1, 0], [0, 1], [-2, 1]]) {
+    assert.equal(plain.sampleHeight(x, z), neutral.sampleHeight(x, z));
+  }
+});
+
+test('vertical exaggeration raises imported peaks', () => {
+  const normal = new AzgaarMacroWorldGenerator(
+    createReliefSource({ verticalExaggeration: 1 }),
+    metadata,
+  );
+  const dramatic = new AzgaarMacroWorldGenerator(
+    createReliefSource({ verticalExaggeration: 20 }),
+    metadata,
+  );
+  const normalPeak = normal.sampleHeight(0, 0);
+  const dramaticPeak = dramatic.sampleHeight(0, 0);
+  assert.ok(normalPeak > 0);
+  assert.ok(
+    dramaticPeak > normalPeak * 10,
+    `expected exaggerated peak to be >10x taller, got ${dramaticPeak / normalPeak}`,
+  );
+});
+
+test('relief exponent concentrates elevation into peaks', () => {
+  const linear = new AzgaarMacroWorldGenerator(
+    createReliefSource({ verticalExaggeration: 20, reliefExponent: 1 }),
+    metadata,
+  );
+  const peaked = new AzgaarMacroWorldGenerator(
+    createReliefSource({ verticalExaggeration: 20, reliefExponent: 2 }),
+    metadata,
+  );
+  // Cell (0,0) samples higher raw elevation than cell (-2,0); a >1 exponent
+  // should widen the peak-to-midland height ratio.
+  const ratioLinear = linear.sampleHeight(0, 0) / linear.sampleHeight(-2, 0);
+  const ratioPeaked = peaked.sampleHeight(0, 0) / peaked.sampleHeight(-2, 0);
+  assert.ok(
+    ratioPeaked > ratioLinear,
+    `expected peaked ratio ${ratioPeaked} to exceed linear ratio ${ratioLinear}`,
+  );
+});
+
+test('exaggerated macro chunks still share bit-identical edge heights', () => {
+  const source = createReliefSource({ verticalExaggeration: 30, reliefExponent: 1.5 });
+  const left = generateBaseWorldChunk({
+    chunkX: -1, chunkZ: 0, chunkSize: 4, generator: metadata, baseTerrain: source,
+  });
+  const right = generateBaseWorldChunk({
+    chunkX: 0, chunkZ: 0, chunkSize: 4, generator: metadata, baseTerrain: source,
+  });
+  for (let z = 0; z <= 4; z += 1) {
+    assert.equal(left.heights[z * 5 + 4], right.heights[z * 5]);
+  }
 });
 
 test('river vectors become local water channels without rasterizing the world', () => {

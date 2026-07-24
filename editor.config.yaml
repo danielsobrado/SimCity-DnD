@@ -5,6 +5,14 @@ map:
 import:
   azgaarAtlasLongEdge: 2000
   azgaarOceanTransitionKilometers: 50
+  # Imported Azgaar worlds can be thousands of km wide, which flattens real
+  # mountain ranges to invisibility. These rescale imported land elevation into
+  # dramatic, walkable mountain country without shrinking the world.
+  # verticalExaggeration multiplies land height (peaks reach ~2 km at 48);
+  # reliefExponent > 1 concentrates height into peaks so plains stay flat.
+  # Both default to 1 (no rescale) when omitted.
+  azgaarVerticalExaggeration: 48
+  azgaarReliefExponent: 1.5
 world:
   seed: 918273
   generatorVersion: 1
