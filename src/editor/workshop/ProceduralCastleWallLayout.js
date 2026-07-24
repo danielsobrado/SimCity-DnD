@@ -1,7 +1,11 @@
+import { getComponentTransform } from './ProceduralWorkshopComponentTransforms.js';
+
 const MAX_OPENINGS = 6;
 const MIN_OPENING_WIDTH = 1.05;
 const MAX_OPENING_WIDTH = 2.5;
 const MIN_SPRING_HEIGHT = 1.15;
+const MIN_EDITED_SPRING_HEIGHT = 0.45;
+const OPENING_SIDE_CLEARANCE = 0.12;
 const TOP_CLEARANCE = 0.72;
 
 function clamp(value, minimum, maximum) {
@@ -15,6 +19,51 @@ function openingTargetWidth(shape) {
 export function getCastleWallOpeningCount(recipe) {
   if (!recipe.windows) return 0;
   return clamp(Math.round(recipe.width / openingTargetWidth(recipe.shape)), 1, MAX_OPENINGS);
+}
+
+function transformOpening(recipe, opening, index) {
+  const transform = getComponentTransform(recipe.componentTransforms, `arch-${index + 1}`);
+  const bayLeft = -recipe.width / 2 + opening.bayWidth * index;
+  const bayRight = bayLeft + opening.bayWidth;
+  const maximumWidth = Math.min(
+    MAX_OPENING_WIDTH,
+    Math.max(MIN_OPENING_WIDTH, opening.bayWidth - OPENING_SIDE_CLEARANCE * 2),
+  );
+  const width = clamp(
+    opening.width * transform.scale[0],
+    MIN_OPENING_WIDTH,
+    maximumWidth,
+  );
+  const centerClearance = width / 2 + OPENING_SIDE_CLEARANCE;
+  const centerX = clamp(
+    opening.centerX + transform.position[0],
+    bayLeft + centerClearance,
+    bayRight - centerClearance,
+  );
+  const radius = width / 2;
+  const maximumOpeningTop = Math.max(
+    MIN_EDITED_SPRING_HEIGHT + radius,
+    getCastleWallTopHeight(recipe, centerX) - TOP_CLEARANCE,
+  );
+  const springHeight = clamp(
+    opening.springHeight * transform.scale[1],
+    MIN_EDITED_SPRING_HEIGHT,
+    Math.max(MIN_EDITED_SPRING_HEIGHT, maximumOpeningTop - radius),
+  );
+  const bottom = clamp(
+    transform.position[1],
+    0,
+    Math.max(0, maximumOpeningTop - springHeight - radius),
+  );
+
+  return Object.freeze({
+    centerX,
+    width,
+    radius,
+    springHeight,
+    bottom,
+    bayWidth: opening.bayWidth,
+  });
 }
 
 export function getCastleWallOpenings(recipe) {
@@ -43,14 +92,18 @@ export function getCastleWallOpenings(recipe) {
     maximumSpringHeight,
   );
 
-  return Object.freeze(Array.from({ length: count }, (_, index) => Object.freeze({
-    centerX: -recipe.width / 2 + bayWidth * (index + 0.5),
-    width,
-    radius,
-    springHeight,
-    bottom: 0,
-    bayWidth,
-  })));
+  return Object.freeze(Array.from({ length: count }, (_, index) => transformOpening(
+    recipe,
+    Object.freeze({
+      centerX: -recipe.width / 2 + bayWidth * (index + 0.5),
+      width,
+      radius,
+      springHeight,
+      bottom: 0,
+      bayWidth,
+    }),
+    index,
+  )));
 }
 
 export function getCastleWallTopHeight(recipe, x) {
@@ -89,7 +142,6 @@ export function getCastleWallButtressPositions(recipe, openings) {
   if (openings.length === 0) {
     return Object.freeze([-recipe.width / 2, recipe.width / 2]);
   }
-
   const positions = [-recipe.width / 2, recipe.width / 2];
   for (let index = 0; index < openings.length - 1; index += 1) {
     positions.push((openings[index].centerX + openings[index + 1].centerX) / 2);
