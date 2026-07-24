@@ -26,6 +26,12 @@ function clearPreview(objectView, definitionKeys) {
   objectView.footprintPreview.visible = false;
 }
 
+function requireProceduralDefinition(key, definition) {
+  if (definition && definition.procedural !== true) {
+    throw new Error(`Cannot unregister non-procedural object definition: ${key}.`);
+  }
+}
+
 export function collectProceduralDefinitionKeys({ objectMap, objectView, definitionKeys = [] }) {
   const keys = new Set(definitionKeys);
   for (const [key, definition] of objectMap.definitionByKey) {
@@ -41,17 +47,14 @@ export function unregisterProceduralDefinitions({ objectMap, objectView, definit
   const keys = collectProceduralDefinitionKeys({ objectMap, objectView, definitionKeys });
   if (keys.size === 0) return;
 
+  for (const key of keys) {
+    requireProceduralDefinition(key, objectMap.definitionByKey.get(key));
+    requireProceduralDefinition(key, objectView.definitionByKey.get(key));
+    requireProceduralDefinition(key, objectView.renderers.get(key)?.definition);
+  }
+
   clearPreview(objectView, keys);
   for (const key of keys) {
-    const mapDefinition = objectMap.definitionByKey.get(key);
-    const viewDefinition = objectView.definitionByKey.get(key);
-    if (
-      (mapDefinition && mapDefinition.procedural !== true)
-      || (viewDefinition && viewDefinition.procedural !== true)
-    ) {
-      throw new Error(`Cannot unregister non-procedural object definition: ${key}.`);
-    }
-
     const renderer = objectView.renderers.get(key);
     if (renderer) disposeRenderer(objectView, renderer);
     objectView.renderers.delete(key);
