@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { disposeModelParts } from '../assets/modelParts.js';
 import { createWorkshopStage } from './ProceduralWorkshopStage.js';
+import { ProceduralWorkshopSurfaceEditor } from './ProceduralWorkshopSurfaceEditor.js';
 
 function randomSeed() {
   const values = new Uint32Array(1);
@@ -22,6 +23,7 @@ export class ProceduralWorkshopUi {
     this.controls = null;
     this.transformControls = null;
     this.stage = null;
+    this.surfaceEditor = null;
     this.animationFrame = 0;
     this.previewTimer = 0;
 
@@ -32,7 +34,7 @@ export class ProceduralWorkshopUi {
             <div>
               <p class="workshop-eyebrow">Procedural object workshop</p>
               <h2 id="workshop-title">Sunlit medieval atelier</h2>
-              <p>Sculpt the silhouette and materials, inspect it in game light, then bake it into Objects.</p>
+              <p>Sculpt the silhouette, assign materials by area, inspect it in game light, then bake it into Objects.</p>
             </div>
             <button class="workshop-close" type="button" data-workshop-action="close" aria-label="Close workshop">×</button>
           </header>
@@ -81,6 +83,7 @@ export class ProceduralWorkshopUi {
                   </select>
                 </label>
               </div>
+              <div data-role="workshop-surface-editor"></div>
               <div class="workshop-field-grid">
                 <label>Width (m)<input name="width" type="number" min="2" max="16" step="0.5" value="8" /></label>
                 <label>Depth factor<input name="depth" type="number" min="1" max="12" step="0.5" value="2.5" /></label>
@@ -136,7 +139,7 @@ export class ProceduralWorkshopUi {
               </label>
               <label class="workshop-check">
                 <input name="albedo" type="checkbox" checked />
-                Bake a tileable stone albedo texture
+                Generate procedural stone albedo when no wall or trim image is assigned
               </label>
               <p class="workshop-status" data-role="workshop-status">Ready to generate.</p>
               <div class="workshop-actions">
@@ -164,6 +167,14 @@ export class ProceduralWorkshopUi {
     this.form = root.querySelector('[data-role="workshop-form"]');
     this.canvasHost = root.querySelector('[data-role="workshop-canvas"]');
     this.status = root.querySelector('[data-role="workshop-status"]');
+    this.surfaceEditor = new ProceduralWorkshopSurfaceEditor({
+      root: root.querySelector('[data-role="workshop-surface-editor"]'),
+      onChange: () => this.schedulePreview(70),
+      onStatus: (message, isError) => {
+        this.status.textContent = message;
+        this.status.classList.toggle('is-error', isError);
+      },
+    });
     this.bind();
   }
 
@@ -261,6 +272,7 @@ export class ProceduralWorkshopUi {
         ivy: values.get('ivy') === 'on',
         remesh: values.get('remesh') === 'on',
         albedo: values.get('albedo') === 'on',
+        surfaceTextures: this.surfaceEditor.toDocument(),
       },
     };
   }
@@ -423,6 +435,7 @@ export class ProceduralWorkshopUi {
     this.controls?.dispose();
     this.clearPreview();
     this.stage?.dispose();
+    this.surfaceEditor?.dispose();
     this.renderer?.dispose();
     this.overlay.remove();
   }

@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { mixSeed } from './ProceduralRandom.js';
+import { getSurfaceTexture } from './ProceduralWorkshopTextureConfig.js';
 
 export const STONE_PALETTES = Object.freeze({
   granite: Object.freeze({ base: [137, 143, 146], warm: [165, 154, 136], color: '#91979a' }),
@@ -115,6 +116,53 @@ function woodTexture(seed) {
   });
 }
 
+function configureImportedTexture(texture, selection) {
+  const wrapping = selection.slot.mapping === 'mirror'
+    ? THREE.MirroredRepeatWrapping
+    : selection.slot.mapping === 'clamp'
+      ? THREE.ClampToEdgeWrapping
+      : THREE.RepeatWrapping;
+  const repeat = selection.slot.mapping === 'clamp' ? 1 : selection.slot.repeat;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = wrapping;
+  texture.wrapT = wrapping;
+  texture.center.set(0.5, 0.5);
+  texture.repeat.set(repeat, repeat);
+  texture.rotation = THREE.MathUtils.degToRad(selection.slot.rotation);
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createImportedAlbedoResolver(recipe) {
+  if (typeof Image === 'undefined') {
+    return () => null;
+  }
+  const loader = new THREE.TextureLoader();
+  const sourceTextures = new Map();
+  const sourceUses = new Map();
+  return (slotKey) => {
+    const selection = getSurfaceTexture(recipe.surfaceTextures, slotKey);
+    if (!selection) return null;
+
+    let baseTexture = sourceTextures.get(selection.slot.sourceId);
+    if (!baseTexture) {
+      baseTexture = loader.load(selection.source.dataUrl);
+      baseTexture.name = `workshop-${selection.slot.sourceId}`;
+      sourceTextures.set(selection.slot.sourceId, baseTexture);
+    }
+    const useCount = sourceUses.get(selection.slot.sourceId) ?? 0;
+    const texture = useCount === 0 ? baseTexture : baseTexture.clone();
+    sourceUses.set(selection.slot.sourceId, useCount + 1);
+    configureImportedTexture(texture, selection);
+    return Object.freeze({
+      texture,
+      tint: selection.slot.tint,
+    });
+  };
+}
+
 export function applyStoneColor(geometry, recipe, stableIndex, heightRatio = 0.5) {
   const palette = STONE_PALETTES[recipe.style];
   const tint = (mixSeed(recipe.seed, stableIndex) & 255) / 255;
@@ -136,21 +184,29 @@ export function applyStoneColor(geometry, recipe, stableIndex, heightRatio = 0.5
 }
 
 export function createWorkshopMaterials(recipe) {
+  const importedAlbedo = createImportedAlbedoResolver(recipe);
+  const wallAlbedo = importedAlbedo('walls');
+  const explicitStoneAlbedo = importedAlbedo('stone');
+  const wallsAreStone = recipe.archetype !== 'manor' || recipe.finish === 'masonry';
+  const stoneAlbedo = explicitStoneAlbedo ?? (wallsAreStone ? importedAlbedo('walls') : null);
+  const roofAlbedo = importedAlbedo('roof');
+  const woodAlbedo = importedAlbedo('wood');
+
   const stoneBump = surfaceBumpTexture(recipe.seed, 1);
   const roofBump = roofBumpTexture(recipe.seed);
   const plasterBump = surfaceBumpTexture(recipe.seed + 913, 0.72);
   const stone = new THREE.MeshStandardMaterial({
-    color: recipe.albedo ? '#ffffff' : STONE_PALETTES[recipe.style].color,
-    map: recipe.albedo ? stoneTexture(recipe) : null,
+    color: stoneAlbedo?.tint ?? (recipe.albedo ? '#ffffff' : STONE_PALETTES[recipe.style].color),
+    map: stoneAlbedo?.texture ?? (recipe.albedo ? stoneTexture(recipe) : null),
     bumpMap: stoneBump,
     bumpScale: 0.055,
-    vertexColors: true,
+    vertexColors: !stoneAlbedo,
     roughness: 0.88,
     metalness: 0,
   });
   const roof = new THREE.MeshStandardMaterial({
-    color: '#ffffff',
-    map: roofTexture(recipe.topStyle, recipe.seed),
+    color: roofAlbedo?.tint ?? '#ffffff',
+    map: roofAlbedo?.texture ?? roofTexture(recipe.topStyle, recipe.seed),
     bumpMap: roofBump,
     bumpScale: 0.095,
     roughness: 0.8,
@@ -159,22 +215,22 @@ export function createWorkshopMaterials(recipe) {
   return Object.freeze({
     stone,
     mortar: new THREE.MeshStandardMaterial({
-      color: recipe.finish === 'masonry'
+      color: wallAlbedo?.tint ?? (recipe.finish === 'masonry'
         ? new THREE.Color(
           STONE_PALETTES[recipe.style].base[0] / 255 * 0.66,
           STONE_PALETTES[recipe.style].base[1] / 255 * 0.66,
           STONE_PALETTES[recipe.style].base[2] / 255 * 0.66,
         )
-        : '#ffffff',
-      map: recipe.finish === 'masonry' ? null : plasterTexture(recipe),
+        : '#ffffff'),
+      map: wallAlbedo?.texture ?? (recipe.finish === 'masonry' ? null : plasterTexture(recipe)),
       bumpMap: plasterBump,
       bumpScale: recipe.finish === 'masonry' ? 0.025 : 0.075,
       roughness: 0.96,
       metalness: 0,
     }),
     wood: new THREE.MeshStandardMaterial({
-      color: '#ffffff',
-      map: woodTexture(recipe.seed),
+      color: woodAlbedo?.tint ?? '#ffffff',
+      map: woodAlbedo?.texture ?? woodTexture(recipe.seed),
       bumpMap: surfaceBumpTexture(recipe.seed + 317, 0.5),
       bumpScale: 0.035,
       roughness: 0.82,
