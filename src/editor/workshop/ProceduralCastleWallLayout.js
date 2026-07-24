@@ -22,12 +22,25 @@ export function getCastleWallOpenings(recipe) {
   if (count === 0) return Object.freeze([]);
 
   const bayWidth = recipe.width / count;
-  const width = clamp(bayWidth * 0.62, MIN_OPENING_WIDTH, MAX_OPENING_WIDTH);
+  const minimumSpringHeight = Math.min(
+    MIN_SPRING_HEIGHT,
+    Math.max(0.55, recipe.height * 0.35),
+  );
+  const maximumRadius = Math.max(
+    MIN_OPENING_WIDTH / 2,
+    recipe.height - TOP_CLEARANCE - minimumSpringHeight,
+  );
+  const width = clamp(
+    Math.min(bayWidth * 0.62, maximumRadius * 2),
+    MIN_OPENING_WIDTH,
+    MAX_OPENING_WIDTH,
+  );
   const radius = width / 2;
+  const maximumSpringHeight = Math.max(0.45, recipe.height - radius - TOP_CLEARANCE);
   const springHeight = clamp(
     recipe.height * (recipe.shape === 'stepped' ? 0.49 : 0.45),
-    MIN_SPRING_HEIGHT,
-    recipe.height - radius - TOP_CLEARANCE,
+    Math.min(minimumSpringHeight, maximumSpringHeight),
+    maximumSpringHeight,
   );
 
   return Object.freeze(Array.from({ length: count }, (_, index) => Object.freeze({
