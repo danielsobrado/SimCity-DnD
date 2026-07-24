@@ -2,6 +2,8 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { disposeModelParts } from '../assets/modelParts.js';
+import './ProceduralWorkshopComponentController.css';
+import { ProceduralWorkshopComponentController } from './ProceduralWorkshopComponentController.js';
 import { createWorkshopStage } from './ProceduralWorkshopStage.js';
 import { ProceduralWorkshopSurfaceEditor } from './ProceduralWorkshopSurfaceEditor.js';
 
@@ -22,6 +24,7 @@ export class ProceduralWorkshopUi {
     this.camera = null;
     this.controls = null;
     this.transformControls = null;
+    this.componentController = null;
     this.stage = null;
     this.surfaceEditor = null;
     this.animationFrame = 0;
@@ -34,7 +37,7 @@ export class ProceduralWorkshopUi {
             <div>
               <p class="workshop-eyebrow">Procedural object workshop</p>
               <h2 id="workshop-title">Sunlit medieval atelier</h2>
-              <p>Sculpt the silhouette, assign materials by area, inspect it in game light, then bake it into Objects.</p>
+              <p>Sculpt the silhouette, edit every semantic component, assign materials by area, then bake it into Objects.</p>
             </div>
             <button class="workshop-close" type="button" data-workshop-action="close" aria-label="Close workshop">×</button>
           </header>
@@ -149,14 +152,17 @@ export class ProceduralWorkshopUi {
             </form>
             <div class="workshop-preview">
               <div class="workshop-preview__badge">16 × 16 m sunlit work garden</div>
-              <div class="workshop-gizmo-tools" role="toolbar" aria-label="Preview transform tools">
+              <div class="workshop-gizmo-tools" role="toolbar" aria-label="Selected component transform tools">
                 <button type="button" class="is-active" data-workshop-action="move">Move</button>
                 <button type="button" data-workshop-action="rotate">Rotate</button>
-                <button type="button" data-workshop-action="center">Center</button>
+                <button type="button" data-workshop-action="scale">Scale</button>
+                <button type="button" data-workshop-action="reset-component">Reset part</button>
+                <button type="button" data-workshop-action="center">Center scene</button>
                 <button type="button" data-workshop-action="frame">Frame</button>
               </div>
               <div class="workshop-canvas" data-role="workshop-canvas"></div>
-              <p>Drag the gizmo to move or rotate · drag empty space to orbit · wheel to zoom · R rotates placed game objects.</p>
+              <div class="workshop-component-editor" data-role="workshop-component-editor"></div>
+              <p>Click a component, then move, rotate, or scale it · drag empty space to orbit · wheel to zoom.</p>
             </div>
           </div>
         </section>
@@ -166,6 +172,7 @@ export class ProceduralWorkshopUi {
     this.overlay = root.querySelector('[data-role="workshop-overlay"]');
     this.form = root.querySelector('[data-role="workshop-form"]');
     this.canvasHost = root.querySelector('[data-role="workshop-canvas"]');
+    this.componentEditorHost = root.querySelector('[data-role="workshop-component-editor"]');
     this.status = root.querySelector('[data-role="workshop-status"]');
     this.surfaceEditor = new ProceduralWorkshopSurfaceEditor({
       root: root.querySelector('[data-role="workshop-surface-editor"]'),
@@ -183,7 +190,10 @@ export class ProceduralWorkshopUi {
       const action = event.target.closest('[data-workshop-action]')?.dataset.workshopAction;
       if (action === 'close') this.close();
       if (action === 'preview') this.generatePreview();
-      if (action === 'move' || action === 'rotate') this.setTransformMode(action);
+      if (action === 'move' || action === 'rotate' || action === 'scale') {
+        this.setTransformMode(action);
+      }
+      if (action === 'reset-component') this.componentController?.resetSelected();
       if (action === 'center') this.centerPreview();
       if (action === 'frame') this.framePreview();
       if (action === 'reroll') {
@@ -233,11 +243,11 @@ export class ProceduralWorkshopUi {
 
   setTransformMode(mode) {
     if (!this.transformControls) return;
-    this.transformControls.setMode(mode === 'rotate' ? 'rotate' : 'translate');
-    this.transformControls.showX = true;
-    this.transformControls.showY = mode === 'rotate';
-    this.transformControls.showZ = true;
-    for (const button of this.overlay.querySelectorAll('[data-workshop-action="move"], [data-workshop-action="rotate"]')) {
+    const transformMode = mode === 'rotate' ? 'rotate' : mode === 'scale' ? 'scale' : 'translate';
+    this.componentController?.setMode(transformMode);
+    for (const button of this.overlay.querySelectorAll(
+      '[data-workshop-action="move"], [data-workshop-action="rotate"], [data-workshop-action="scale"]',
+    )) {
       button.classList.toggle('is-active', button.dataset.workshopAction === mode);
     }
   }
@@ -245,7 +255,7 @@ export class ProceduralWorkshopUi {
   centerPreview() {
     this.previewRoot.position.set(0, 0, 0);
     this.previewRoot.rotation.set(0, 0, 0);
-    this.transformControls?.reset?.();
+    this.previewRoot.scale.set(1, 1, 1);
     this.framePreview();
   }
 
@@ -273,6 +283,7 @@ export class ProceduralWorkshopUi {
         remesh: values.get('remesh') === 'on',
         albedo: values.get('albedo') === 'on',
         surfaceTextures: this.surfaceEditor.toDocument(),
+        componentTransforms: this.componentController?.toDocument() ?? {},
       },
     };
   }
@@ -335,22 +346,24 @@ export class ProceduralWorkshopUi {
 
     this.stage = createWorkshopStage(this.scene);
     this.transformControls = new TransformControls(this.camera, this.renderer.domElement);
-    this.transformControls.attach(this.previewRoot);
-    this.transformControls.setTranslationSnap(0.25);
+    this.transformControls.setTranslationSnap(0.1);
     this.transformControls.setRotationSnap(THREE.MathUtils.degToRad(15));
+    this.transformControls.setScaleSnap(0.05);
     this.transformControls.setSize(0.68);
-    this.transformControls.showY = false;
-    this.transformControls.addEventListener('dragging-changed', ({ value }) => {
-      this.controls.enabled = !value;
-    });
-    this.transformControls.addEventListener('objectChange', () => {
-      this.previewRoot.position.x = THREE.MathUtils.clamp(this.previewRoot.position.x, -7.5, 7.5);
-      this.previewRoot.position.y = 0;
-      this.previewRoot.position.z = THREE.MathUtils.clamp(this.previewRoot.position.z, -7.5, 7.5);
-      this.previewRoot.rotation.x = 0;
-      this.previewRoot.rotation.z = 0;
-    });
     this.scene.add(this.transformControls.getHelper());
+
+    this.componentController = new ProceduralWorkshopComponentController({
+      root: this.componentEditorHost,
+      previewRoot: this.previewRoot,
+      renderer: this.renderer,
+      camera: this.camera,
+      orbitControls: this.controls,
+      transformControls: this.transformControls,
+      onChange: (component) => {
+        this.status.textContent = `${component.label} edit stored in the object recipe.`;
+        this.status.classList.remove('is-error');
+      },
+    });
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.canvasHost);
@@ -371,16 +384,10 @@ export class ProceduralWorkshopUi {
       const nextParts = this.manager.createPreviewParts(recipe);
       this.clearPreview();
       this.previewParts = nextParts;
-      for (const part of nextParts) {
-        const mesh = new THREE.Mesh(part.geometry, part.material);
-        part.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        this.previewRoot.add(mesh);
-      }
+      this.componentController.replaceParts(nextParts);
       this.framePreview();
       const stats = nextParts.stats;
-      this.status.textContent = `${stats.stones} stones · ${stats.features} semantic details · ${stats.sourceVertices.toLocaleString()} source vertices · ${stats.drawParts} baked parts.`;
+      this.status.textContent = `${stats.components} editable components · ${stats.stones} stones · ${stats.features} semantic details · ${stats.sourceVertices.toLocaleString()} source vertices · ${stats.drawParts} preview parts.`;
       this.status.classList.remove('is-error');
     } catch (error) {
       this.status.textContent = error.message;
@@ -416,6 +423,7 @@ export class ProceduralWorkshopUi {
   }
 
   clearPreview() {
+    this.componentController?.clear();
     this.previewRoot.clear();
     disposeModelParts(this.previewParts);
     this.previewParts = [];
@@ -431,6 +439,7 @@ export class ProceduralWorkshopUi {
   dispose() {
     this.close();
     this.resizeObserver?.disconnect();
+    this.componentController?.dispose();
     this.transformControls?.dispose();
     this.controls?.dispose();
     this.clearPreview();
