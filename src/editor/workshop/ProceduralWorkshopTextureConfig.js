@@ -4,11 +4,13 @@ const MAX_SOURCE_COUNT = 4;
 const MAX_SOURCE_INPUT_COUNT = 8;
 const MAX_SOURCE_DATA_URL_LENGTH = 800_000;
 const MAX_TOTAL_DATA_URL_LENGTH = 2_400_000;
+const MAX_VALIDATED_IMAGE_CACHE = 8;
 const VALID_SOURCE_ID = /^albedo-[a-z0-9-]+$/;
 const VALID_DATA_URL = /^data:image\/(png|jpeg|webp);base64,([a-z0-9+/]+={0,2})$/i;
 const VALID_TINT = /^#[0-9a-f]{6}$/i;
 const VALID_MAPPINGS = new Set(['repeat', 'mirror', 'clamp']);
 const VALID_ROTATIONS = new Set([0, 90, 180, 270]);
+const VALIDATED_IMAGE_DATA_URLS = new Map();
 
 export const WORKSHOP_SURFACE_TEXTURE_SLOTS = Object.freeze([
   Object.freeze({ key: 'walls', label: 'Walls', repeat: 2 }),
@@ -48,12 +50,25 @@ function decodeBase64(payload) {
   }
 }
 
-function validateImageData(mimeType, payload) {
+function rememberValidatedImage(dataUrl) {
+  VALIDATED_IMAGE_DATA_URLS.delete(dataUrl);
+  VALIDATED_IMAGE_DATA_URLS.set(dataUrl, true);
+  while (VALIDATED_IMAGE_DATA_URLS.size > MAX_VALIDATED_IMAGE_CACHE) {
+    VALIDATED_IMAGE_DATA_URLS.delete(VALIDATED_IMAGE_DATA_URLS.keys().next().value);
+  }
+}
+
+function validateImageData(dataUrl, mimeType, payload) {
+  if (VALIDATED_IMAGE_DATA_URLS.has(dataUrl)) {
+    rememberValidatedImage(dataUrl);
+    return;
+  }
   try {
     parseWorkshopImageDimensions(decodeBase64(payload), `image/${mimeType}`);
   } catch {
     throw new Error('Workshop albedo image data does not match its declared format.');
   }
+  rememberValidatedImage(dataUrl);
 }
 
 function normalizeSource(id, input) {
@@ -69,7 +84,7 @@ function normalizeSource(id, input) {
   if (dataUrl.length > MAX_SOURCE_DATA_URL_LENGTH) {
     throw new Error('A workshop albedo texture is too large after processing.');
   }
-  validateImageData(match[1].toLowerCase(), match[2]);
+  validateImageData(dataUrl, match[1].toLowerCase(), match[2]);
   return Object.freeze({
     name: String(source.name ?? 'Imported texture').trim().slice(0, 80) || 'Imported texture',
     dataUrl,
