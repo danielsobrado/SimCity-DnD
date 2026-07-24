@@ -1,8 +1,9 @@
 import * as THREE from 'three/webgpu';
 import { uniform } from 'three/tsl';
 import { PerfCounters } from '../performance/qa/PerfCounters.js';
+import { markAttributeRangeUpdated } from './attributeUpload.js';
 import { createStylizedFlowerMaterial } from './StylizedFlowerMaterial.js';
-import { sampleHeight, scatterRandom01 } from './scatterMath.js';
+import { buildFlowerScatter } from './vegetationScatter.js';
 
 function createCrossGeometry(maxInstances) {
   const positions = new Float32Array([
@@ -135,52 +136,41 @@ export class StylizedFlowerSlot {
 
   rebuild(page, descriptor, sampleLimit) {
     PerfCounters.inc('flowerRebuilds');
+    const scatterStartedAt = performance.now();
+    let scatter = null;
+    if (page.flowerScatter?.base && page.flowerScatter.sampleLimit === sampleLimit) {
+      scatter = page.flowerScatter;
+    } else {
+      scatter = buildFlowerScatter({
+        page,
+        chunkSize: this.chunkSize,
+        tileSize: this.tileSize,
+        sampleLimit,
+        tileIds: this.config.flowers.tileIds,
+        minSize: this.config.flowers.minSize,
+        maxSize: this.config.flowers.maxSize,
+      });
+    }
+    PerfCounters.inc('flowerScatterMs', performance.now() - scatterStartedAt);
+    PerfCounters.set('flowerScatter', performance.now() - scatterStartedAt);
+
+    const uploadStartedAt = performance.now();
     const baseAttribute = this.geometry.getAttribute('instanceBase');
     const parameterAttribute = this.geometry.getAttribute('instanceParams');
-    const base = baseAttribute.array;
-    const parameters = parameterAttribute.array;
-    const eligible = new Set(this.config.flowers.tileIds);
-    let count = 0;
-    let minimumHeight = Number.POSITIVE_INFINITY;
-    let maximumHeight = Number.NEGATIVE_INFINITY;
-
-    for (let index = 0; index < sampleLimit; index += 1) {
-      const localX = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 0) * this.chunkSize;
-      const localZ = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 1) * this.chunkSize;
-      const cellX = Math.min(this.chunkSize - 1, Math.floor(localX));
-      const cellZ = Math.min(this.chunkSize - 1, Math.floor(localZ));
-      const cellIndex = cellZ * this.chunkSize + cellX;
-      if (!eligible.has(page.tiles[cellIndex])) continue;
-      const localWorldX = -this.chunkWorldSize / 2 + localX * this.tileSize;
-      const localWorldZ = this.chunkWorldSize / 2 - localZ * this.tileSize;
-      const height = sampleHeight(page, localX, localZ, this.chunkSize);
-      const baseOffset = count * 3;
-      base[baseOffset] = localWorldX;
-      base[baseOffset + 1] = height;
-      base[baseOffset + 2] = localWorldZ;
-      const parameterOffset = count * 4;
-      parameters[parameterOffset] = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 2) * Math.PI * 2;
-      parameters[parameterOffset + 1] = this.config.flowers.minSize
-        + scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 3)
-          * (this.config.flowers.maxSize - this.config.flowers.minSize);
-      parameters[parameterOffset + 2] = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 4);
-      parameters[parameterOffset + 3] = scatterRandom01(descriptor.chunkX, descriptor.chunkZ, index, 5) < 0.5 ? 0 : 1;
-      minimumHeight = Math.min(minimumHeight, height);
-      maximumHeight = Math.max(maximumHeight, height);
-      count += 1;
-    }
-
-    this.geometry.instanceCount = count;
-    baseAttribute.needsUpdate = true;
-    parameterAttribute.needsUpdate = true;
+    baseAttribute.array.set(scatter.base.subarray(0, scatter.count * 3));
+    parameterAttribute.array.set(scatter.parameters.subarray(0, scatter.count * 4));
+    this.geometry.instanceCount = scatter.count;
+    markAttributeRangeUpdated(baseAttribute, scatter.count);
+    markAttributeRangeUpdated(parameterAttribute, scatter.count);
     setGeometryBounds(
       this.geometry,
       this.chunkWorldSize,
-      minimumHeight,
-      maximumHeight,
+      scatter.minimumHeight,
+      scatter.maximumHeight,
       this.config.flowers.maxSize,
     );
-    PerfCounters.set('flowerLastChunkInstances', count);
+    PerfCounters.inc('flowerBufferUploadMs', performance.now() - uploadStartedAt);
+    PerfCounters.set('flowerLastChunkInstances', scatter.count);
   }
 
   dispose() {

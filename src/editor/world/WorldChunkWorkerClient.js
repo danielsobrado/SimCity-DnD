@@ -30,6 +30,7 @@ export class WorldChunkWorkerClient {
     chunkSize,
     generator,
     surfaceMaskConfig = null,
+    vegetationScatterConfig = null,
     workerCount = null,
     maxInFlightPerWorker = 1,
   }) {
@@ -38,6 +39,7 @@ export class WorldChunkWorkerClient {
     this.baseTerrain = null;
     this.worldGenerator = createWorldGenerator(this.generator);
     this.surfaceMaskConfig = surfaceMaskConfig;
+    this.vegetationScatterConfig = vegetationScatterConfig;
     this.maxInFlightPerWorker = Math.max(1, maxInFlightPerWorker);
     this.nextId = 1;
     this.pending = new Map();      // id -> { resolve, reject, workerIndex }
@@ -84,6 +86,7 @@ export class WorldChunkWorkerClient {
       chunkSize: this.chunkSize,
       generator: this.generator,
       surfaceMaskConfig: this.surfaceMaskConfig,
+      vegetationScatterConfig: this.vegetationScatterConfig,
     };
     // No workers available (Node/tests): generate synchronously.
     if (this.workers.length === 0) {
@@ -97,7 +100,15 @@ export class WorldChunkWorkerClient {
     this.nextId += 1;
     const key = chunkKey(chunkX, chunkZ);
     return new Promise((resolve, reject) => {
-      const job = { id, request, key, priority, resolve, reject };
+      const job = {
+        id,
+        request,
+        key,
+        priority,
+        resolve,
+        reject,
+        requestedAt: performance.now(),
+      };
       this.queue.push(job);
       this.queuedByKey.set(key, job);
       this.pump();
@@ -159,6 +170,8 @@ export class WorldChunkWorkerClient {
         resolve: job.resolve,
         reject: job.reject,
         workerIndex,
+        requestedAt: job.requestedAt,
+        dispatchedAt: performance.now(),
       });
       this.workers[workerIndex].postMessage({ id: job.id, request: job.request });
     }
@@ -175,6 +188,12 @@ export class WorldChunkWorkerClient {
     if (error) {
       pending.reject(new Error(error));
     } else {
+      const completedAt = performance.now();
+      page.timings = {
+        ...(page.timings ?? {}),
+        workerCompleteMs: completedAt - pending.dispatchedAt,
+        queueWaitMs: pending.dispatchedAt - pending.requestedAt,
+      };
       pending.resolve(page);
     }
     this.pump();

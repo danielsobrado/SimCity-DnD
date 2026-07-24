@@ -256,6 +256,14 @@ function validateStylizedSurface(config) {
         || !Number.isInteger(streaming.flowerBuildsPerFrame) || streaming.flowerBuildsPerFrame < 1) {
       throw new Error('Invalid editor configuration: stylizedSurface.streaming builds-per-frame must be positive integers.');
     }
+    if (streaming.treeBuildsPerFrame !== undefined
+        && (!Number.isInteger(streaming.treeBuildsPerFrame) || streaming.treeBuildsPerFrame < 1)) {
+      throw new Error('Invalid editor configuration: stylizedSurface.streaming.treeBuildsPerFrame must be a positive integer.');
+    }
+    if (streaming.rockBuildsPerFrame !== undefined
+        && (!Number.isInteger(streaming.rockBuildsPerFrame) || streaming.rockBuildsPerFrame < 1)) {
+      throw new Error('Invalid editor configuration: stylizedSurface.streaming.rockBuildsPerFrame must be a positive integer.');
+    }
     if (!Number.isFinite(streaming.heavyBuildBudgetMs) || streaming.heavyBuildBudgetMs <= 0) {
       throw new Error('Invalid editor configuration: stylizedSurface.streaming.heavyBuildBudgetMs must be positive.');
     }

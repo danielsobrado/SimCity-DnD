@@ -1,9 +1,13 @@
 import * as THREE from 'three/webgpu';
 import { uniform } from 'three/tsl';
 import { PerfCounters } from '../performance/qa/PerfCounters.js';
+import { markAttributeRangeUpdated } from './attributeUpload.js';
 import { createStylizedGrassMaterial } from './StylizedGrassMaterial.js';
 import { cellSampleRandom01, sampleHeight } from './scatterMath.js';
-import { clumpsPerCell, densityForDistance, grassInstanceAttributeBytes } from './grassLodMath.js';
+import { clumpsPerCell, densityForDistance } from './grassLodMath.js';
+import {
+  compactGrassScatter,
+} from './vegetationScatter.js';
 
 const BLADE_SEGMENTS = 3;
 const TWO_PI = Math.PI * 2;
@@ -139,7 +143,6 @@ export class StylizedGrassSlot {
     terrainView.scene.add(this.mesh);
     this.readyKey = null;
     this.readyRevision = -1;
-    this.readyObjectSignature = '';
     this.readyClumpsPerCell = 0;
     this.pendingRebuild = null;
     this.buildState = null;
@@ -202,7 +205,6 @@ export class StylizedGrassSlot {
     this.mesh.material = null;
     this.readyKey = null;
     this.readyRevision = -1;
-    this.readyObjectSignature = '';
     this.readyClumpsPerCell = 0;
     this.pendingRebuild = null;
     this.buildState = null;
@@ -212,6 +214,7 @@ export class StylizedGrassSlot {
   updateTrampleTexture(descriptor, boulders, objectSignature) {
     const key = `${descriptor.key}:${objectSignature}`;
     if (key === this.trampleKey || !this.trampleTexture) return;
+    const startedAt = performance.now();
     const size = this.trampleTexture.image.width;
     const half = this.chunkWorldSize / 2;
     for (let y = 0; y < size; y += 1) {
@@ -235,6 +238,9 @@ export class StylizedGrassSlot {
     this.trampleTexture.needsUpdate = true;
     this.trampleKey = key;
     PerfCounters.inc('grassInfluenceTextureUploads');
+    const elapsed = performance.now() - startedAt;
+    PerfCounters.inc('grassTrampleMs', elapsed);
+    PerfCounters.set('grassTrample', elapsed);
   }
 
   update(timestamp, focusChunk, objectSignature, localBoulders) {
@@ -270,16 +276,15 @@ export class StylizedGrassSlot {
     const isReadyForDescriptor = this.readyKey === descriptor.key;
     this.mesh.visible = Boolean(this.terrainSlot.mesh.visible && isReadyForDescriptor);
 
+    // Rock/object influence is a trample texture — do not rebuild geometry for it.
     const needsBuild = this.readyKey !== descriptor.key
       || this.readyRevision !== this.terrainSlot.pageRevision
-      || this.readyObjectSignature !== objectSignature
       || this.readyClumpsPerCell !== targetClumpsPerCell;
     if (!needsBuild) return;
 
     const buildSignature = [
       descriptor.key,
       this.terrainSlot.pageRevision,
-      objectSignature,
       targetClumpsPerCell,
     ].join('|');
     if (this.pendingRebuild?.signature === buildSignature) return;
@@ -287,7 +292,6 @@ export class StylizedGrassSlot {
       key: `grass:${this.terrainSlot.slotIndex}`,
       page: this.terrainSlot.page,
       descriptor,
-      objectSignature,
       revision: this.terrainSlot.pageRevision,
       clumpsPerCell: targetClumpsPerCell,
       signature: buildSignature,
@@ -304,6 +308,7 @@ export class StylizedGrassSlot {
       eligible: new Set(this.config.grass.tileIds),
       minimumHeight: Number.POSITIVE_INFINITY,
       maximumHeight: Number.NEGATIVE_INFINITY,
+      usedWorkerScatter: false,
     };
   }
 
@@ -311,6 +316,20 @@ export class StylizedGrassSlot {
     const job = this.pendingRebuild;
     if (!job) return false;
     this.ensureResources();
+
+    const workerScatter = job.page.grassScatter;
+    if (workerScatter?.base && workerScatter?.parameters) {
+      const scatterStartedAt = performance.now();
+      const scatter = compactGrassScatter(workerScatter, job.clumpsPerCell, this.chunkSize)
+        ?? workerScatter;
+      this.applyScatter(job, scatter);
+      PerfCounters.inc('grassBuildSlices');
+      const elapsed = performance.now() - scatterStartedAt;
+      PerfCounters.inc('grassScatterMs', elapsed);
+      PerfCounters.set('grassScatter', elapsed);
+      return true;
+    }
+
     if (!this.buildState || this.buildState.signature !== job.signature) {
       this.startBuild(job);
     }
@@ -319,12 +338,27 @@ export class StylizedGrassSlot {
       ?? DEFAULT_BUILD_SLICE_CELLS;
     const totalCells = this.chunkSize * this.chunkSize;
     const endCell = Math.min(totalCells, state.cellCursor + cellsPerSlice);
+    const scatterStartedAt = performance.now();
     this.buildCells(job, state, endCell);
     PerfCounters.inc('grassBuildSlices');
+    PerfCounters.inc('grassScatterMs', performance.now() - scatterStartedAt);
 
     if (state.cellCursor < totalCells) return true;
     this.finishBuild(job, state);
+    PerfCounters.set('grassScatter', performance.now() - scatterStartedAt);
     return true;
+  }
+
+  applyScatter(job, scatter) {
+    const baseAttribute = this.geometry.getAttribute('instanceBase');
+    const parameterAttribute = this.geometry.getAttribute('instanceParams');
+    baseAttribute.array.set(scatter.base.subarray(0, scatter.count * 3));
+    parameterAttribute.array.set(scatter.parameters.subarray(0, scatter.count * 4));
+    this.finishBuild(job, {
+      count: scatter.count,
+      minimumHeight: scatter.minimumHeight,
+      maximumHeight: scatter.maximumHeight,
+    });
   }
 
   buildCells(job, state, endCell) {
@@ -375,11 +409,12 @@ export class StylizedGrassSlot {
   }
 
   finishBuild(job, state) {
+    const uploadStartedAt = performance.now();
     const baseAttribute = this.geometry.getAttribute('instanceBase');
     const parameterAttribute = this.geometry.getAttribute('instanceParams');
     this.geometry.instanceCount = state.count;
-    baseAttribute.needsUpdate = true;
-    parameterAttribute.needsUpdate = true;
+    const bytes = markAttributeRangeUpdated(baseAttribute, state.count)
+      + markAttributeRangeUpdated(parameterAttribute, state.count);
     setGeometryBounds(
       this.geometry,
       this.chunkWorldSize,
@@ -389,7 +424,6 @@ export class StylizedGrassSlot {
     );
     this.readyKey = job.descriptor.key;
     this.readyRevision = job.revision;
-    this.readyObjectSignature = job.objectSignature;
     this.readyClumpsPerCell = job.clumpsPerCell;
     this.pendingRebuild = null;
     this.buildState = null;
@@ -397,13 +431,12 @@ export class StylizedGrassSlot {
       this.terrainSlot.mesh.visible
       && this.terrainSlot.descriptor?.key === this.readyKey,
     );
+    const uploadMs = performance.now() - uploadStartedAt;
+    PerfCounters.inc('grassBufferUploadMs', uploadMs);
+    PerfCounters.set('grassBufferUpload', uploadMs);
     PerfCounters.set('grassLastChunkClumps', state.count);
     PerfCounters.set('grassLastChunkEffectiveBlades', state.count * this.bladesPerClump);
-    PerfCounters.set('grassInstanceAttributeBytes', grassInstanceAttributeBytes({
-      chunkSize: this.chunkSize,
-      bladesPerCell: this.bladesPerCell,
-      bladesPerClump: this.bladesPerClump,
-    }));
+    PerfCounters.set('grassInstanceAttributeBytes', bytes);
   }
 
   dispose() {

@@ -387,6 +387,7 @@ export class InfiniteTerrainView {
     if (!ready.tilePixels || !ready.surfaceMaskPixels) {
       throw new Error('Terrain page commit requires tilePixels and surfaceMaskPixels.');
     }
+    const commitStartedAt = performance.now();
     slot.texturePixels.set(ready.tilePixels);
     slot.surfaceMaskPixels.set(ready.surfaceMaskPixels);
     slot.heightPixels.set(ready.heights);
@@ -397,7 +398,41 @@ export class InfiniteTerrainView {
     slot.pageRevision = ready.revision;
     slot.mesh.visible = true;
     slot.loading = false;
+    const textureCommitMs = performance.now() - commitStartedAt;
     PerfCounters.inc('terrainUploadPages');
+    PerfCounters.inc('textureCommitMs', textureCommitMs);
+    PerfCounters.set('textureCommit', textureCommitMs);
+    const timings = ready.timings;
+    if (timings) {
+      if (Number.isFinite(timings.workerCompleteMs)) {
+        PerfCounters.inc('workerCompleteMs', timings.workerCompleteMs);
+        PerfCounters.set('workerComplete', timings.workerCompleteMs);
+      }
+      if (Number.isFinite(timings.queueWaitMs)) {
+        PerfCounters.inc('queueWaitMs', timings.queueWaitMs);
+        PerfCounters.set('queueWait', timings.queueWaitMs);
+      }
+      if (Number.isFinite(timings.tilePixelsMs)) {
+        PerfCounters.inc('tilePixelsMs', timings.tilePixelsMs);
+        PerfCounters.set('tilePixels', timings.tilePixelsMs);
+      }
+      if (Number.isFinite(timings.surfaceMaskMs)) {
+        PerfCounters.inc('surfaceMaskMs', timings.surfaceMaskMs);
+        PerfCounters.set('surfaceMask', timings.surfaceMaskMs);
+      }
+      if (Number.isFinite(timings.grassScatterMs)) {
+        PerfCounters.inc('grassScatterMs', timings.grassScatterMs);
+        PerfCounters.set('grassScatter', timings.grassScatterMs);
+      }
+      if (Number.isFinite(timings.flowerScatterMs)) {
+        PerfCounters.inc('flowerScatterMs', timings.flowerScatterMs);
+        PerfCounters.set('flowerScatter', timings.flowerScatterMs);
+      }
+    }
+    const bytes = (ready.tilePixels.byteLength ?? 0)
+      + (ready.surfaceMaskPixels.byteLength ?? 0)
+      + (ready.heights.byteLength ?? 0);
+    PerfCounters.inc('textureBytesUploaded', bytes);
   }
 
   /**
@@ -422,8 +457,13 @@ export class InfiniteTerrainView {
     const flushOptions = options.maxCommits === undefined
       ? { ...options, maxCommits: this.adaptiveCommitBudget() }
       : options;
-    return this.commitQueue.flush(
-      (job) => this.commitPage(job.slot, job.page),
+    const result = this.commitQueue.flush(
+      (job) => {
+        const waitMs = performance.now() - job.enqueuedAt;
+        PerfCounters.inc('commitQueueWaitMs', waitMs);
+        PerfCounters.set('commitQueueWait', waitMs);
+        this.commitPage(job.slot, job.page);
+      },
       (job) => (
         !this.disposed
         && job.slot.token === job.token
@@ -431,6 +471,8 @@ export class InfiniteTerrainView {
       ),
       flushOptions,
     );
+    PerfCounters.set('maxQueuedCommitAgeMs', result.maxQueuedAgeMs);
+    return result;
   }
 
   async drainPendingUploads() {

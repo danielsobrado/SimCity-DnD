@@ -141,24 +141,57 @@ Captured against local Vite (`?qa=chunk-cross&warmup=2&duration=12&speed=run&hit
 
 **Current path:**
 
-1. Worker generates **render-ready pages**: `tiles`, `heights`, `tilePixels`, `surfaceMaskPixels`.
+1. Worker generates **render-ready pages**: `tiles`, `heights`, `tilePixels`, `surfaceMaskPixels`, plus optional `grassScatter` / `flowerScatter`.
 2. Surface mask uses halo fill + two-pass chamfer distance transform in `ChunkRenderPixels.js` (O(halo²), no nested `getTile` storms).
 3. Main-thread commit is typed-array copies + `needsUpdate` only (`TerrainCommitQueue`, default `maxCommitsPerFrame: 1`, `commitBudgetMs: 2`).
 4. Concurrent worker requests stay parallel; only commits are serialized.
-5. Per-chunk rock signatures (`chunkRockSignature.js`) and grass/flower build queues (`StylizedBuildQueue`) keep stylized rebuilds scoped and budgeted.
+5. Per-chunk rock signatures (`chunkRockSignature.js`) and grass/flower/tree/rock build queues (`StylizedBuildQueue`) keep stylized rebuilds scoped and budgeted.
+6. Grass/flower/instance attribute uploads use Three.js `updateRanges` (WebGPU partial `writeBuffer`) so only used instances are uploaded.
+7. Grass geometry no longer rebuilds when rocks stream — rock influence is the trample texture only.
 
 | Path | Role |
 |------|------|
 | `src/editor/world/ChunkRenderPixels.js` | Halo + chamfer DT mask + tilePixels |
 | `src/editor/world/TerrainCommitQueue.js` | Budgeted memcpy commit queue |
 | `src/editor/InfiniteTerrainView.js` | Slot wiring, `flushUploadQueue` → commit drain, editor `uploadPage` |
-| `src/editor/stylized/StylizedBuildQueue.js` | Grass/flower builds per frame |
+| `src/editor/stylized/StylizedBuildQueue.js` | Grass/flower/tree/rock builds per frame |
+| `src/editor/stylized/vegetationScatter.js` | Worker/main grass + flower scatter builders |
+| `src/editor/stylized/attributeUpload.js` | Partial attribute upload ranges |
+
+### Instrumented sub-phases
+
+Counters (last-sample gauges + cumulative `*Ms` / byte totals where noted):
+
+| Name | Meaning |
+|------|---------|
+| `workerComplete` | Worker generation wall time for a page |
+| `queueWait` | Time a generation job waited before a worker picked it up |
+| `commitQueueWait` | Time a finished page waited in the commit queue |
+| `tilePixels` / `surfaceMask` | Worker render-pixel enrichment cost |
+| `textureCommit` | Main-thread memcpy + `needsUpdate` for one page |
+| `grassScatter` | Grass instance fill (worker compact or main fallback) |
+| `grassTrample` | Influence texture rebuild |
+| `grassBufferUpload` | Grass attribute range upload bookkeeping |
+| `maxQueuedCommitAgeMs` | Oldest commit still waiting (gauge) |
+| `attributeBytesUploaded` / `textureBytesUploaded` | Uploaded byte totals |
 
 ### QA gates
 
 Re-run `npm run qa:perf` (`?qa=chunk-cross`) and check:
 
+| Gate | Target |
+|------|--------|
+| Procedural tile samples during page commit | 0 |
+| Terrain commits in one frame | ≤ 1 while moving |
+| Grass rebuilds during straight boundary crossing | ≤ 3 |
+| Main-thread terrain commit p95 | < 2 ms |
+| Main-thread stylized build p95 | < 4 ms |
+| Post-warmup hitches over 33.3 ms | 0 |
+| Maximum queued commit age | reported |
+| Texture and instance bytes uploaded per frame | reported |
+
+Also:
+
 - Chunk-boundary hitch spikes should shrink vs the ~1 s baseline (no main-thread mask storms).
 - `terrainCommit` phase should stay small (memcpy only); large `dt` with `terrainUploadPages` should be rare.
 - Grass/flower rebuilds should follow per-chunk signatures + build-queue budgets, not full resident rebuilds on every focus step.
-- Optional: lower `bladesPerCell` if grass rebuild cost still dominates hitch samples.

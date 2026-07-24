@@ -32,6 +32,12 @@ self.addEventListener('message', (event) => {
     if (page.surfaceMaskPixels?.buffer) {
       transfer.push(page.surfaceMaskPixels.buffer);
     }
+    if (page.grassScatter?.base?.buffer) {
+      transfer.push(page.grassScatter.base.buffer, page.grassScatter.parameters.buffer);
+    }
+    if (page.flowerScatter?.base?.buffer) {
+      transfer.push(page.flowerScatter.base.buffer, page.flowerScatter.parameters.buffer);
+    }
     self.postMessage({ id, page }, transfer);
   } catch (error) {
     self.postMessage({

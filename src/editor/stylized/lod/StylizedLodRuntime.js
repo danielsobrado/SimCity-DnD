@@ -7,6 +7,7 @@ import {
   updateLodTransition,
 } from './projectedLod.js';
 import { createDitheredMaterial } from './StylizedDitheredMaterial.js';
+import { markInstancedMeshRangeUpdated } from '../attributeUpload.js';
 
 function createGeometry(source, capacity) {
   const geometry = source.clone();
@@ -51,9 +52,7 @@ export function writeInstances(renderers, instancesByPrototype) {
         fades.array[index] = instance.fade;
         seeds.array[index] = instance.seed;
       }
-      mesh.instanceMatrix.needsUpdate = true;
-      fades.needsUpdate = true;
-      seeds.needsUpdate = true;
+      markInstancedMeshRangeUpdated(mesh, instances.length, [fades, seeds]);
       mesh.computeBoundingSphere();
     }
   });

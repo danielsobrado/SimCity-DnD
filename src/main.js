@@ -2,11 +2,14 @@ import './styles.css';
 import './editor/performance/frameRateDisplay.css';
 import './editor/performance/qa/perfQa.css';
 import './editor/player/playerMode.css';
+import './editor/map/worldMap.css';
 import { loadEditorConfig } from './config/loadEditorConfig.js';
 import { installObjectAssets } from './editor/assets/installObjectAssets.js';
 import { EditorCamera } from './editor/EditorCamera.js';
 import { EditorUi } from './editor/EditorUi.js';
 import { InfiniteTerrainView } from './editor/InfiniteTerrainView.js';
+import { WorldMapController } from './editor/map/WorldMapController.js';
+import { WorldMapUi } from './editor/map/WorldMapUi.js';
 import { ObjectMap } from './editor/ObjectMap.js';
 import { ObjectView } from './editor/ObjectView.js';
 import { OBJECT_CATALOG } from './editor/objectCatalog.js';
@@ -32,6 +35,7 @@ import { ChunkedTileMap } from './editor/world/ChunkedTileMap.js';
 import { FloatingOrigin } from './editor/world/FloatingOrigin.js';
 import { ProceduralWorldGenerator } from './editor/world/ProceduralWorldGenerator.js';
 import { createSurfaceMaskConfig } from './editor/world/ChunkRenderPixels.js';
+import { createVegetationScatterConfig } from './editor/stylized/vegetationScatter.js';
 import { WorkerBackedWorldStore } from './editor/world/WorkerBackedWorldStore.js';
 import { WorldChunkWorkerClient } from './editor/world/WorldChunkWorkerClient.js';
 import {
@@ -58,10 +62,15 @@ async function startEditor() {
     seaLevel: config.world.seaLevel,
   });
   const surfaceMaskConfig = createSurfaceMaskConfig(config.stylizedSurface);
+  const vegetationScatterConfig = createVegetationScatterConfig(
+    config.stylizedSurface,
+    config.map.tileSize,
+  );
   const chunkWorker = new WorldChunkWorkerClient({
     chunkSize: config.world.chunkSize,
     generator,
     surfaceMaskConfig,
+    vegetationScatterConfig,
     workerCount: config.world.workerCount ?? null,
   });
   const localContent = new IndexedDbWorldContentProvider();
@@ -153,18 +162,35 @@ async function startEditor() {
     maxZoom: config.camera.maxZoom,
     damping: config.camera.damping,
   });
-  const playerController = new PlayerController({
+
+  // Declared before PlayerController so WorldMapController's window keydown
+  // listener registers first: PlayerController stops propagation for every
+  // non-Escape key while walking, which would otherwise swallow "M".
+  let playerController;
+  let viewModeController;
+  let controller;
+  const worldMapController = new WorldMapController({
+    worldStore,
+    floatingOrigin,
+    tileSize: config.map.tileSize,
+    getViewModeController: () => viewModeController,
+    getPlayerController: () => playerController,
+    getCampaign: () => controller?.campaign ?? null,
+  });
+  const worldMapUi = new WorldMapUi({ root, controller: worldMapController });
+
+  playerController = new PlayerController({
     canvas: terrainView.renderer.domElement,
     terrainView,
     config: config.player,
   });
-  const viewModeController = new ViewModeController({
+  viewModeController = new ViewModeController({
     editorCamera,
     playerController,
     terrainView,
   });
 
-  const controller = new TerrainAwareEditorController({
+  controller = new TerrainAwareEditorController({
     tileMap,
     heightField,
     worldStore,
@@ -332,6 +358,8 @@ async function startEditor() {
     voxelPrototype.dispose();
     stylizedSurface.dispose();
     assetPipeline.dispose();
+    worldMapUi.dispose();
+    worldMapController.dispose();
     viewModeUi.dispose();
     viewModeController.dispose();
     controller.dispose();

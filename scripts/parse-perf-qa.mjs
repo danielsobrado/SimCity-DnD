@@ -31,12 +31,45 @@ console.log(`dt p50/p95/p99/max: ${summary.dt?.p50Ms} / ${summary.dt?.p95Ms} / $
 console.log(`hitches: ${summary.hitchCount}  rate: ${summary.hitchRate}`);
 console.log(`counters: ${JSON.stringify(counters)}`);
 console.log(`phase max stylized/render: ${summary.phases?.stylized?.maxMs} / ${summary.phases?.render?.maxMs}`);
+console.log(`phase max terrainCommit: ${summary.phases?.terrainCommit?.maxMs}`);
 console.log(`hitch dts: ${hitchFrames.map((frame) => frame.dtMs).join(', ')}`);
 
 const loadingHitches = hitchFrames
   .filter((frame) => (frame.streaming?.loading ?? 0) > 0)
   .map((frame) => `${frame.index}:${frame.dtMs}ms load=${frame.streaming.loading} focus=${frame.streaming.focusChunk}`);
 console.log(`hitch while streaming loads: ${loadingHitches.join(' | ') || '(none)'}`);
+
+const subPhases = [
+  'workerComplete',
+  'queueWait',
+  'commitQueueWait',
+  'tilePixels',
+  'surfaceMask',
+  'textureCommit',
+  'grassScatter',
+  'grassTrample',
+  'grassBufferUpload',
+  'maxQueuedCommitAgeMs',
+  'attributeBytesUploaded',
+  'textureBytesUploaded',
+];
+const reported = Object.fromEntries(
+  subPhases
+    .filter((name) => counters[name] !== undefined || counters[`${name}Ms`] !== undefined)
+    .map((name) => [name, counters[name] ?? counters[`${name}Ms`]]),
+);
+console.log(`sub-phases: ${JSON.stringify(reported)}`);
+
+const postWarmupHitches = hitchFrames.filter((frame) => frame.dtMs > (summary.hitchMs ?? 33.3));
+const grassRebuilds = counters.grassRebuilds ?? 0;
+const terrainUploads = counters.terrainUploadPages ?? 0;
+console.log('--- acceptance hints (chunk-cross) ---');
+console.log(`grassRebuilds=${grassRebuilds} (target ≤3 on a straight one-chunk crossing after warmup)`);
+console.log(`terrainUploadPages=${terrainUploads}`);
+console.log(`post-warmup hitch count=${postWarmupHitches.length} (target 0 over 33.3 ms once streaming settled)`);
+console.log(`maxQueuedCommitAgeMs=${counters.maxQueuedCommitAgeMs ?? 'n/a'}`);
+console.log(`attributeBytesUploaded=${counters.attributeBytesUploaded ?? 0}`);
+console.log(`textureBytesUploaded=${counters.textureBytesUploaded ?? 0}`);
 
 console.log(`source: ${inputPath}`);
 console.log(`report: ${outPath} (${fs.statSync(outPath).size} bytes)`);

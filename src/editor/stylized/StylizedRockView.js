@@ -74,6 +74,7 @@ export class StylizedRockView {
     this.manifestCache = new Map();
     this.chunkLodStates = new Map();
     this.lastUpdateKey = null;
+    this.pendingRebuild = null;
     this.disposed = false;
     this.root = new THREE.Group();
     this.root.name = 'stylized-rocks';
@@ -155,9 +156,23 @@ export class StylizedRockView {
     pruneStateMap(this.chunkLodStates, plan.entries);
     const revisionSignature = this.revisionTracker.windowSignature(focus, placementRadius, 1);
     const updateKey = `${focus.chunkX}:${focus.chunkZ}:${revisionSignature}:${plan.signature}`;
-    if (updateKey === this.lastUpdateKey) return;
-    this.lastUpdateKey = updateKey;
-    this.rebuild(focus, placementRadius, plan);
+    if (updateKey === this.lastUpdateKey && !this.pendingRebuild) return;
+    this.pendingRebuild = {
+      key: `rock-lod:${updateKey}`,
+      updateKey,
+      focus,
+      placementRadius,
+      plan,
+    };
+  }
+
+  applyPendingRebuild() {
+    const job = this.pendingRebuild;
+    if (!job) return false;
+    this.pendingRebuild = null;
+    this.lastUpdateKey = job.updateKey;
+    this.rebuild(job.focus, job.placementRadius, job.plan);
+    return true;
   }
 
   createNearOnlyPlan(focus, radius) {

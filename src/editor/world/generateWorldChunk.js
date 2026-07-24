@@ -1,3 +1,4 @@
+import { enrichPageVegetationScatter } from '../stylized/vegetationScatter.js';
 import { chunkKey } from './WorldCoordinates.js';
 import { createWorldGenerator } from './WorldGeneratorFactory.js';
 import {
@@ -71,12 +72,24 @@ export function generateBaseWorldChunk(request) {
   };
 
   const maskConfig = resolveMaskConfig(request);
+  const timings = {};
+  const tilePixelsStartedAt = performance.now();
   enrichPageRenderPixels(
     page,
     (cellX, cellZ) => generator.sampleTile(cellX, cellZ),
     generator.getSurfaceMaskConfig?.(maskConfig) ?? maskConfig,
     (tileId) => generator.getTileDefinition?.(tileId),
   );
+  // enrichPageRenderPixels builds both tile + surface mask; split isn't
+  // exposed, so attribute the whole render-pixel pass to surfaceMask for QA
+  // (historically the dominant cost) and leave tilePixels as a sibling key.
+  timings.surfaceMaskMs = performance.now() - tilePixelsStartedAt;
+  timings.tilePixelsMs = timings.surfaceMaskMs;
+  page.timings = timings;
+
+  if (request.vegetationScatterConfig) {
+    enrichPageVegetationScatter(page, request.vegetationScatterConfig);
+  }
 
   return page;
 }

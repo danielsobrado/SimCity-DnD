@@ -92,6 +92,7 @@ export class StylizedTreeView {
     this.manifestStore = null;
     this.chunkLodStates = new Map();
     this.lastUpdateKey = null;
+    this.pendingLodRebuild = null;
     this.disposed = false;
     this.root = new THREE.Group();
     this.root.name = 'stylized-trees';
@@ -212,7 +213,10 @@ export class StylizedTreeView {
       config: this.config,
       revisionTracker: this.revisionTracker,
       prototypeCount: this.prototypes.length,
-      onBuilt: () => { this.lastUpdateKey = null; },
+      onBuilt: () => {
+        // Newly built manifests need a follow-up LOD write; the update loop
+        // detects `manifestFlush.built > 0` and enqueues one budgeted rebuild.
+      },
     });
     this.impostorReady = this.initializeImpostors(capacity).catch((error) => {
       console.warn('Tree impostor initialization failed; cross-card fallback remains active.', error);
@@ -264,7 +268,7 @@ export class StylizedTreeView {
     return this.impostorAtlases;
   }
 
-  update(timestamp, camera, rockSource = null, rockSignature = '') {
+  update(timestamp, camera, rockSource = null) {
     this.time.value = timestamp / 1000;
     if (this.disposed || !this.manifestStore || !this.terrainView.focusChunkKey || !camera) return;
     const focus = this.terrainView.focusChunk;
@@ -296,24 +300,32 @@ export class StylizedTreeView {
       };
     pruneStateMap(this.chunkLodStates, plan.entries);
     const revision = this.revisionTracker.windowSignature(focus, radius + 1, 1);
-    const key = `${focus.chunkX}:${focus.chunkZ}:${revision}:${rockSignature}:${plan.signature}:${this.impostorVersion}`;
-    if (key !== this.lastUpdateKey) {
-      this.lastUpdateKey = key;
-      rebuildTreeLod({
+    // Per-chunk rock blockers live in TreeManifestStore — do not use a global
+    // rock signature that would rebuild every tree band when far rocks stream.
+    const key = `${focus.chunkX}:${focus.chunkZ}:${revision}:${plan.signature}:${this.impostorVersion}`;
+
+    for (const entry of plan.entries) {
+      const visible = entry.representations.some((value) => (
+        value.band !== 'culled' && value.fade > 0
+      ));
+      if (!visible) continue;
+      if (!this.manifestStore.get(entry.chunkX, entry.chunkZ, rockSource)) {
+        this.manifestStore.schedule(entry.chunkX, entry.chunkZ, rockSource);
+      }
+    }
+    this.manifestStore.setActive(new Set(
+      plan.entries.map((entry) => `${entry.chunkX}:${entry.chunkZ}`),
+    ));
+    const manifestFlush = this.manifestStore.flush();
+
+    if (key !== this.lastUpdateKey || manifestFlush.built > 0) {
+      // Defer heavy instance writes to the budgeted tree build queue.
+      this.pendingLodRebuild = {
+        key: `tree-lod:${key}`,
+        updateKey: key,
         plan,
         rockSource,
-        manifestStore: this.manifestStore,
-        prototypeCount: this.prototypes.length,
-        prototypeWidth: this.prototypeWidth,
-        prototypeHeight: this.prototypeHeight,
-        impostorAtlases: this.impostorAtlases,
-        impostorBatches: this.impostorBatches,
-        renderers: this.renderers,
-        proxyRenderers: this.proxyRenderers,
-        fallbackImpostorRenderers: this.fallbackImpostorRenderers,
-        clusterRenderers: this.clusterRenderers,
-      });
-      this.manifestStore.flush();
+      };
     }
 
     const submitted = { cpu: 0, gpu: 0 };
@@ -330,6 +342,29 @@ export class StylizedTreeView {
       PerfCounters.set(`treeImpostorSubmittedKnown.${mode}`, known[mode] ? 1 : 0);
       if (known[mode]) PerfCounters.set(`treeImpostorSubmitted.${mode}`, submitted[mode]);
     }
+  }
+
+  applyPendingRebuild() {
+    const job = this.pendingLodRebuild;
+    if (!job) return false;
+    this.pendingLodRebuild = null;
+    this.lastUpdateKey = job.updateKey;
+    rebuildTreeLod({
+      plan: job.plan,
+      rockSource: job.rockSource,
+      manifestStore: this.manifestStore,
+      prototypeCount: this.prototypes.length,
+      prototypeWidth: this.prototypeWidth,
+      prototypeHeight: this.prototypeHeight,
+      impostorAtlases: this.impostorAtlases,
+      impostorBatches: this.impostorBatches,
+      renderers: this.renderers,
+      proxyRenderers: this.proxyRenderers,
+      fallbackImpostorRenderers: this.fallbackImpostorRenderers,
+      clusterRenderers: this.clusterRenderers,
+    });
+    this.manifestStore.flush();
+    return true;
   }
 
   createNearOnlyPlan(focus, radius) {

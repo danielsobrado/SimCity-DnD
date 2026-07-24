@@ -108,6 +108,10 @@ export class WorkerBackedWorldStore extends InfiniteWorldStore {
   refreshPageRenderPixels(page) {
     const maskConfig = this.generator.getSurfaceMaskConfig?.(this.surfaceMaskConfig)
       ?? this.surfaceMaskConfig;
+    // Overrides invalidate worker-built scatter; main-thread grass/flower rebuild
+    // will regenerate from tiles/heights.
+    delete page.grassScatter;
+    delete page.flowerScatter;
     return enrichPageRenderPixels(
       page,
       (cellX, cellZ) => this.getTile(cellX, cellZ),

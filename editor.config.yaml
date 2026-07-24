@@ -78,6 +78,8 @@ stylizedSurface:
   streaming:
     grassBuildsPerFrame: 1
     flowerBuildsPerFrame: 1
+    treeBuildsPerFrame: 1
+    rockBuildsPerFrame: 1
     heavyBuildBudgetMs: 3
     grassCellsPerBuildSlice: 64
     inactiveReleaseFrames: 30

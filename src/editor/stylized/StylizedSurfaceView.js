@@ -82,6 +82,14 @@ export class StylizedSurfaceView {
       buildsPerFrame: config.streaming?.flowerBuildsPerFrame ?? 1,
       budgetMs: config.streaming?.heavyBuildBudgetMs ?? 3,
     });
+    this.treeBuildQueue = new StylizedBuildQueue({
+      buildsPerFrame: config.streaming?.treeBuildsPerFrame ?? 1,
+      budgetMs: config.streaming?.heavyBuildBudgetMs ?? 3,
+    });
+    this.rockBuildQueue = new StylizedBuildQueue({
+      buildsPerFrame: config.streaming?.rockBuildsPerFrame ?? 1,
+      budgetMs: config.streaming?.heavyBuildBudgetMs ?? 3,
+    });
     this.chunkWorldSize = terrainView.worldStore.chunkSize * terrainView.worldStore.tileSize;
     this.tileSize = terrainView.worldStore.tileSize;
   }
@@ -154,9 +162,23 @@ export class StylizedSurfaceView {
     this.updateRendererCounters();
     this.skyView?.update(timestamp, camera);
     this.rockView?.update(timestamp, camera);
+    if (this.rockView?.pendingRebuild) {
+      this.rockBuildQueue.enqueue(this.rockView.pendingRebuild);
+    }
+    this.rockBuildQueue.flush((job) => {
+      void job;
+      return this.rockView?.applyPendingRebuild() ?? false;
+    });
+
     const rockPlacements = this.rockView?.getPlacements() ?? [];
-    const rockSignature = this.rockView?.getSignature() ?? '';
-    this.treeView?.update(timestamp, camera, this.rockView, rockSignature);
+    this.treeView?.update(timestamp, camera, this.rockView);
+    if (this.treeView?.pendingLodRebuild) {
+      this.treeBuildQueue.enqueue(this.treeView.pendingLodRebuild);
+    }
+    this.treeBuildQueue.flush((job) => {
+      void job;
+      return this.treeView?.applyPendingRebuild() ?? false;
+    });
     this.flowerView?.update(timestamp);
     for (const slot of this.waterSlots) slot.update(timestamp);
 
@@ -245,6 +267,8 @@ export class StylizedSurfaceView {
     this.sceneAssets = null;
     this.grassBuildQueue.clear();
     this.flowerBuildQueue.clear();
+    this.treeBuildQueue.clear();
+    this.rockBuildQueue.clear();
     for (const slot of this.waterSlots) slot.dispose();
     this.waterSlots.length = 0;
     for (const slot of this.slots) slot.dispose();

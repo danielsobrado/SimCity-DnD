@@ -24,10 +24,11 @@ dominated by (a) serialized generation and (b) conservative drain pacing.
 | 2 | Generation **request priority + cancellation** | ✅ Done | Enter-next chunk generates first; stale requests dropped |
 | 3 | **Adaptive commit budget** | ✅ Done | More commits/frame when idle or backed up; stay at 1 while moving |
 | 4 | **Memoize the streaming plan** | ✅ Done | Skip Map/freeze/sort churn when the focus & predicted chunks are unchanged |
-| 5 | Reuse stylized instance buffers | ⏳ Future | Grass/flower rebuild spike (~948 ms once); bigger change |
-| 6 | Distance LOD for far chunks | ⏳ Future | Downsampled heights, no stylized beyond radius 1; largest change |
+| 5 | Worker vegetation scatter + attribute update ranges | ✅ Done | Grass/flower scatter built off-thread; GPU uploads use `updateRanges` |
+| 6 | Budgeted tree/rock rebuild queues | ✅ Done | One heavy LOD rebuild per frame; trees no longer use a global rock signature |
+| 7 | Distance LOD for far chunks | ⏳ Future | Downsampled heights, no stylized beyond radius 1; largest change |
 
-Items 1–4 are implemented here. 5–6 are documented as follow-ups.
+Items 1–6 are implemented here. Item 7 remains a follow-up.
 
 ## Details
 
