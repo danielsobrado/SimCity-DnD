@@ -9,11 +9,15 @@ import {
 const recipe = {
   archetype: 'gatehouse',
   style: 'granite',
+  topStyle: 'terracotta',
   width: 8,
   depth: 2,
   height: 5,
   seed: 1848,
   detail: 2,
+  weathering: 0.35,
+  windows: true,
+  ivy: true,
   remesh: true,
   albedo: true,
 };
@@ -28,6 +32,10 @@ test('procedural asset recipes are normalized and bounded', () => {
   assert.throws(
     () => normalizeProceduralRecipe({ ...recipe, archetype: 'castle' }),
     /Unknown workshop archetype/,
+  );
+  assert.throws(
+    () => normalizeProceduralRecipe({ ...recipe, topStyle: 'onion-dome' }),
+    /Unknown workshop top style/,
   );
 });
 

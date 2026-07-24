@@ -230,6 +230,7 @@ button, input { font: inherit; }
 .workshop-controls input:focus,
 .workshop-controls select:focus { border-color: #d4b65e; }
 .workshop-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.workshop-option-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .workshop-inline { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .workshop-check { display: grid !important; grid-template-columns: auto 1fr; align-items: center; }
 .workshop-check input { min-height: auto; }

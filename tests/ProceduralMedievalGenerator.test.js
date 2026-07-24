@@ -6,11 +6,15 @@ import { createProceduralMedievalParts } from '../src/editor/workshop/Procedural
 const recipe = {
   archetype: 'wall',
   style: 'limestone',
+  topStyle: 'battlements',
   width: 6,
   depth: 1.5,
   height: 4,
   seed: 77,
   detail: 2,
+  weathering: 0.35,
+  windows: false,
+  ivy: false,
   remesh: true,
   albedo: true,
 };
@@ -31,8 +35,8 @@ test('procedural masonry is deterministic and remeshed', () => {
   const first = createProceduralMedievalParts(recipe);
   const second = createProceduralMedievalParts(recipe);
   try {
-    assert.equal(first.length, 1);
-    assert.equal(first.stats.drawParts, 1);
+    assert.equal(first.length, 2);
+    assert.equal(first.stats.drawParts, 2);
     assert.ok(first.stats.stones > 20);
     assert.equal(positionSignature(first), positionSignature(second));
     assert.ok(first[0].geometry.boundingBox);
@@ -51,6 +55,32 @@ test('albedo baking creates a reusable sRGB data texture', () => {
     assert.equal(texture.image.width, 128);
     assert.equal(texture.image.height, 128);
     assert.equal(texture.image.data.length, 128 * 128 * 4);
+  } finally {
+    disposeModelParts(parts);
+  }
+});
+
+test('semantic gatehouse details remain bounded after remeshing', () => {
+  const parts = createProceduralMedievalParts({
+    ...recipe,
+    archetype: 'gatehouse',
+    topStyle: 'terracotta',
+    windows: true,
+    ivy: true,
+  });
+  try {
+    assert.ok(parts.stats.stones > 200);
+    assert.ok(parts.stats.features > 20);
+    assert.ok(parts.length <= 7);
+    assert.equal(parts.stats.drawParts, parts.length);
+    assert.ok(parts[0].geometry.getAttribute('color'));
+    for (const part of parts) {
+      assert.ok(part.geometry.boundingBox);
+      assert.ok(part.geometry.boundingSphere);
+      for (const value of part.geometry.getAttribute('position').array) {
+        assert.ok(Number.isFinite(value));
+      }
+    }
   } finally {
     disposeModelParts(parts);
   }

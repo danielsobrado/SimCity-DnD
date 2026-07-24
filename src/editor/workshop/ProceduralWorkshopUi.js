@@ -41,6 +41,7 @@ export class ProceduralWorkshopUi {
                   <option value="wall">Wall</option>
                   <option value="gatehouse" selected>Gatehouse</option>
                   <option value="tower">Round tower</option>
+                  <option value="square-tower">Square keep tower</option>
                 </select>
               </label>
               <label>Stone
@@ -48,6 +49,13 @@ export class ProceduralWorkshopUi {
                   <option value="granite">Grey granite</option>
                   <option value="limestone">Warm limestone</option>
                   <option value="sandstone">Red sandstone</option>
+                </select>
+              </label>
+              <label>Top
+                <select name="topStyle">
+                  <option value="battlements">Battlements</option>
+                  <option value="slate">Slate roof</option>
+                  <option value="terracotta" selected>Terracotta roof</option>
                 </select>
               </label>
               <div class="workshop-field-grid">
@@ -68,6 +76,19 @@ export class ProceduralWorkshopUi {
                   <button type="button" class="action-button" data-workshop-action="reroll">Reroll</button>
                 </span>
               </label>
+              <label>Age and weathering
+                <input name="weathering" type="range" min="0" max="1" step="0.05" value="0.35" />
+              </label>
+              <div class="workshop-option-grid">
+                <label class="workshop-check">
+                  <input name="windows" type="checkbox" checked />
+                  Doors and windows
+                </label>
+                <label class="workshop-check">
+                  <input name="ivy" type="checkbox" checked />
+                  Procedural ivy
+                </label>
+              </div>
               <label class="workshop-check">
                 <input name="remesh" type="checkbox" checked />
                 Remesh into draw-call-efficient merged geometry
@@ -129,11 +150,15 @@ export class ProceduralWorkshopUi {
       recipe: {
         archetype: values.get('archetype'),
         style: values.get('style'),
+        topStyle: values.get('topStyle'),
         width: Number(values.get('width')),
         depth: Number(values.get('depth')),
         height: Number(values.get('height')),
         detail: Number(values.get('detail')),
         seed: Number(values.get('seed')),
+        weathering: Number(values.get('weathering')),
+        windows: values.get('windows') === 'on',
+        ivy: values.get('ivy') === 'on',
         remesh: values.get('remesh') === 'on',
         albedo: values.get('albedo') === 'on',
       },
@@ -223,13 +248,29 @@ export class ProceduralWorkshopUi {
         mesh.receiveShadow = true;
         this.previewRoot.add(mesh);
       }
+      this.framePreview();
       const stats = nextParts.stats;
-      this.status.textContent = `${stats.stones} stones · ${stats.sourceVertices.toLocaleString()} source vertices · ${stats.drawParts} baked mesh part${stats.drawParts === 1 ? '' : 's'}.`;
+      this.status.textContent = `${stats.stones} stones · ${stats.features} semantic details · ${stats.sourceVertices.toLocaleString()} source vertices · ${stats.drawParts} baked parts.`;
       this.status.classList.remove('is-error');
     } catch (error) {
       this.status.textContent = error.message;
       this.status.classList.add('is-error');
     }
+  }
+
+  framePreview() {
+    if (!this.camera || !this.controls || this.previewRoot.children.length === 0) return;
+    const bounds = new THREE.Box3().setFromObject(this.previewRoot);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    const distance = Math.max(size.x, size.y, size.z) * 1.95;
+    const direction = this.camera.position.clone().sub(this.controls.target).normalize();
+    this.controls.target.copy(center);
+    this.camera.position.copy(center).addScaledVector(direction, Math.max(6, distance));
+    this.camera.near = Math.max(0.05, distance / 100);
+    this.camera.far = Math.max(100, distance * 8);
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
   }
 
   bake() {

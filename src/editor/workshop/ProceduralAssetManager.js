@@ -14,13 +14,14 @@ function definitionFor(record, tileSize) {
     ? recipe.width + recipe.depth * 1.4
     : recipe.width;
   const footprintWidth = Math.max(1, Math.ceil(radiusWidth / tileSize));
+  const towerLike = recipe.archetype === 'tower' || recipe.archetype === 'square-tower';
   const footprintDepth = Math.max(1, Math.ceil(
-    (recipe.archetype === 'tower' ? recipe.width : recipe.depth) / tileSize,
+    (towerLike ? recipe.width : recipe.depth) / tileSize,
   ));
   return Object.freeze({
     key: record.key,
     label: record.label,
-    icon: recipe.archetype === 'tower' ? '🗼' : recipe.archetype === 'gatehouse' ? '🏯' : '🧱',
+    icon: towerLike ? '🗼' : recipe.archetype === 'gatehouse' ? '🏯' : '🧱',
     category: 'workshop',
     color: recipe.style === 'sandstone'
       ? '#b7774f'

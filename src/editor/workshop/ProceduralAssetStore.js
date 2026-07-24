@@ -1,7 +1,8 @@
 const ASSET_VERSION = 1;
 const MAX_ASSETS = 32;
-const VALID_ARCHETYPES = new Set(['wall', 'gatehouse', 'tower']);
+const VALID_ARCHETYPES = new Set(['wall', 'gatehouse', 'tower', 'square-tower']);
 const VALID_STYLES = new Set(['granite', 'limestone', 'sandstone']);
+const VALID_TOP_STYLES = new Set(['battlements', 'slate', 'terracotta']);
 
 function requireFinite(value, field, minimum, maximum) {
   const number = Number(value);
@@ -32,21 +33,29 @@ function hashString(value) {
 export function normalizeProceduralRecipe(input = {}) {
   const archetype = String(input.archetype ?? 'wall');
   const style = String(input.style ?? 'granite');
+  const topStyle = String(input.topStyle ?? 'battlements');
   if (!VALID_ARCHETYPES.has(archetype)) {
     throw new Error(`Unknown workshop archetype: ${archetype}.`);
   }
   if (!VALID_STYLES.has(style)) {
     throw new Error(`Unknown workshop stone style: ${style}.`);
   }
+  if (!VALID_TOP_STYLES.has(topStyle)) {
+    throw new Error(`Unknown workshop top style: ${topStyle}.`);
+  }
 
   return Object.freeze({
     archetype,
     style,
+    topStyle,
     width: requireFinite(input.width ?? 8, 'Width', 2, 16),
     depth: requireFinite(input.depth ?? 2, 'Depth', 1, 12),
     height: requireFinite(input.height ?? 5, 'Height', 2, 14),
     seed: Math.trunc(requireFinite(input.seed ?? 1, 'Seed', 0, 0x7fffffff)),
     detail: Math.trunc(requireFinite(input.detail ?? 2, 'Detail', 1, 3)),
+    weathering: requireFinite(input.weathering ?? 0.35, 'Weathering', 0, 1),
+    windows: input.windows !== false,
+    ivy: input.ivy === true,
     remesh: input.remesh !== false,
     albedo: input.albedo !== false,
   });
