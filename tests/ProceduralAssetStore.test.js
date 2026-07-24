@@ -31,6 +31,7 @@ const recipe = {
     sources: {},
     slots: {},
   },
+  componentTransforms: {},
 };
 
 function importedSurfaceTextures() {
@@ -81,7 +82,7 @@ test('procedural asset recipes are normalized and bounded', () => {
   );
 });
 
-test('older workshop recipes receive compatible quality and texture defaults', () => {
+test('older workshop recipes receive compatible quality, texture, and component defaults', () => {
   const normalized = normalizeProceduralRecipe({
     archetype: 'tower',
     style: 'granite',
@@ -103,6 +104,46 @@ test('older workshop recipes receive compatible quality and texture defaults', (
   assert.equal(normalized.windows, true);
   assert.equal(normalized.ivy, false);
   assert.deepEqual(normalized.surfaceTextures, { sources: {}, slots: {} });
+  assert.deepEqual(normalized.componentTransforms, {});
+});
+
+test('component transforms are normalized, sparse, and bounded', () => {
+  const normalized = normalizeProceduralRecipe({
+    ...recipe,
+    componentTransforms: {
+      'structure-main': {
+        position: [1, 0.5, -2],
+        rotation: [0, Math.PI / 2, 0],
+        scale: [1.25, 1.5, 0.8],
+      },
+      'door-1': {
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      },
+    },
+  });
+  assert.deepEqual(Object.keys(normalized.componentTransforms), ['structure-main']);
+  assert.deepEqual(normalized.componentTransforms['structure-main'].position, [1, 0.5, -2]);
+  assert.ok(Object.isFrozen(normalized.componentTransforms['structure-main']));
+  assert.throws(
+    () => normalizeProceduralRecipe({
+      ...recipe,
+      componentTransforms: {
+        '../door': { scale: [1, 1, 1] },
+      },
+    }),
+    /Invalid workshop component id/,
+  );
+  assert.throws(
+    () => normalizeProceduralRecipe({
+      ...recipe,
+      componentTransforms: {
+        'door-1': { scale: [0, 1, 1] },
+      },
+    }),
+    /Component scale values must be between/,
+  );
 });
 
 test('imported albedo is normalized, shared across areas, and strips unused sources', () => {
@@ -183,20 +224,31 @@ test('procedural object keys are stable and collision safe', () => {
   assert.equal(collision.key, `${first.key}-2`);
 });
 
-test('procedural asset documents preserve authoritative recipes and imported images', () => {
+test('procedural asset documents preserve images and semantic component edits', () => {
   const source = new ProceduralAssetStore();
   const record = source.add({
     label: 'Textured Gatehouse',
-    recipe: { ...recipe, surfaceTextures: importedSurfaceTextures() },
+    recipe: {
+      ...recipe,
+      surfaceTextures: importedSurfaceTextures(),
+      componentTransforms: {
+        'door-1': {
+          position: [0.75, 0, 0],
+          rotation: [0, 0.2, 0],
+          scale: [1.2, 1.4, 1],
+        },
+      },
+    },
   });
   const document = source.toDocument();
-  assert.equal(document[0].version, 2);
+  assert.equal(document[0].version, 3);
   assert.equal(document[0].key, record.key);
   assert.equal('geometry' in document[0], false);
   assert.equal(
     document[0].recipe.surfaceTextures.sources['albedo-shared'].dataUrl,
     PNG_DATA_URL,
   );
+  assert.deepEqual(document[0].recipe.componentTransforms['door-1'].position, [0.75, 0, 0]);
 
   const target = new ProceduralAssetStore();
   target.replaceAll(document);
@@ -204,11 +256,14 @@ test('procedural asset documents preserve authoritative recipes and imported ima
   assert.ok(Object.isFrozen(target.list()[0].recipe));
 });
 
-test('version-one workshop records migrate to version two', () => {
+test('version-one and version-two workshop records migrate to version three', () => {
   const oldRecord = createProceduralAssetRecord({ label: 'Legacy Tower', recipe });
-  const store = new ProceduralAssetStore();
-  store.replaceAll([{ ...oldRecord, version: 1 }]);
-  const [migrated] = store.toDocument();
-  assert.equal(migrated.version, 2);
-  assert.deepEqual(migrated.recipe.surfaceTextures, { sources: {}, slots: {} });
+  for (const version of [1, 2]) {
+    const store = new ProceduralAssetStore();
+    store.replaceAll([{ ...oldRecord, version }]);
+    const [migrated] = store.toDocument();
+    assert.equal(migrated.version, 3);
+    assert.deepEqual(migrated.recipe.surfaceTextures, { sources: {}, slots: {} });
+    assert.deepEqual(migrated.recipe.componentTransforms, {});
+  }
 });
