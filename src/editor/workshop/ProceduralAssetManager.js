@@ -2,7 +2,7 @@ import { TILE_CATALOG } from '../tileCatalog.js';
 import { disposeModelParts } from '../assets/modelParts.js';
 import { unregisterProceduralDefinitions } from './ProceduralDefinitionLifecycle.js';
 import { ProceduralAssetStore } from './ProceduralAssetStore.js';
-import { createProceduralWorkshopParts } from './ProceduralWorkshopGenerator.js';
+import { createProceduralWorkshopComponentParts } from './ProceduralWorkshopComponentParts.js';
 
 const CASTLE_WALL_WIDTH_PADDING = 0.7;
 const CASTLE_WALL_DEPTH_FACTOR = 2.3;
@@ -93,7 +93,7 @@ export class ProceduralAssetManager {
   }
 
   createPreviewParts(recipe) {
-    return createProceduralWorkshopParts(recipe);
+    return createProceduralWorkshopComponentParts(recipe, { preserveComponents: true });
   }
 
   cleanupFailedInstall(definition, parts) {
@@ -119,7 +119,7 @@ export class ProceduralAssetManager {
 
   install(record) {
     const definition = definitionFor(record, this.tileSize);
-    const parts = createProceduralWorkshopParts(record.recipe);
+    const parts = createProceduralWorkshopComponentParts(record.recipe);
     try {
       this.objectMap.registerDefinition(definition);
       this.objectView.registerDefinition(definition, parts);
