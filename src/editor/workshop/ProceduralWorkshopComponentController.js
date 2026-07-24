@@ -117,7 +117,8 @@ export class ProceduralWorkshopComponentController {
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.selectionHelper = createSelectionHelper();
-    previewRoot.add(this.selectionHelper);
+    this.selectionRoot = previewRoot.parent ?? previewRoot;
+    this.selectionRoot.add(this.selectionHelper);
 
     root.innerHTML = `
       <label class="workshop-component-select">
@@ -407,7 +408,7 @@ export class ProceduralWorkshopComponentController {
 
   dispose() {
     this.clear();
-    this.previewRoot.remove(this.selectionHelper);
+    this.selectionRoot.remove(this.selectionHelper);
     this.selectionHelper.geometry.dispose();
     this.selectionHelper.material.dispose();
     this.select.removeEventListener('change', this.onSelectChange);
