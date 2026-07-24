@@ -5,6 +5,7 @@ const DEFAULT_SUPERCELL_SIZE = 384;
 const HASH_X = 73856093;
 const HASH_Z = 19349663;
 const HASH_CHANNEL = 83492791;
+const MAX_PATCH_CENTER_OFFSET = 0.85;
 
 function clamp01(value) {
   return Math.min(1, Math.max(0, value));
@@ -48,11 +49,19 @@ function valueNoise(x, z, seed, channel) {
   return interpolate(bottom, top, smoothZ);
 }
 
-function patchId(cellX, cellZ, seed) {
+function patchId(cellX, cellZ, seed, supercellSize, profile) {
   const suffix = hash32(
     Math.imul(cellX, HASH_X) ^ Math.imul(cellZ, HASH_Z) ^ seed,
   ).toString(16).padStart(8, '0');
-  return `${cellX}:${cellZ}:${suffix}`;
+  return `${profile.tileId}:${supercellSize}:${cellX}:${cellZ}:${suffix}`;
+}
+
+function patchSearchRadius(profile) {
+  const boundaryScale = 1 + profile.boundaryWarp * 0.5;
+  const maximumAxis = profile.patchRadiusMax
+    * Math.max(1, profile.patchAspectMax)
+    * boundaryScale;
+  return Math.max(2, Math.floor(maximumAxis + MAX_PATCH_CENTER_OFFSET));
 }
 
 function evaluatePatch({ x, z, cellX, cellZ, seed, supercellSize, profile }) {
@@ -128,10 +137,11 @@ export class ForestPatchField {
     ) - 0.5) * warpScale;
     const baseCellX = Math.floor(warpedX / this.supercellSize);
     const baseCellZ = Math.floor(warpedZ / this.supercellSize);
+    const searchRadius = patchSearchRadius(profile);
     let best = null;
 
-    for (let offsetZ = -2; offsetZ <= 2; offsetZ += 1) {
-      for (let offsetX = -2; offsetX <= 2; offsetX += 1) {
+    for (let offsetZ = -searchRadius; offsetZ <= searchRadius; offsetZ += 1) {
+      for (let offsetX = -searchRadius; offsetX <= searchRadius; offsetX += 1) {
         const candidate = evaluatePatch({
           x: warpedX,
           z: warpedZ,
@@ -150,7 +160,13 @@ export class ForestPatchField {
     const edge = 1 - Math.min(1, Math.abs(best.distance - 1) / edgeWidth);
 
     return Object.freeze({
-      patchId: patchId(best.cellX, best.cellZ, this.seed),
+      patchId: patchId(
+        best.cellX,
+        best.cellZ,
+        this.seed,
+        this.supercellSize,
+        profile,
+      ),
       patchCoverage: clamp01(coverage),
       patchEdge: clamp01(edge),
       patchDistance: best.distance,
