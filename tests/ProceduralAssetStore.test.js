@@ -121,7 +121,7 @@ test('imported albedo is normalized, shared across areas, and strips unused sour
   assert.ok(Object.isFrozen(normalized.surfaceTextures.sources['albedo-shared']));
 });
 
-test('imported albedo rejects unsafe formats and missing sources', () => {
+test('imported albedo rejects unsafe formats, corrupt payloads, and missing sources', () => {
   assert.throws(
     () => normalizeProceduralRecipe({
       ...recipe,
@@ -136,6 +136,21 @@ test('imported albedo rejects unsafe formats and missing sources', () => {
       },
     }),
     /PNG, JPEG, or WebP/,
+  );
+  assert.throws(
+    () => normalizeProceduralRecipe({
+      ...recipe,
+      surfaceTextures: {
+        sources: {
+          'albedo-corrupt': {
+            name: 'corrupt.png',
+            dataUrl: 'data:image/png;base64,AAAAAAAAAAAAAAAA',
+          },
+        },
+        slots: {},
+      },
+    }),
+    /does not match its declared format/,
   );
   assert.throws(
     () => normalizeProceduralRecipe({
