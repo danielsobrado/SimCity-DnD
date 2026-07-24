@@ -147,6 +147,17 @@ function cellPoints(cartography, vertexIndexById, cellIndex) {
   return result;
 }
 
+function buildCellGeometry(cartography, vertexIndexById) {
+  const paths = new Array(cartography.cellIds.length);
+  const points = new Array(cartography.cellIds.length);
+  for (let cellIndex = 0; cellIndex < cartography.cellIds.length; cellIndex += 1) {
+    const polygon = cellPoints(cartography, vertexIndexById, cellIndex);
+    points[cellIndex] = polygon;
+    paths[cellIndex] = pointPath(polygon, true);
+  }
+  return Object.freeze({ paths, points });
+}
+
 function waterColor(height, physical = false) {
   const depth = clamp(height / Math.max(1, LAND_HEIGHT - 1), 0, 1);
   return interpolateColor(
@@ -182,6 +193,9 @@ function presetCellStyle(preset, cellIndex, context) {
   } = context;
   const height = cartography.heights[cellIndex];
   if (height < LAND_HEIGHT) {
+    if (preset !== 'heightmap' && preset !== 'physical') {
+      return { key: 'water', color: '#9fc8d8' };
+    }
     const band = Math.floor(height / 4);
     return { key: `water-${band}`, color: waterColor(height, preset === 'physical') };
   }
@@ -253,7 +267,7 @@ function borderValuesForPreset(preset, cartography, cellIndex) {
   return [0, 0];
 }
 
-function buildFillLayers(cartography, vertexIndexById, campaign, baseTerrain) {
+function buildFillLayers(cartography, geometry, campaign, baseTerrain) {
   const context = {
     cartography,
     stateById: entityMap(campaign.states),
@@ -267,8 +281,7 @@ function buildFillLayers(cartography, vertexIndexById, campaign, baseTerrain) {
     const groups = new Map();
     for (let cellIndex = 0; cellIndex < cartography.cellIds.length; cellIndex += 1) {
       const style = presetCellStyle(preset.id, cellIndex, context);
-      const path = pointPath(cellPoints(cartography, vertexIndexById, cellIndex), true);
-      addGroupedPath(groups, style.key, style.color, path);
+      addGroupedPath(groups, style.key, style.color, geometry.paths[cellIndex]);
     }
     result[preset.id] = Object.freeze([...groups.values()].map(Object.freeze));
   }
@@ -345,7 +358,7 @@ function buildRoutes(campaign) {
   return Object.freeze((campaign.routes ?? []).flatMap((route) => {
     const points = (route.points ?? []).flatMap((point) => (
       Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))
-        ? [[[Number(point[0]), Number(point[1])]]]
+        ? [[Number(point[0]), Number(point[1])]]
         : []
     ));
     if (points.length < 2) return [];
@@ -364,7 +377,7 @@ function buildRivers(campaign, centerByCellId) {
       : (river.cells ?? []).map((cellId) => centerByCellId.get(Number(cellId))).filter(Boolean);
     const points = sourcePoints.flatMap((point) => (
       Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))
-        ? [[[Number(point[0]), Number(point[1])]]]
+        ? [[Number(point[0]), Number(point[1])]]
         : []
     ));
     if (points.length < 2) return [];
@@ -415,16 +428,15 @@ function buildLabelSets(campaign, centerByCellId) {
   });
 }
 
-function buildSpatialIndex(cartography, vertexIndexById) {
+function buildSpatialIndex(cartography, geometry) {
   const aspect = cartography.width / cartography.height;
   const columns = clamp(Math.ceil(Math.sqrt(cartography.cellIds.length * aspect)), 8, 256);
   const rows = clamp(Math.ceil(columns / aspect), 8, 256);
   const buckets = Array.from({ length: columns * rows }, () => []);
-  const pointsByCell = new Array(cartography.cellIds.length);
+  const pointsByCell = geometry.points;
 
   for (let cellIndex = 0; cellIndex < cartography.cellIds.length; cellIndex += 1) {
-    const points = cellPoints(cartography, vertexIndexById, cellIndex);
-    pointsByCell[cellIndex] = points;
+    const points = pointsByCell[cellIndex];
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -478,6 +490,14 @@ export function findVectorMapCell(model, x, y) {
 
 export function createVectorMapModel(cartography, campaign, baseTerrain) {
   const vertexIndexById = createVertexLookup(cartography);
+  const geometry = buildCellGeometry(cartography, vertexIndexById);
+  const lookups = Object.freeze({
+    stateById: entityMap(campaign.states),
+    provinceById: entityMap(campaign.provinces),
+    cultureById: entityMap(campaign.cultures),
+    religionById: entityMap(campaign.religions),
+    biomeById: new Map((baseTerrain?.biomes ?? []).map((biome) => [biome.sourceId, biome])),
+  });
   const centerByCellId = cellPointById(cartography);
   const cellIndexById = new Map();
   for (let index = 0; index < cartography.cellIds.length; index += 1) {
@@ -490,12 +510,13 @@ export function createVectorMapModel(cartography, campaign, baseTerrain) {
     vertexIndexById,
     cellIndexById,
     centerByCellId,
-    fillLayers: buildFillLayers(cartography, vertexIndexById, campaign, baseTerrain),
+    lookups,
+    fillLayers: buildFillLayers(cartography, geometry, campaign, baseTerrain),
     borders: buildBorders(cartography, vertexIndexById),
     routes: buildRoutes(campaign),
     rivers: buildRivers(campaign, centerByCellId),
     labelSets: buildLabelSets(campaign, centerByCellId),
-    spatialIndex: buildSpatialIndex(cartography, vertexIndexById),
+    spatialIndex: buildSpatialIndex(cartography, geometry),
   });
 }
 
@@ -503,11 +524,12 @@ export function getVectorCellDetails(model, cellIndex, campaign, baseTerrain) {
   if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= model.cartography.cellIds.length) {
     return null;
   }
-  const stateById = entityMap(campaign.states);
-  const provinceById = entityMap(campaign.provinces);
-  const cultureById = entityMap(campaign.cultures);
-  const religionById = entityMap(campaign.religions);
-  const biomeById = new Map((baseTerrain?.biomes ?? []).map((biome) => [biome.sourceId, biome]));
+  const stateById = model.lookups?.stateById ?? entityMap(campaign.states);
+  const provinceById = model.lookups?.provinceById ?? entityMap(campaign.provinces);
+  const cultureById = model.lookups?.cultureById ?? entityMap(campaign.cultures);
+  const religionById = model.lookups?.religionById ?? entityMap(campaign.religions);
+  const biomeById = model.lookups?.biomeById
+    ?? new Map((baseTerrain?.biomes ?? []).map((biome) => [biome.sourceId, biome]));
   const { cartography } = model;
   return Object.freeze({
     cellId: cartography.cellIds[cellIndex],

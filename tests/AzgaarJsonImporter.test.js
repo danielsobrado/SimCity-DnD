@@ -4,6 +4,7 @@ import {
   importAzgaarFullJson,
   isAzgaarFullJson,
 } from '../src/editor/import/AzgaarJsonImporter.js';
+import { decodeAzgaarCartographySource } from '../src/editor/import/AzgaarCartographySource.js';
 import { InfiniteWorldStore } from '../src/editor/world/InfiniteWorldStore.js';
 import { ProceduralWorldGenerator } from '../src/editor/world/ProceduralWorldGenerator.js';
 
@@ -50,10 +51,16 @@ function createAzgaarDocument() {
     },
     pack: {
       cells: [
-        { i: 0, g: 0, h: 0, biome: 0 },
-        { i: 1, g: 1, h: 35, biome: 1 },
-        { i: 2, g: 2, h: 82, biome: 2 },
-        { i: 3, g: 3, h: 45, biome: 3 },
+        { i: 0, g: 0, h: 0, biome: 0, p: [250, 200], v: [0, 1, 2] },
+        { i: 1, g: 1, h: 35, biome: 1, p: [750, 200], v: [0, 2, 3] },
+        { i: 2, g: 2, h: 82, biome: 2, p: [250, 600], v: [0, 3, 1] },
+        { i: 3, g: 3, h: 45, biome: 3, p: [750, 600], v: [1, 3, 2] },
+      ],
+      vertices: [
+        { i: 0, p: [0, 0] },
+        { i: 1, p: [1000, 0] },
+        { i: 2, p: [1000, 800] },
+        { i: 3, p: [0, 800] },
       ],
       states: [{ i: 1, name: 'Northreach' }],
       provinces: [{ i: 1, name: 'Vale' }],
@@ -88,6 +95,12 @@ test('converts Azgaar terrain into a portable streamed macro source', () => {
   assert.equal(converted.world.baseTerrain.atlas.height, 3);
   assert.equal(converted.objects.length, 0);
   assert.equal(converted.campaign.source.mapName, 'Test Realm');
+  assert.equal(converted.campaign.cartography.kind, 'azgaar-cartography-v1');
+  assert.equal(converted.campaign.cartography.cells.count, 4);
+  const cartography = decodeAzgaarCartographySource(
+    JSON.parse(JSON.stringify(converted.campaign.cartography)),
+  );
+  assert.deepEqual([...cartography.cellIds], [0, 1, 2, 3]);
   assert.equal(converted.campaign.states[0].name, 'Northreach');
   assert.equal(converted.campaign.burgs[0].name, 'Harborwatch');
   assert.equal(converted.importWarnings.length, 3);
@@ -115,5 +128,22 @@ test('rejects minimal or unrelated JSON exports', () => {
       pack: {},
     }, createConfig()),
     /must include grid cells and grid dimensions/,
+  );
+});
+
+test('keeps older Full JSON imports usable when vector vertices are unavailable', () => {
+  const document = createAzgaarDocument();
+  delete document.pack.vertices;
+  const converted = importAzgaarFullJson(document, createConfig());
+  assert.equal(converted.campaign.cartography, undefined);
+  assert.equal(converted.world.baseTerrain.kind, 'azgaar-macro-v1');
+});
+
+test('rejects malformed vector geometry when a Full JSON export includes it', () => {
+  const document = createAzgaarDocument();
+  document.pack.cells[0].v[0] = 999;
+  assert.throws(
+    () => importAzgaarFullJson(document, createConfig()),
+    /missing vertex 999/,
   );
 });

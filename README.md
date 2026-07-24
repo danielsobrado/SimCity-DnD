@@ -126,8 +126,9 @@ The macro source imports:
 - Markers, zones, and notes.
 
 Political, settlement, route, marker, and note records are preserved as
-campaign metadata. Labels, heraldry, and Azgaar visual styling are not yet
-rendered as native overlays.
+campaign metadata. Full JSON imports also retain a compact copy of Azgaar's
+cell and vertex geometry for the native vector world map. Heraldry and the
+complete set of Azgaar editor-only visual layers are not rendered.
 
 The imported rectangle is centered on the world origin. Terrain beyond its
 bounds transitions into deep ocean over
@@ -151,6 +152,21 @@ import time, so streamed terrain reproduces the same relief deterministically.
 High-frequency ruggedness scales with elevation, keeping peaks jagged and
 lowlands smooth. Manual terrain sculpting still clamps to `terrain.maxHeight`,
 so raising already-exaggerated mountains by hand is limited.
+
+### Vector world map
+
+Press **M** after importing an Azgaar Full JSON map to open the campaign-scale
+world map. It uses the original Azgaar polygons rather than enlarging the macro
+terrain atlas, so coastlines, regions, routes, settlements, and labels remain
+sharp while zooming.
+
+The map provides Political, Provinces, Cultures, Religions, Biomes, Heightmap,
+and Physical views. Borders, routes, rivers, burgs, labels, and markers can be
+toggled independently. Drag to pan, use the wheel or toolbar to zoom, hover for
+cell details, and click a location to move the player there.
+
+Worlds imported before vector cartography was added still use the legacy raster
+preview. Re-import their original Full JSON once to add the detailed map data.
 
 ## World content providers
 
@@ -216,7 +232,7 @@ See `docs/asset-pipeline.md` for the authoring contract.
 
 - Object rendering is globally stored and is not yet independently simulation-LOD streamed.
 - Voxel stamps are sparse and globally capped by configuration.
-- Azgaar political borders, labels, and routes are metadata rather than native rendered overlays.
+- The vector world map covers the core Azgaar views and overlays, but not editor-only layers such as heraldry, military, economy, trade animation, or the 3D/globe modes.
 - Player collision does not query the GPU marching-cubes surface.
 - Full visual runtime verification still requires a physical WebGPU browser.
 
