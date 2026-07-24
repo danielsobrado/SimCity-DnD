@@ -4,6 +4,9 @@ import { unregisterProceduralDefinitions } from './ProceduralDefinitionLifecycle
 import { ProceduralAssetStore } from './ProceduralAssetStore.js';
 import { createProceduralWorkshopParts } from './ProceduralWorkshopGenerator.js';
 
+const CASTLE_WALL_WIDTH_PADDING = 0.7;
+const CASTLE_WALL_DEPTH_FACTOR = 2.3;
+
 const TERRAIN_CLASSES = Object.freeze([
   'ocean', 'plains', 'forest', 'desert', 'wetland', 'tundra', 'ice',
   'road', 'stone', 'corruption',
@@ -18,7 +21,9 @@ function definitionFor(record, tileSize) {
   const manorHasTower = manorLike && recipe.towerSide !== 'none';
   const radiusWidth = recipe.archetype === 'gatehouse'
     ? recipe.width + recipe.depth * 1.4
-    : manorHasTower ? recipe.width + manorTowerRadius * 0.62 : recipe.width;
+    : manorHasTower
+      ? recipe.width + manorTowerRadius * 0.62
+      : castleWallLike ? recipe.width + CASTLE_WALL_WIDTH_PADDING : recipe.width;
   const footprintWidth = Math.max(1, Math.ceil(radiusWidth / tileSize));
   const towerLike = recipe.archetype === 'tower' || recipe.archetype === 'square-tower';
   const footprintDepth = Math.max(1, Math.ceil(
@@ -27,7 +32,7 @@ function definitionFor(record, tileSize) {
         ? recipe.width
         : manorLike
           ? manorDepth + (manorHasTower ? manorTowerRadius * 0.82 : 0)
-          : recipe.depth
+          : castleWallLike ? recipe.depth * CASTLE_WALL_DEPTH_FACTOR : recipe.depth
     ) / tileSize,
   ));
   return Object.freeze({
