@@ -42,6 +42,14 @@ function componentTransformFromGroup(group) {
   });
 }
 
+function combineComponentTransforms(base, delta) {
+  return normalizeComponentTransform({
+    position: base.position.map((value, index) => value + delta.position[index]),
+    rotation: base.rotation.map((value, index) => normalizeAngle(value + delta.rotation[index])),
+    scale: base.scale.map((value, index) => value * delta.scale[index]),
+  });
+}
+
 function applyTransform(group, transform) {
   const basePosition = group.userData.workshopBasePosition;
   group.position.set(
@@ -66,6 +74,10 @@ function createSelectionHelper() {
   helper.visible = false;
   helper.raycast = () => {};
   return helper;
+}
+
+function isOpening2d(component) {
+  return component?.transformPolicy === 'opening2d';
 }
 
 export class ProceduralWorkshopComponentController {
@@ -177,9 +189,17 @@ export class ProceduralWorkshopComponentController {
       if (parent) parent.add(group);
       else this.previewRoot.add(group);
 
-      const transform = this.transforms[component.id] ?? component.transform;
-      if (!isIdentityComponentTransform(transform)) this.transforms[component.id] = transform;
-      applyTransform(group, transform);
+      const storedTransform = this.transforms[component.id]
+        ?? component.storedTransform
+        ?? component.transform;
+      group.userData.workshopStoredTransform = storedTransform;
+      if (!isIdentityComponentTransform(storedTransform)) {
+        this.transforms[component.id] = storedTransform;
+      }
+      applyTransform(
+        group,
+        isOpening2d(component) ? createIdentityComponentTransform() : storedTransform,
+      );
     }
   }
 
@@ -187,13 +207,16 @@ export class ProceduralWorkshopComponentController {
     this.clear();
     const definitions = new Map();
     for (const part of parts) {
+      const identity = createIdentityComponentTransform();
       const component = part.component ?? Object.freeze({
         id: 'structure-main',
         label: 'Main structure',
         kind: 'structure',
         parentId: null,
         pivot: Object.freeze([0, 0, 0]),
-        transform: createIdentityComponentTransform(),
+        transform: identity,
+        storedTransform: identity,
+        transformPolicy: 'free',
       });
       definitions.set(component.id, component);
     }
@@ -245,17 +268,30 @@ export class ProceduralWorkshopComponentController {
     this.setMode(this.mode);
     this.updateSelectionHelper();
     const component = group.userData.workshopComponent;
-    this.hint.textContent = `${component.label} selected · move, rotate, or scale with the gizmo.`;
+    this.hint.textContent = isOpening2d(component)
+      ? `${component.label} selected · move within the wall plane or scale its width and height.`
+      : `${component.label} selected · move, rotate, or scale with the gizmo.`;
   }
 
-  setMode(mode) {
-    if (!['translate', 'rotate', 'scale'].includes(mode)) return;
+  setMode(requestedMode) {
+    if (!['translate', 'rotate', 'scale'].includes(requestedMode)) return this.mode;
+    const component = this.groups.get(this.selectedComponentId)?.userData.workshopComponent;
+    const mode = isOpening2d(component) && requestedMode === 'rotate'
+      ? 'translate'
+      : requestedMode;
     this.mode = mode;
     this.transformControls.setMode(mode);
     this.transformControls.setSpace(mode === 'translate' ? 'world' : 'local');
-    this.transformControls.showX = true;
-    this.transformControls.showY = true;
-    this.transformControls.showZ = true;
+    if (isOpening2d(component)) {
+      this.transformControls.showX = true;
+      this.transformControls.showY = true;
+      this.transformControls.showZ = false;
+    } else {
+      this.transformControls.showX = true;
+      this.transformControls.showY = true;
+      this.transformControls.showZ = true;
+    }
+    return mode;
   }
 
   constrainSelectedTransform() {
@@ -292,18 +328,30 @@ export class ProceduralWorkshopComponentController {
       WORKSHOP_COMPONENT_TRANSFORM_LIMITS.scaleMin,
       WORKSHOP_COMPONENT_TRANSFORM_LIMITS.scaleMax,
     );
+
+    if (isOpening2d(group.userData.workshopComponent)) {
+      group.position.z = basePosition.z;
+      group.rotation.set(0, 0, 0);
+      group.scale.z = 1;
+    }
   }
 
   commitSelectedTransform() {
     const group = this.groups.get(this.selectedComponentId);
     if (!group) return;
     this.constrainSelectedTransform();
-    const transform = componentTransformFromGroup(group);
+    const delta = componentTransformFromGroup(group);
+    const topologyDriven = isOpening2d(group.userData.workshopComponent);
+    const transform = topologyDriven
+      ? combineComponentTransforms(group.userData.workshopStoredTransform, delta)
+      : delta;
     if (isIdentityComponentTransform(transform)) {
       delete this.transforms[this.selectedComponentId];
     } else {
       this.transforms[this.selectedComponentId] = transform;
     }
+    group.userData.workshopStoredTransform = transform;
+    if (topologyDriven) applyTransform(group, createIdentityComponentTransform());
     this.updateSelectionHelper();
     this.onChange?.(group.userData.workshopComponent, transform);
   }
@@ -313,6 +361,7 @@ export class ProceduralWorkshopComponentController {
     if (!group) return;
     delete this.transforms[this.selectedComponentId];
     const identity = createIdentityComponentTransform();
+    group.userData.workshopStoredTransform = identity;
     applyTransform(group, identity);
     this.updateSelectionHelper();
     this.onChange?.(group.userData.workshopComponent, identity);
@@ -321,7 +370,10 @@ export class ProceduralWorkshopComponentController {
   resetAll() {
     this.transforms = {};
     const identity = createIdentityComponentTransform();
-    for (const group of this.groups.values()) applyTransform(group, identity);
+    for (const group of this.groups.values()) {
+      group.userData.workshopStoredTransform = identity;
+      applyTransform(group, identity);
+    }
     this.updateSelectionHelper();
     this.onChange?.(null, identity);
   }
