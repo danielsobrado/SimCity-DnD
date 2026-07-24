@@ -5,6 +5,30 @@ import {
   buildStableChunkManifest,
   placementSignature,
 } from './StableScatterManifest.js';
+import {
+  ForestHabitatField,
+  createForestPlacementEvaluator,
+} from './forest/ForestHabitatField.js';
+
+function forestSeed(terrainView) {
+  const value = terrainView.worldStore?.seed ?? terrainView.worldStore?.worldSeed ?? 0;
+  return Number.isInteger(value) ? value : Math.trunc(value) || 0;
+}
+
+function createForestField(terrainView, config) {
+  const habitat = config.trees.habitat ?? {};
+  if (habitat.enabled === false) return null;
+  return new ForestHabitatField({
+    seed: forestSeed(terrainView),
+    tileSize: terrainView.worldStore.tileSize,
+    tileAt: (cellX, cellZ) => terrainView.tileMap.get(cellX, cellZ),
+    heightAt: (x, z) => terrainView.getCanonicalHeight(x, z),
+    waterDistanceAt: typeof terrainView.getCanonicalWaterDistance === 'function'
+      ? (x, z) => terrainView.getCanonicalWaterDistance(x, z)
+      : null,
+    config: habitat,
+  });
+}
 
 export class TreeManifestStore {
   constructor({ terrainView, config, revisionTracker, prototypeCount, onBuilt }) {
@@ -13,6 +37,7 @@ export class TreeManifestStore {
     this.revisionTracker = revisionTracker;
     this.prototypeCount = prototypeCount;
     this.onBuilt = onBuilt;
+    this.forestField = createForestField(terrainView, config);
     this.cache = new Map();
     this.pendingKeys = new Set();
     this.activeKeys = new Set();
@@ -41,6 +66,7 @@ export class TreeManifestStore {
         this.revisionTracker.signature(chunkX, chunkZ, 1),
         placementSignature(blockers),
         this.prototypeCount,
+        this.forestField?.signature ?? 'uniform',
       ].join('|'),
     };
   }
@@ -56,13 +82,20 @@ export class TreeManifestStore {
 
   build(chunkX, chunkZ, rockSource) {
     const context = this.context(chunkX, chunkZ, rockSource);
+    const perChunk = this.config.trees.perChunk;
+    const configuredBudget = this.config.trees.habitat?.candidateBudgetPerChunk;
+    const candidateBudget = this.forestField
+      ? Math.max(perChunk, Math.floor(configuredBudget ?? perChunk * 2))
+      : perChunk;
+    const counters = { evaluated: 0, rejectedHabitat: 0 };
     const placements = buildStableChunkManifest({
       kind: 'tree',
       chunkX,
       chunkZ,
       chunkSize: this.terrainView.worldStore.chunkSize,
       tileSize: this.terrainView.worldStore.tileSize,
-      perChunk: this.config.trees.perChunk,
+      perChunk: candidateBudget,
+      maxAccepted: perChunk,
       tileIds: this.config.trees.tileIds,
       tileAt: (cellX, cellZ) => this.terrainView.tileMap.get(cellX, cellZ),
       heightAt: (x, z) => this.terrainView.getCanonicalHeight(x, z),
@@ -71,12 +104,19 @@ export class TreeManifestStore {
       maxScale: this.config.trees.maxScale,
       radiusForScale: () => context.clearRadius,
       blockers: context.blockers,
+      candidateEvaluator: createForestPlacementEvaluator(this.forestField, counters),
     });
     this.cache.set(`${chunkX}:${chunkZ}`, {
       signature: context.signature,
       placements,
     });
     PerfCounters.inc('treeManifestBuilds');
+    PerfCounters.set('forestLastChunkCandidatesEvaluated', counters.evaluated);
+    PerfCounters.set('forestLastChunkCandidatesRejectedHabitat', counters.rejectedHabitat);
+    PerfCounters.set('forestLastChunkTreesAccepted', placements.length);
+    PerfCounters.set('forestLastChunkPatchCount', new Set(
+      placements.map((placement) => placement.patchId).filter(Boolean),
+    ).size);
     return placements;
   }
 

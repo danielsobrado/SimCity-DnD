@@ -66,6 +66,17 @@ export function blockersForChunk({
   });
 }
 
+function evaluateCandidate(candidate, candidateEvaluator) {
+  if (!candidateEvaluator) return candidate;
+  const metadata = candidateEvaluator(candidate);
+  if (!metadata) return null;
+  if (metadata === true) return candidate;
+  if (typeof metadata !== 'object') {
+    throw new Error('candidateEvaluator must return an object, true, or a falsy rejection.');
+  }
+  return Object.freeze({ ...candidate, ...metadata });
+}
+
 function createCandidate({
   kind,
   chunkX,
@@ -81,6 +92,7 @@ function createCandidate({
   maxScale,
   radiusForScale,
   priorityChannel,
+  candidateEvaluator,
 }) {
   const cellX = chunkX * chunkSize
     + Math.floor(scatterRandom01(chunkX, chunkZ, index, 0) * chunkSize);
@@ -98,8 +110,7 @@ function createCandidate({
     + scatterRandom01(chunkX, chunkZ, index, 5) * (maxScale - minScale);
   const rotationY = scatterRandom01(chunkX, chunkZ, index, 6) * Math.PI * 2;
   const id = stableId(kind, chunkX, chunkZ, index);
-
-  return Object.freeze({
+  const candidate = Object.freeze({
     stableId: id,
     ownerChunkX: chunkX,
     ownerChunkZ: chunkZ,
@@ -113,12 +124,18 @@ function createCandidate({
     radius: radiusForScale(scale),
     priority: scatterRandom01(chunkX, chunkZ, index, priorityChannel),
   });
+
+  return evaluateCandidate(candidate, candidateEvaluator);
 }
 
 /**
  * Builds one chunk's accepted placements using a Matérn-II rule: a candidate
  * survives only when no overlapping candidate has a lower stable priority.
  * Acceptance is independent of focus-window size and traversal order.
+ *
+ * candidateEvaluator may reject a candidate or attach immutable domain metadata
+ * before spacing is resolved. maxAccepted is applied deterministically after the
+ * spacing rule and does not affect neighboring chunks' candidate authority.
  */
 export function buildStableChunkManifest({
   kind,
@@ -137,6 +154,8 @@ export function buildStableChunkManifest({
   blockers = [],
   haloChunks = 1,
   priorityChannel = DEFAULT_PRIORITY_CHANNEL,
+  candidateEvaluator = null,
+  maxAccepted = Number.POSITIVE_INFINITY,
 }) {
   if (!Number.isInteger(prototypeCount) || prototypeCount < 1) return Object.freeze([]);
   const eligibleTileIds = tileIds instanceof Set ? tileIds : new Set(tileIds);
@@ -164,6 +183,7 @@ export function buildStableChunkManifest({
           maxScale,
           radiusForScale,
           priorityChannel,
+          candidateEvaluator,
         });
         if (candidate) candidates.push(candidate);
       }
@@ -178,10 +198,15 @@ export function buildStableChunkManifest({
     }
     return true;
   });
+  const acceptedLimit = Number.isInteger(maxAccepted)
+    ? Math.max(0, maxAccepted)
+    : Number.POSITIVE_INFINITY;
+  const owned = accepted.filter((candidate) => (
+    candidate.ownerChunkX === chunkX && candidate.ownerChunkZ === chunkZ
+  ));
+  const limited = Number.isFinite(acceptedLimit)
+    ? owned.sort(candidateOrder).slice(0, acceptedLimit)
+    : owned;
 
-  return Object.freeze(accepted
-    .filter((candidate) => (
-      candidate.ownerChunkX === chunkX && candidate.ownerChunkZ === chunkZ
-    ))
-    .sort((left, right) => left.index - right.index));
+  return Object.freeze(limited.sort((left, right) => left.index - right.index));
 }
