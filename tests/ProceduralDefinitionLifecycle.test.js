@@ -113,7 +113,7 @@ test('unregistering procedural definitions removes render state and releases res
   assert.equal(state.objectView.refreshCount, 1);
 });
 
-test('unregistering refuses non-procedural definitions', () => {
+test('unregistering refuses non-procedural definitions without mutating preview or render state', () => {
   const state = fixture();
   assert.throws(
     () => unregisterProceduralDefinitions({
@@ -125,4 +125,24 @@ test('unregistering refuses non-procedural definitions', () => {
   );
   assert.equal(state.objectMap.definitionByKey.has('base-house'), true);
   assert.equal(state.objectView.renderers.has('base-house'), true);
+  assert.equal(state.objectView.previewDefinitionKey, state.definition.key);
+  assert.equal(state.objectView.previewGroup.visible, true);
+  assert.equal(state.previewMaterial.disposed, 0);
+  assert.equal(state.objectView.refreshCount, 0);
+});
+
+test('unregistering checks renderer ownership even when definition maps are incomplete', () => {
+  const state = fixture();
+  state.objectMap.definitionByKey.delete('base-house');
+  state.objectView.definitionByKey.delete('base-house');
+  assert.throws(
+    () => unregisterProceduralDefinitions({
+      objectMap: state.objectMap,
+      objectView: state.objectView,
+      definitionKeys: ['base-house'],
+    }),
+    /non-procedural object definition/,
+  );
+  assert.equal(state.objectView.renderers.has('base-house'), true);
+  assert.equal(state.objectView.refreshCount, 0);
 });
