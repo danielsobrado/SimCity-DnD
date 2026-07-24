@@ -111,6 +111,7 @@ export class ProceduralWorkshopSurfaceEditor {
     this.swatch = root.querySelector('[data-role="surface-swatch"]');
     this.title = root.querySelector('[data-role="surface-title"]');
     this.fileName = root.querySelector('[data-role="surface-file"]');
+    this.loadButton = root.querySelector('[data-surface-action="load"]');
     this.clearButton = root.querySelector('[data-surface-action="clear"]');
     this.copyButton = root.querySelector('[data-surface-action="copy"]');
     this.copyTarget = root.querySelector('[data-role="surface-copy-target"]');
@@ -275,11 +276,13 @@ export class ProceduralWorkshopSurfaceEditor {
 
     for (const button of this.root.querySelectorAll('[data-surface-action="select"]')) {
       button.classList.toggle('is-active', button.dataset.surfaceSlot === this.activeSlot);
+      button.classList.toggle('has-texture', Boolean(this.state.slots[button.dataset.surfaceSlot]));
       button.setAttribute('aria-selected', String(button.dataset.surfaceSlot === this.activeSlot));
     }
 
     this.title.textContent = this.activeLabel();
     this.fileName.textContent = source?.name ?? 'Procedural material';
+    this.loadButton.textContent = source ? 'Replace image' : 'Load image';
     this.swatch.style.backgroundImage = source ? `url("${source.dataUrl}")` : '';
     this.swatch.classList.toggle('has-texture', Boolean(source));
     this.swatch.querySelector('span').textContent = source ? '' : 'Procedural';
@@ -291,7 +294,11 @@ export class ProceduralWorkshopSurfaceEditor {
     this.root.querySelector('[data-surface-setting="rotation"]').value = String(settings.rotation);
     this.root.querySelector('[data-surface-setting="repeat"]').value = String(settings.repeat);
     this.root.querySelector('[data-surface-setting="tint"]').value = settings.tint;
-    this.repeatOutput.textContent = `${Number(settings.repeat).toFixed(2)}×`;
+    const repeatControl = this.root.querySelector('[data-surface-setting="repeat"]');
+    repeatControl.disabled = !slot || settings.mapping === 'clamp';
+    this.repeatOutput.textContent = settings.mapping === 'clamp'
+      ? 'Single image'
+      : `${Number(settings.repeat).toFixed(2)}×`;
 
     this.clearButton.disabled = !slot;
     this.copyButton.disabled = !slot;
