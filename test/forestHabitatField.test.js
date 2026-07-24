@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildStableChunkManifest } from '../src/editor/stylized/StableScatterManifest.js';
+import { TreeManifestStore } from '../src/editor/stylized/TreeManifestStore.js';
 import {
   ForestHabitatField,
   createForestPlacementEvaluator,
 } from '../src/editor/stylized/forest/ForestHabitatField.js';
+import {
+  resolveForestCandidateBudget,
+  resolveForestSeed,
+} from '../src/editor/stylized/forest/ForestRuntimeConfig.js';
 
 function createField({ seed = 17, tileId = 7, heightAt = () => 10, config = {} } = {}) {
   return new ForestHabitatField({
@@ -27,6 +32,25 @@ function findBestSample(field) {
     }
   }
   return best;
+}
+
+function baseManifest(overrides = {}) {
+  return {
+    kind: 'tree',
+    chunkX: 0,
+    chunkZ: 0,
+    chunkSize: 16,
+    tileSize: 2,
+    perChunk: 16,
+    tileIds: [7],
+    tileAt: () => 7,
+    heightAt: () => 0,
+    prototypeCount: 2,
+    minScale: 0.8,
+    maxScale: 1.2,
+    radiusForScale: () => 0,
+    ...overrides,
+  };
 }
 
 test('forest habitat samples are deterministic for a world seed', () => {
@@ -60,6 +84,12 @@ test('different world seeds change the patch authority', () => {
   }
 
   assert.equal(changed, true);
+});
+
+test('different biome authorities never share a patch id', () => {
+  const tropical = createField({ seed: 17, tileId: 7 }).sample(120, -80);
+  const temperate = createField({ seed: 17, tileId: 8 }).sample(120, -80);
+  assert.notEqual(tropical.patchId, temperate.patchId);
 });
 
 test('unsupported biomes remain tree free', () => {
@@ -106,27 +136,81 @@ test('placement evaluation uses stable priority as the density threshold', () =>
 });
 
 test('stable scatter caps accepted records and preserves evaluator metadata', () => {
-  const placements = buildStableChunkManifest({
-    kind: 'tree',
-    chunkX: 0,
-    chunkZ: 0,
-    chunkSize: 16,
-    tileSize: 2,
-    perChunk: 16,
+  const placements = buildStableChunkManifest(baseManifest({
     maxAccepted: 2,
-    tileIds: [7],
-    tileAt: () => 7,
-    heightAt: () => 0,
-    prototypeCount: 2,
-    minScale: 0.8,
-    maxScale: 1.2,
-    radiusForScale: () => 0,
     candidateEvaluator: (candidate) => (
       candidate.priority < 0.9 ? { patchId: 'stable-patch' } : null
     ),
-  });
+  }));
 
   assert.equal(placements.length, 2);
   assert.ok(placements.every((placement) => placement.patchId === 'stable-patch'));
   assert.ok(placements[0].index < placements[1].index);
+});
+
+test('candidate metadata cannot replace canonical placement authority', () => {
+  assert.throws(
+    () => buildStableChunkManifest(baseManifest({
+      candidateEvaluator: () => ({ x: 999 }),
+    })),
+    /cannot override canonical field "x"/,
+  );
+  assert.throws(
+    () => buildStableChunkManifest(baseManifest({
+      candidateEvaluator: () => [],
+    })),
+    /must return a plain object/,
+  );
+});
+
+test('forest runtime seed follows the active world generator', () => {
+  assert.equal(resolveForestSeed({ generator: { seed: 918273 } }), 918273);
+  assert.equal(resolveForestSeed({
+    generator: { toMetadata: () => ({ seed: 42 }) },
+  }), 42);
+  assert.equal(resolveForestSeed({ seed: 7 }), 7);
+});
+
+test('tree manifest integration uses the active generator seed', () => {
+  const terrainView = {
+    worldStore: {
+      seed: 1,
+      chunkSize: 64,
+      tileSize: 2,
+      generator: { seed: 918273 },
+    },
+    tileMap: { get: () => 7 },
+    getCanonicalHeight: () => 10,
+    chunkWorldSize: 128,
+  };
+  const config = {
+    trees: {
+      perChunk: 12,
+      clearRadius: 3.5,
+      tileIds: [7],
+      minScale: 0.8,
+      maxScale: 1.2,
+    },
+    streaming: {},
+  };
+  const store = new TreeManifestStore({
+    terrainView,
+    config,
+    revisionTracker: { signature: () => 'stable' },
+    prototypeCount: 1,
+  });
+
+  assert.equal(store.forestField.seed, 918273);
+  store.dispose();
+});
+
+test('forest candidate budgets are finite and bounded', () => {
+  assert.equal(resolveForestCandidateBudget(12), 24);
+  assert.equal(resolveForestCandidateBudget(12, Number.NaN), 24);
+  assert.equal(resolveForestCandidateBudget(12, -100), 12);
+  assert.equal(resolveForestCandidateBudget(12, 1_000_000), 96);
+  assert.throws(
+    () => resolveForestCandidateBudget(0),
+    /positive integer/,
+  );
 });
