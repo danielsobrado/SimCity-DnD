@@ -56,6 +56,16 @@ function blobToDataUrl(blob) {
   });
 }
 
+function dimensionsMatchHeader(decodedWidth, decodedHeight, sourceDimensions) {
+  return (
+    decodedWidth === sourceDimensions.width
+    && decodedHeight === sourceDimensions.height
+  ) || (
+    decodedWidth === sourceDimensions.height
+    && decodedHeight === sourceDimensions.width
+  );
+}
+
 export async function prepareWorkshopAlbedo(file) {
   if (typeof File === 'undefined' || !(file instanceof File)) {
     throw new Error('Choose an albedo image first.');
@@ -72,7 +82,7 @@ export async function prepareWorkshopAlbedo(file) {
   try {
     const decodedWidth = decoded.image.naturalWidth ?? decoded.image.width;
     const decodedHeight = decoded.image.naturalHeight ?? decoded.image.height;
-    if (decodedWidth !== sourceDimensions.width || decodedHeight !== sourceDimensions.height) {
+    if (!dimensionsMatchHeader(decodedWidth, decodedHeight, sourceDimensions)) {
       throw new Error('The decoded albedo dimensions do not match its image header.');
     }
 
