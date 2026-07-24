@@ -8,6 +8,7 @@ import { installObjectAssets } from './editor/assets/installObjectAssets.js';
 import { EditorCamera } from './editor/EditorCamera.js';
 import { EditorUi } from './editor/EditorUi.js';
 import { InfiniteTerrainView } from './editor/InfiniteTerrainView.js';
+import { MacroFarTerrainView } from './editor/world/MacroFarTerrainView.js';
 import { WorldMapController } from './editor/map/WorldMapController.js';
 import { WorldMapUi } from './editor/map/WorldMapUi.js';
 import { ObjectMap } from './editor/ObjectMap.js';
@@ -53,6 +54,27 @@ async function startEditor() {
   if (!defaultTile) {
     throw new Error(`Unknown default tile: ${config.map.defaultTile}.`);
   }
+
+  // View distance is near by default so procedural worlds keep their cozy fog.
+  // The imported macro backdrop switches to a far view at runtime — the sky
+  // sphere, fog, and camera far plane grow to its radius so far continents read
+  // through the haze (see applyViewDistance below).
+  const NEAR_FAR_PLANE = 5000;
+  const farTerrainRadius = config.world.farTerrain?.enabled !== false
+    ? (config.world.farTerrain?.radiusMeters ?? 0)
+    : 0;
+  const nearView = {
+    farPlane: NEAR_FAR_PLANE,
+    skyRadius: config.stylizedSurface?.sky?.radius ?? NEAR_FAR_PLANE,
+    fogDensity: config.stylizedSurface?.sky?.fogDensity ?? 0,
+  };
+  const farView = farTerrainRadius > 0
+    ? (() => {
+      const skyRadius = farTerrainRadius + config.world.floatingOriginThreshold + 8000;
+      // FogExp2 ~10% visibility at the backdrop radius, so its far edge fades.
+      return { farPlane: skyRadius + 4000, skyRadius, fogDensity: 1.5 / farTerrainRadius };
+    })()
+    : null;
 
   const root = document.querySelector('#app');
   const generator = new ProceduralWorldGenerator({
@@ -155,12 +177,20 @@ async function startEditor() {
     return;
   }
 
+  const macroFarTerrain = new MacroFarTerrainView({
+    scene: terrainView.scene,
+    worldStore,
+    floatingOrigin,
+    config,
+  });
+
   const editorCamera = new EditorCamera({
     canvas: terrainView.renderer.domElement,
     viewSize: config.camera.viewSize,
     minZoom: config.camera.minZoom,
     maxZoom: config.camera.maxZoom,
     damping: config.camera.damping,
+    farPlane: nearView.farPlane,
   });
 
   // Declared before PlayerController so WorldMapController's window keydown
@@ -183,6 +213,7 @@ async function startEditor() {
     canvas: terrainView.renderer.domElement,
     terrainView,
     config: config.player,
+    farPlane: nearView.farPlane,
   });
   viewModeController = new ViewModeController({
     editorCamera,
@@ -211,6 +242,25 @@ async function startEditor() {
 
   ui.bind(controller);
   const viewModeUi = new ViewModeUi({ root, controller: viewModeController });
+
+  // Switch between near and far view distance depending on whether the imported
+  // macro backdrop is active, so procedural worlds keep their original near fog.
+  let farViewActive = false;
+  const applyViewDistance = (active) => {
+    const view = active && farView ? farView : nearView;
+    for (const camera of [editorCamera.camera, playerController.camera]) {
+      camera.far = view.farPlane;
+      camera.updateProjectionMatrix();
+    }
+    stylizedSurface.setViewDistance({ skyRadius: view.skyRadius, fogDensity: view.fogDensity });
+  };
+  applyViewDistance(false);
+
+  // Dev-only test hook: lets the perf/screenshot harness import a world and
+  // drive the player without the file picker + prompt. Never exposed in builds.
+  if (import.meta.env.DEV) {
+    window.__editor = { controller, worldMapController, config, ui };
+  }
   const assetPipeline = installObjectAssets({
     objectView,
     catalog: OBJECT_RENDER_CATALOG,
@@ -303,6 +353,13 @@ async function startEditor() {
     }
     if (profiling) perfQa.mark('floatingOrigin');
 
+    macroFarTerrain.update();
+    const backdropActive = macroFarTerrain.isActive();
+    if (backdropActive !== farViewActive) {
+      farViewActive = backdropActive;
+      applyViewDistance(backdropActive);
+    }
+
     const canonicalFocus = floatingOrigin.toCanonical(renderFocus.x, renderFocus.z);
     const forcePredictiveRefresh = frameTimestamp >= nextPredictiveRefreshAt;
     if (forcePredictiveRefresh) {
@@ -360,6 +417,7 @@ async function startEditor() {
     assetPipeline.dispose();
     worldMapUi.dispose();
     worldMapController.dispose();
+    macroFarTerrain.dispose();
     viewModeUi.dispose();
     viewModeController.dispose();
     controller.dispose();

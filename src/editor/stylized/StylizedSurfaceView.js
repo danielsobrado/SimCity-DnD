@@ -157,6 +157,11 @@ export class StylizedSurfaceView {
     }
   }
 
+  setViewDistance({ skyRadius, fogDensity } = {}) {
+    this.skyView?.setRadius(skyRadius);
+    this.skyView?.setFogDensity(fogDensity);
+  }
+
   update(timestamp, camera) {
     if (!this.enabled || this.impostorBakeMode) return;
     this.updateRendererCounters();

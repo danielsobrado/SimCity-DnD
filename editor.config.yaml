@@ -29,6 +29,16 @@ world:
   maxCommitsPerFrame: 1
   maxCommitsPerFrameIdle: 4
   commitBudgetMs: 2
+  # Coarse distant-terrain backdrop for imported Azgaar worlds. Streamed chunks
+  # only cover a small radius; this fills the horizon with continents and
+  # mountains sampled from the in-memory macro atlas. It follows the floating
+  # origin and rebuilds only when the origin snaps, so it does not affect chunk
+  # streaming. Set enabled:false to disable.
+  farTerrain:
+    enabled: true
+    radiusMeters: 60000
+    resolution: 160
+    heightBias: 15
 camera:
   viewSize: 180
   minZoom: 0.3

@@ -142,6 +142,18 @@ export class StylizedSkyView {
     terrainView.scene.fog = new THREE.FogExp2(config.sky.fogColor, config.sky.fogDensity);
   }
 
+  setRadius(radius) {
+    if (Number.isFinite(radius) && radius > 0) {
+      this.mesh.scale.setScalar(radius);
+    }
+  }
+
+  setFogDensity(density) {
+    if (this.terrainView.scene.fog && Number.isFinite(density) && density >= 0) {
+      this.terrainView.scene.fog.density = density;
+    }
+  }
+
   update(timestamp, camera) {
     if (!camera) return;
     this.time.value = timestamp / 1000;

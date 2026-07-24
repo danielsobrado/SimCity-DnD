@@ -12,11 +12,11 @@ const MOVEMENT_CODES = new Set([
 ]);
 
 export class PlayerController {
-  constructor({ canvas, terrainView, config }) {
+  constructor({ canvas, terrainView, config, farPlane = 5000 }) {
     this.canvas = canvas;
     this.terrainView = terrainView;
     this.config = config;
-    this.camera = new THREE.PerspectiveCamera(config.fovDegrees, 1, 0.1, 5000);
+    this.camera = new THREE.PerspectiveCamera(config.fovDegrees, 1, 0.5, farPlane);
     this.camera.rotation.order = 'YXZ';
     this.state = createPlayerState({
       x: 0,

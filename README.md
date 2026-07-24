@@ -135,6 +135,28 @@ bounds transitions into deep ocean over
 `import.azgaarOceanTransitionKilometers`. Direct Azgaar `.map` files are not
 supported; export Full JSON from Azgaar first.
 
+### Distant-terrain backdrop
+
+Streamed chunks only cover a small radius around the camera, so far geography
+would otherwise read as empty sky. For imported Azgaar worlds, a coarse backdrop
+mesh sampled from the in-memory macro atlas fills the horizon with continents and
+mountains. It follows the floating origin, rebuilds only when the origin snaps,
+and never touches the chunk streamer, so it does not change streaming behavior.
+The sky sphere, fog, and camera far plane scale to `world.farTerrain.radiusMeters`.
+
+```yaml
+world:
+  farTerrain:
+    enabled: true
+    radiusMeters: 60000   # how far the backdrop reaches
+    resolution: 160       # backdrop grid vertices per side
+    heightBias: 15        # sink below detailed terrain to avoid z-fighting
+```
+
+Set `enabled: false` to restore the near-only view (and the original fog). The
+backdrop only appears once an Azgaar world is imported; procedural worlds keep
+the near-only streamed terrain.
+
 ### Mountain relief
 
 Azgaar worlds are often thousands of kilometers wide, which compresses real

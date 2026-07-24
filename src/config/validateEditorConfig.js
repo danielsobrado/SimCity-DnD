@@ -340,6 +340,27 @@ export function validateEditorConfig(config) {
     throw new Error('Invalid editor configuration: world.seaLevel must be finite.');
   }
 
+  if (config.world.farTerrain !== undefined) {
+    const far = config.world.farTerrain;
+    if (typeof far !== 'object' || far === null || Array.isArray(far)) {
+      throw new Error('Invalid editor configuration: world.farTerrain must be an object.');
+    }
+    if (far.enabled !== undefined && typeof far.enabled !== 'boolean') {
+      throw new Error('Invalid editor configuration: world.farTerrain.enabled must be boolean.');
+    }
+    if (far.radiusMeters !== undefined
+        && (!Number.isFinite(far.radiusMeters) || far.radiusMeters <= 0)) {
+      throw new Error('Invalid editor configuration: world.farTerrain.radiusMeters must be positive.');
+    }
+    if (far.resolution !== undefined
+        && (!Number.isInteger(far.resolution) || far.resolution < 2)) {
+      throw new Error('Invalid editor configuration: world.farTerrain.resolution must be an integer >= 2.');
+    }
+    if (far.heightBias !== undefined && !Number.isFinite(far.heightBias)) {
+      throw new Error('Invalid editor configuration: world.farTerrain.heightBias must be finite.');
+    }
+  }
+
   if (config.import.azgaarVerticalExaggeration !== undefined
       && (!Number.isFinite(config.import.azgaarVerticalExaggeration)
         || config.import.azgaarVerticalExaggeration <= 0)) {

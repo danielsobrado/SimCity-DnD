@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 
 export class EditorCamera {
-  constructor({ canvas, viewSize, minZoom, maxZoom, damping }) {
+  constructor({ canvas, viewSize, minZoom, maxZoom, damping, farPlane = 5000 }) {
     this.viewSize = viewSize;
-    this.camera = new THREE.OrthographicCamera(-viewSize, viewSize, viewSize, -viewSize, 0.1, 5000);
+    this.camera = new THREE.OrthographicCamera(-viewSize, viewSize, viewSize, -viewSize, 0.1, farPlane);
     this.camera.position.set(150, 180, 150);
     this.camera.up.set(0, 1, 0);
 

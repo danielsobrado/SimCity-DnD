@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   burgToNormalized,
   canonicalWorldToNormalized,
+  findNearestLandCell,
   normalizedToCanonicalWorld,
 } from '../src/editor/map/worldMapCoordinates.js';
 import { importAzgaarFullJson } from '../src/editor/import/AzgaarJsonImporter.js';
@@ -119,4 +120,39 @@ test('a burg teleport target lands inside the imported world bounds and matches 
   const atlasFromBurg = { x: nx * baseTerrain.atlas.width, y: nz * baseTerrain.atlas.height };
   assert.ok(Math.abs(atlasFromGenerator.x - atlasFromBurg.x) <= 1);
   assert.ok(Math.abs(atlasFromGenerator.y - atlasFromBurg.y) <= 1);
+});
+
+test('findNearestLandCell returns the query cell unchanged when it is already land', () => {
+  const isLand = () => true;
+  const result = findNearestLandCell(10, -4, isLand, { stepCells: 3, maxRings: 8 });
+  assert.deepEqual({ x: result.x, z: result.z, snapped: result.snapped, found: result.found }, {
+    x: 10, z: -4, snapped: false, found: true,
+  });
+});
+
+test('findNearestLandCell snaps a water click to the nearest land cell in atlas steps', () => {
+  // Land only exists at a single cell 6 steps east of the query.
+  const landX = 0 + 2 * 5; // stepCells 5, two rings east
+  const isLand = (x, z) => x === landX && z === 0;
+  const result = findNearestLandCell(0, 0, isLand, { stepCells: 5, maxRings: 8 });
+  assert.equal(result.snapped, true);
+  assert.equal(result.found, true);
+  assert.equal(result.x, landX);
+  assert.equal(result.z, 0);
+});
+
+test('findNearestLandCell picks the closest land when several are in range', () => {
+  // Land at +1 step west and +3 steps east; nearest (west) must win.
+  const isLand = (x, z) => z === 0 && (x === -4 || x === 12);
+  const result = findNearestLandCell(0, 0, isLand, { stepCells: 4, maxRings: 8 });
+  assert.equal(result.x, -4);
+  assert.equal(result.snapped, true);
+});
+
+test('findNearestLandCell reports not found when no land is within range', () => {
+  const isLand = () => false;
+  const result = findNearestLandCell(0, 0, isLand, { stepCells: 4, maxRings: 3 });
+  assert.deepEqual({ x: result.x, z: result.z, snapped: result.snapped, found: result.found }, {
+    x: 0, z: 0, snapped: false, found: false,
+  });
 });

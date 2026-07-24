@@ -275,6 +275,20 @@ export class AzgaarMacroWorldGenerator {
     return base + detail * coastFade * ruggedness;
   }
 
+  // Coarse macro sample (base height without the high-frequency detail noise,
+  // plus the biome tile) for distant-terrain backdrops and overview rendering.
+  sampleMacroColumn(cellX, cellZ) {
+    const rawHeight = this.sampleRawHeight(cellX, cellZ);
+    let height = convertHeight(rawHeight, this.source.terrain);
+    if (!this.isInside(cellX, cellZ)) {
+      const amount = smoothstep(
+        this.outsideDistance(cellX, cellZ) / this.source.oceanTransitionCells,
+      );
+      height = lerp(height, this.source.terrain.minHeight * 0.35, amount);
+    }
+    return { height, tileId: this.sampleTile(cellX, cellZ) };
+  }
+
   isRiver(cellX, cellZ) {
     const position = this.toAtlasPosition(cellX + 0.5, cellZ + 0.5);
     const key = `${Math.floor(position.x)}:${Math.floor(position.y)}`;
