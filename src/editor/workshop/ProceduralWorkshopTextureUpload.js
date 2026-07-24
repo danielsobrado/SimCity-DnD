@@ -1,3 +1,5 @@
+import { parseWorkshopImageDimensions } from './ProceduralWorkshopImageMetadata.js';
+
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 const OUTPUT_SIZE = 512;
 const OUTPUT_TYPE = 'image/webp';
@@ -54,6 +56,16 @@ function blobToDataUrl(blob) {
   });
 }
 
+function dimensionsMatchHeader(decodedWidth, decodedHeight, sourceDimensions) {
+  return (
+    decodedWidth === sourceDimensions.width
+    && decodedHeight === sourceDimensions.height
+  ) || (
+    decodedWidth === sourceDimensions.height
+    && decodedHeight === sourceDimensions.width
+  );
+}
+
 export async function prepareWorkshopAlbedo(file) {
   if (typeof File === 'undefined' || !(file instanceof File)) {
     throw new Error('Choose an albedo image first.');
@@ -65,33 +77,37 @@ export async function prepareWorkshopAlbedo(file) {
     throw new Error('The source albedo image must be smaller than 8 MB.');
   }
 
+  const sourceDimensions = parseWorkshopImageDimensions(await file.arrayBuffer(), file.type);
   const decoded = await decodeImage(file);
   try {
-    const sourceWidth = decoded.image.naturalWidth ?? decoded.image.width;
-    const sourceHeight = decoded.image.naturalHeight ?? decoded.image.height;
-    if (!sourceWidth || !sourceHeight) {
-      throw new Error('The selected albedo image has invalid dimensions.');
+    const decodedWidth = decoded.image.naturalWidth ?? decoded.image.width;
+    const decodedHeight = decoded.image.naturalHeight ?? decoded.image.height;
+    if (!dimensionsMatchHeader(decodedWidth, decodedHeight, sourceDimensions)) {
+      throw new Error('The decoded albedo dimensions do not match its image header.');
     }
 
-    const cropSize = Math.min(sourceWidth, sourceHeight);
-    const sourceX = (sourceWidth - cropSize) / 2;
-    const sourceY = (sourceHeight - cropSize) / 2;
+    const cropSize = Math.min(decodedWidth, decodedHeight);
+    const sourceX = (decodedWidth - cropSize) / 2;
+    const sourceY = (decodedHeight - cropSize) / 2;
     const canvas = document.createElement('canvas');
     canvas.width = OUTPUT_SIZE;
     canvas.height = OUTPUT_SIZE;
     let context;
     try {
       context = canvas.getContext('2d', {
-        alpha: true,
+        alpha: false,
         colorSpace: 'srgb',
       });
     } catch {
       context = null;
     }
+    context ??= canvas.getContext('2d', { alpha: false });
     context ??= canvas.getContext('2d');
     if (!context) {
       throw new Error('The browser could not prepare the albedo texture.');
     }
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
     context.drawImage(

@@ -30,6 +30,8 @@ export class ProceduralWorkshopSurfaceEditor {
     this.onStatus = onStatus;
     this.activeSlot = WORKSHOP_SURFACE_TEXTURE_SLOTS[0].key;
     this.state = emptyState();
+    this.importRevisionBySlot = new Map();
+    this.importingSlots = new Set();
 
     root.innerHTML = `
       <fieldset class="workshop-surface-editor">
@@ -128,7 +130,7 @@ export class ProceduralWorkshopSurfaceEditor {
       if (action === 'select') {
         this.activeSlot = button.dataset.surfaceSlot;
         this.render();
-      } else if (action === 'load') {
+      } else if (action === 'load' && !this.importingSlots.has(this.activeSlot)) {
         this.fileInput.click();
       } else if (action === 'clear') {
         this.clearActiveSlot();
@@ -160,10 +162,27 @@ export class ProceduralWorkshopSurfaceEditor {
     });
   }
 
+  nextImportRevision(slotKey) {
+    const revision = (this.importRevisionBySlot.get(slotKey) ?? 0) + 1;
+    this.importRevisionBySlot.set(slotKey, revision);
+    return revision;
+  }
+
+  cancelPendingImport(slotKey) {
+    this.nextImportRevision(slotKey);
+    this.importingSlots.delete(slotKey);
+  }
+
   async importFile(file) {
-    this.onStatus?.(`Preparing ${file.name}…`, false);
+    const slotKey = this.activeSlot;
+    const revision = this.nextImportRevision(slotKey);
+    this.importingSlots.add(slotKey);
+    this.render();
+    this.onStatus?.(`Preparing ${file.name} for ${this.slotLabel(slotKey)}…`, false);
     try {
       const source = await prepareWorkshopAlbedo(file);
+      if (this.importRevisionBySlot.get(slotKey) !== revision) return;
+
       let sourceId = createSurfaceTextureSourceId(source.dataUrl);
       let suffix = 2;
       while (
@@ -183,18 +202,25 @@ export class ProceduralWorkshopSurfaceEditor {
         },
         slots: {
           ...this.state.slots,
-          [this.activeSlot]: {
-            ...getSurfaceTextureDefaults(this.activeSlot),
-            ...this.state.slots[this.activeSlot],
+          [slotKey]: {
+            ...getSurfaceTextureDefaults(slotKey),
+            ...this.state.slots[slotKey],
             sourceId,
           },
         },
       });
       this.render();
-      this.onStatus?.(`${source.name} applied to ${this.activeLabel()}.`, false);
+      this.onStatus?.(`${source.name} applied to ${this.slotLabel(slotKey)}.`, false);
       this.onChange?.();
     } catch (error) {
-      this.onStatus?.(error instanceof Error ? error.message : String(error), true);
+      if (this.importRevisionBySlot.get(slotKey) === revision) {
+        this.onStatus?.(error instanceof Error ? error.message : String(error), true);
+      }
+    } finally {
+      if (this.importRevisionBySlot.get(slotKey) === revision) {
+        this.importingSlots.delete(slotKey);
+        this.render();
+      }
     }
   }
 
@@ -219,12 +245,16 @@ export class ProceduralWorkshopSurfaceEditor {
   }
 
   clearActiveSlot() {
-    if (!this.state.slots[this.activeSlot]) return;
+    this.cancelPendingImport(this.activeSlot);
+    if (!this.state.slots[this.activeSlot]) {
+      this.render();
+      return;
+    }
     const slots = { ...this.state.slots };
     delete slots[this.activeSlot];
     this.commit({ sources: this.state.sources, slots });
     this.render();
-    this.onStatus?.(`${this.activeLabel()} returned to its procedural material.`, false);
+    this.onStatus?.(`${this.slotLabel()} returned to its procedural material.`, false);
     this.onChange?.();
   }
 
@@ -251,9 +281,9 @@ export class ProceduralWorkshopSurfaceEditor {
     this.state = serializeSurfaceTextures(nextState);
   }
 
-  activeLabel() {
-    return WORKSHOP_SURFACE_TEXTURE_SLOTS.find(({ key }) => key === this.activeSlot)?.label
-      ?? this.activeSlot;
+  slotLabel(slotKey = this.activeSlot) {
+    return WORKSHOP_SURFACE_TEXTURE_SLOTS.find(({ key }) => key === slotKey)?.label
+      ?? slotKey;
   }
 
   renderCopyTargets() {
@@ -273,6 +303,7 @@ export class ProceduralWorkshopSurfaceEditor {
     const source = slot ? this.state.sources[slot.sourceId] : null;
     const defaults = getSurfaceTextureDefaults(this.activeSlot);
     const settings = slot ?? defaults;
+    const importing = this.importingSlots.has(this.activeSlot);
 
     for (const button of this.root.querySelectorAll('[data-surface-action="select"]')) {
       button.classList.toggle('is-active', button.dataset.surfaceSlot === this.activeSlot);
@@ -280,9 +311,10 @@ export class ProceduralWorkshopSurfaceEditor {
       button.setAttribute('aria-selected', String(button.dataset.surfaceSlot === this.activeSlot));
     }
 
-    this.title.textContent = this.activeLabel();
-    this.fileName.textContent = source?.name ?? 'Procedural material';
-    this.loadButton.textContent = source ? 'Replace image' : 'Load image';
+    this.title.textContent = this.slotLabel();
+    this.fileName.textContent = importing ? 'Preparing imported image…' : source?.name ?? 'Procedural material';
+    this.loadButton.textContent = importing ? 'Preparing…' : source ? 'Replace image' : 'Load image';
+    this.loadButton.disabled = importing;
     this.swatch.style.backgroundImage = source ? `url("${source.dataUrl}")` : '';
     this.swatch.classList.toggle('has-texture', Boolean(source));
     this.swatch.querySelector('span').textContent = source ? '' : 'Procedural';
@@ -300,7 +332,7 @@ export class ProceduralWorkshopSurfaceEditor {
       ? 'Single image'
       : `${Number(settings.repeat).toFixed(2)}×`;
 
-    this.clearButton.disabled = !slot;
+    this.clearButton.disabled = !slot && !importing;
     this.copyButton.disabled = !slot;
     this.copyTarget.disabled = !slot;
     this.renderCopyTargets();
@@ -313,5 +345,7 @@ export class ProceduralWorkshopSurfaceEditor {
   dispose() {
     this.root.replaceChildren();
     this.state = emptyState();
+    this.importRevisionBySlot.clear();
+    this.importingSlots.clear();
   }
 }

@@ -1,5 +1,6 @@
 import { TILE_CATALOG } from '../tileCatalog.js';
 import { disposeModelParts } from '../assets/modelParts.js';
+import { unregisterProceduralDefinitions } from './ProceduralDefinitionLifecycle.js';
 import { createProceduralMedievalParts } from './ProceduralMedievalGenerator.js';
 import { ProceduralAssetStore } from './ProceduralAssetStore.js';
 
@@ -68,14 +69,40 @@ export class ProceduralAssetManager {
   }
 
   create(input) {
-    const record = this.store.add(input);
-    this.install(record);
-    this.syncUi();
-    return record;
+    const previous = this.store.toDocument();
+    try {
+      const record = this.store.add(input);
+      this.install(record);
+      this.syncUi();
+      return record;
+    } catch (error) {
+      this.restore(previous, error);
+    }
   }
 
   createPreviewParts(recipe) {
     return createProceduralMedievalParts(recipe);
+  }
+
+  cleanupFailedInstall(definition, parts) {
+    const renderer = this.objectView.renderers.get(definition.key);
+    if (renderer?.parts === parts) {
+      unregisterProceduralDefinitions({
+        objectMap: this.objectMap,
+        objectView: this.objectView,
+        definitionKeys: [definition.key],
+      });
+      return;
+    }
+    const viewDefinition = this.objectView.definitionByKey.get(definition.key);
+    if (viewDefinition?.procedural === true) {
+      this.objectView.definitionByKey.delete(definition.key);
+    }
+    const mapDefinition = this.objectMap.definitionByKey.get(definition.key);
+    if (mapDefinition?.procedural === true) {
+      this.objectMap.definitionByKey.delete(definition.key);
+    }
+    disposeModelParts(parts);
   }
 
   install(record) {
@@ -85,28 +112,56 @@ export class ProceduralAssetManager {
       this.objectMap.registerDefinition(definition);
       this.objectView.registerDefinition(definition, parts);
     } catch (error) {
-      disposeModelParts(parts);
+      try {
+        this.cleanupFailedInstall(definition, parts);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Failed to install or clean up procedural object ${definition.key}.`,
+        );
+      }
       throw error;
     }
     this.definitions.set(definition.key, definition);
     return definition;
   }
 
+  clearInstalled() {
+    unregisterProceduralDefinitions({
+      objectMap: this.objectMap,
+      objectView: this.objectView,
+      definitionKeys: this.definitions.keys(),
+    });
+    this.definitions.clear();
+  }
+
+  rebuild(records) {
+    this.clearInstalled();
+    this.store.replaceAll(records ?? []);
+    for (const record of this.store.list()) {
+      this.install(record);
+    }
+    this.syncUi();
+  }
+
+  restore(previous, originalError) {
+    try {
+      this.rebuild(previous);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [originalError, rollbackError],
+        'The workshop asset change failed and could not be rolled back.',
+      );
+    }
+    throw originalError;
+  }
+
   replaceAll(records) {
     const previous = this.store.toDocument();
     try {
-      this.store.replaceAll(records ?? []);
-      for (const record of this.store.list()) {
-        this.install(record);
-      }
-      this.syncUi();
+      this.rebuild(records ?? []);
     } catch (error) {
-      this.store.replaceAll(previous);
-      for (const record of this.store.list()) {
-        this.install(record);
-      }
-      this.syncUi();
-      throw error;
+      this.restore(previous, error);
     }
   }
 
