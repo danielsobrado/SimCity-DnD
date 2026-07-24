@@ -2,6 +2,7 @@ import { generatedEntityId } from '../model/ids.js';
 import { getEntity, listEntities } from '../model/worldState.js';
 import { findSettlementNodeId, shortestPath } from '../geography/geographicGraph.js';
 import { availableQuantity, reserveStock } from '../economy/stockFlow.js';
+import { isShipmentEmbargoed } from '../factions/politics.js';
 
 export const SHIPMENT_STATUSES = Object.freeze([
   'planned',
@@ -36,6 +37,10 @@ export function planGrainShipment(state, definition, {
   }
   if (availableQuantity(account, commodityId) < quantity) {
     throw Object.assign(new Error('insufficient_stock'), { code: 'insufficient_stock' });
+  }
+
+  if (isShipmentEmbargoed(state, originSettlementId, destinationSettlementId)) {
+    throw Object.assign(new Error('embargoed'), { code: 'shipment_embargoed' });
   }
 
   const fromNode = findSettlementNodeId(state, originSettlementId);
@@ -231,6 +236,41 @@ export function advanceShipments(state, config) {
           payload: { kind: 'inventoryAccount', id: destInv.id, dataPatch: { quantities: destQty } },
         });
         reasonCodes.push({ code: 'shipment_arrived', shipmentId: shipment.id });
+        if (!shipment.data.paymentSettled) {
+          const origin = getEntity(state, 'settlement', shipment.data.originSettlementId);
+          const destSettlement = getEntity(state, 'settlement', shipment.data.destinationSettlementId);
+          const originTreasury = origin
+            ? getEntity(state, 'inventoryAccount', origin.data.treasuryAccountId)
+            : null;
+          const destTreasury = destSettlement
+            ? getEntity(state, 'inventoryAccount', destSettlement.data.treasuryAccountId)
+            : null;
+          if (originTreasury && destTreasury) {
+            const price = Math.max(1, Math.floor(quantity));
+            const destCoin = destTreasury.data.quantities?.coin ?? 0;
+            const paid = Math.min(destCoin, price);
+            const nextDest = { ...destTreasury.data.quantities, coin: destCoin - paid };
+            if (nextDest.coin <= 0) delete nextDest.coin;
+            const nextOrigin = {
+              ...originTreasury.data.quantities,
+              coin: (originTreasury.data.quantities?.coin ?? 0) + paid,
+            };
+            destTreasury.data.quantities = nextDest;
+            originTreasury.data.quantities = nextOrigin;
+            events.push({
+              type: 'entity.patched',
+              entityIds: [destTreasury.id],
+              payload: { kind: 'inventoryAccount', id: destTreasury.id, dataPatch: { quantities: nextDest } },
+            });
+            events.push({
+              type: 'entity.patched',
+              entityIds: [originTreasury.id],
+              payload: { kind: 'inventoryAccount', id: originTreasury.id, dataPatch: { quantities: nextOrigin } },
+            });
+            reasonCodes.push({ code: 'shipment_payment_settled', shipmentId: shipment.id, paid });
+            shipment.data.paymentSettled = true;
+          }
+        }
       }
     }
 
@@ -244,6 +284,7 @@ export function advanceShipments(state, config) {
           currentEdgeIndex: edgeIndex,
           progress,
           status,
+          paymentSettled: shipment.data.paymentSettled ?? false,
           expectedArrivalTick: shipment.data.expectedArrivalTick ?? (state.calendar.tick + ticksPerHour),
         },
       },
@@ -282,5 +323,214 @@ export function setRouteDanger(state, routeId, danger) {
   return {
     events,
     reasonCodes: [{ code: 'route_danger_updated', routeId, danger }],
+  };
+}
+
+export function createTradeOffer(state, definition, {
+  commandId,
+  settlementId,
+  commodityId,
+  kind,
+  quantity,
+  limitPrice,
+  ordinal = 0,
+}) {
+  const id = generatedEntityId('tradeOffer', definition.worldId, commandId, ordinal);
+  return {
+    offerId: id,
+    events: [{
+      type: 'entity.upserted',
+      entityIds: [id],
+      payload: {
+        kind: 'tradeOffer',
+        id,
+        data: {
+          settlementId,
+          commodityId,
+          kind,
+          quantity,
+          limitPrice,
+          earliestTick: state.calendar.tick,
+          latestTick: state.calendar.tick + 1440 * 30,
+          priority: 1,
+        },
+      },
+    }],
+    reasonCodes: [{ code: 'trade_offer_created', offerId: id, kind, commodityId }],
+  };
+}
+
+export function matchTradeOffers(state, definition, { commandId, config, ordinalBase = 0 } = {}) {
+  const sells = listEntities(state, 'tradeOffer', { includeDestroyed: false })
+    .filter((o) => o.data.kind === 'sell' && o.status === 'active')
+    .sort((a, b) => a.data.limitPrice - b.data.limitPrice || a.id.localeCompare(b.id));
+  const buys = listEntities(state, 'tradeOffer', { includeDestroyed: false })
+    .filter((o) => o.data.kind === 'buy' && o.status === 'active')
+    .sort((a, b) => b.data.limitPrice - a.data.limitPrice || a.id.localeCompare(b.id));
+  const events = [];
+  const reasonCodes = [];
+  const shipments = [];
+  let ordinal = ordinalBase;
+  const used = new Set();
+
+  for (const buy of buys) {
+    if (used.has(buy.id)) continue;
+    for (const sell of sells) {
+      if (used.has(sell.id)) continue;
+      if (buy.data.commodityId !== sell.data.commodityId) continue;
+      if (buy.data.settlementId === sell.data.settlementId) continue;
+      if (buy.data.limitPrice < sell.data.limitPrice) continue;
+      const quantity = Math.min(buy.data.quantity, sell.data.quantity);
+      if (quantity <= 0) continue;
+      try {
+        const planned = planGrainShipment(state, definition, {
+          commandId: `${commandId}:match`,
+          originSettlementId: sell.data.settlementId,
+          destinationSettlementId: buy.data.settlementId,
+          commodityId: buy.data.commodityId,
+          quantity,
+          ordinal,
+          config,
+        });
+        events.push(...planned.events);
+        events.push({
+          type: 'entity.patched',
+          entityIds: [buy.id],
+          payload: {
+            kind: 'tradeOffer',
+            id: buy.id,
+            status: 'inactive',
+            dataPatch: { quantity: buy.data.quantity - quantity },
+          },
+        });
+        events.push({
+          type: 'entity.patched',
+          entityIds: [sell.id],
+          payload: {
+            kind: 'tradeOffer',
+            id: sell.id,
+            status: 'inactive',
+            dataPatch: { quantity: sell.data.quantity - quantity },
+          },
+        });
+        used.add(buy.id);
+        used.add(sell.id);
+        shipments.push(planned.shipmentId);
+        reasonCodes.push({
+          code: 'trade_matched',
+          buyOfferId: buy.id,
+          sellOfferId: sell.id,
+          shipmentId: planned.shipmentId,
+          quantity,
+        });
+        ordinal += 3;
+        break;
+      } catch (error) {
+        reasonCodes.push({
+          code: 'trade_match_failed',
+          buyOfferId: buy.id,
+          sellOfferId: sell.id,
+          reason: error.code ?? error.message,
+        });
+      }
+    }
+  }
+  return { events, reasonCodes, shipments, nextOrdinal: ordinal };
+}
+
+export function loseShipment(state, shipmentId, { transferToLoot = false, lootInventoryId = null } = {}) {
+  const shipment = getEntity(state, 'shipment', shipmentId);
+  if (!shipment) {
+    throw Object.assign(new Error('missing_shipment'), { code: 'missing_reference' });
+  }
+  const events = [];
+  const cargo = getEntity(state, 'inventoryAccount', shipment.data.cargoInventoryId);
+  if (cargo) {
+    if (transferToLoot && lootInventoryId) {
+      const loot = getEntity(state, 'inventoryAccount', lootInventoryId);
+      if (loot) {
+        const nextLoot = { ...loot.data.quantities };
+        for (const [commodityId, qty] of Object.entries(cargo.data.quantities ?? {})) {
+          nextLoot[commodityId] = (nextLoot[commodityId] ?? 0) + qty;
+        }
+        events.push({
+          type: 'entity.patched',
+          entityIds: [loot.id],
+          payload: { kind: 'inventoryAccount', id: loot.id, dataPatch: { quantities: nextLoot } },
+        });
+      }
+    }
+    events.push({
+      type: 'entity.patched',
+      entityIds: [cargo.id],
+      payload: { kind: 'inventoryAccount', id: cargo.id, dataPatch: { quantities: {} } },
+    });
+  }
+  events.push({
+    type: 'entity.patched',
+    entityIds: [shipmentId],
+    payload: {
+      kind: 'shipment',
+      id: shipmentId,
+      dataPatch: { status: 'lost' },
+      status: null,
+    },
+  });
+  return {
+    events,
+    reasonCodes: [{ code: 'shipment_lost', shipmentId, transferToLoot: !!transferToLoot }],
+  };
+}
+
+export function settleShipmentPayment(state, shipment, ledger) {
+  if (shipment.data.paymentSettled) return { events: [], reasonCodes: [] };
+  const origin = getEntity(state, 'settlement', shipment.data.originSettlementId);
+  const dest = getEntity(state, 'settlement', shipment.data.destinationSettlementId);
+  const originTreasury = origin ? getEntity(state, 'inventoryAccount', origin.data.treasuryAccountId) : null;
+  const destTreasury = dest ? getEntity(state, 'inventoryAccount', dest.data.treasuryAccountId) : null;
+  if (!originTreasury || !destTreasury) {
+    return { events: [], reasonCodes: [{ code: 'payment_skipped_missing_treasury', shipmentId: shipment.id }] };
+  }
+  const price = Math.max(1, Math.floor(shipment.data.quantity * 1));
+  const destCoin = destTreasury.data.quantities?.coin ?? 0;
+  const paid = Math.min(destCoin, price);
+  const nextDest = { ...destTreasury.data.quantities, coin: destCoin - paid };
+  if (nextDest.coin <= 0) delete nextDest.coin;
+  const nextOrigin = {
+    ...originTreasury.data.quantities,
+    coin: (originTreasury.data.quantities?.coin ?? 0) + paid,
+  };
+  destTreasury.data.quantities = nextDest;
+  originTreasury.data.quantities = nextOrigin;
+  ledger?.record({
+    tick: state.calendar.tick,
+    type: 'shipment_payment',
+    shipmentId: shipment.id,
+    commodityId: 'coin',
+    quantity: paid,
+  });
+  return {
+    events: [
+      {
+        type: 'entity.patched',
+        entityIds: [destTreasury.id],
+        payload: { kind: 'inventoryAccount', id: destTreasury.id, dataPatch: { quantities: nextDest } },
+      },
+      {
+        type: 'entity.patched',
+        entityIds: [originTreasury.id],
+        payload: { kind: 'inventoryAccount', id: originTreasury.id, dataPatch: { quantities: nextOrigin } },
+      },
+      {
+        type: 'entity.patched',
+        entityIds: [shipment.id],
+        payload: {
+          kind: 'shipment',
+          id: shipment.id,
+          dataPatch: { paymentSettled: true, paymentAmount: paid },
+        },
+      },
+    ],
+    reasonCodes: [{ code: 'shipment_payment_settled', shipmentId: shipment.id, paid }],
   };
 }

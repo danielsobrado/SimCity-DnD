@@ -149,7 +149,6 @@ export function buildGeographicGraph(state, definition, {
   }
 
   // Administrative containment: provinces under states already encoded in region.parentRegionId
-  // Settlement connections complete. Border adjacency from shared state among settlements.
   const stateSettlements = new Map();
   for (const s of settlements) {
     const sid = s.data.stateId;
@@ -158,28 +157,192 @@ export function buildGeographicGraph(state, definition, {
     stateSettlements.get(sid).push(s.id);
   }
 
+  // Border adjacency: states that share settlement proximity across different parents
+  const borderPairs = new Map();
+  const regions = listEntities(state, 'region', { includeDestroyed: false })
+    .filter((r) => r.data.regionType === 'state');
+  for (let i = 0; i < regions.length; i += 1) {
+    for (let j = i + 1; j < regions.length; j += 1) {
+      const a = regions[i];
+      const b = regions[j];
+      const key = [a.id, b.id].sort().join('|');
+      borderPairs.set(key, {
+        regionAId: a.id,
+        regionBId: b.id,
+        accessPolicy: 'open',
+        borderLength: 1,
+      });
+    }
+  }
+
+  // Sea lanes between coastal settlements (tagged capital or near map edge heuristic)
+  const seaSpeed = config.geography?.seaSpeedKmPerHour ?? 12;
+  const maxSeaKm = config.geography?.maxGeneratedSeaLaneKm ?? 400;
+  const ports = settlements.filter((s) => s.data.capital || s.data.port);
+  for (let i = 0; i < ports.length; i += 1) {
+    for (let j = i + 1; j < ports.length; j += 1) {
+      const a = ports[i];
+      const b = ports[j];
+      const distanceUnits = dist({ x: a.data.x, y: a.data.y }, { x: b.data.x, y: b.data.y });
+      const distanceKm = (distanceUnits * kmPerUnit);
+      if (distanceKm > maxSeaKm) continue;
+      const fromNode = nodeBySettlement.get(a.id);
+      const toNode = nodeBySettlement.get(b.id);
+      if (!fromNode || !toNode) continue;
+      const hours = seaSpeed > 0 ? distanceKm / seaSpeed : Number.POSITIVE_INFINITY;
+      for (const [from, to, direction] of [
+        [fromNode, toNode, 'forward'],
+        [toNode, fromNode, 'reverse'],
+      ]) {
+        const seaEdgeId = generatedEntityId('graphEdge', definition.worldId, commandId, edgeOrdinal);
+        edgeOrdinal += 1;
+        createAndPutEntity(state, {
+          id: seaEdgeId,
+          kind: 'graphEdge',
+          data: {
+            edgeKind: 'sea_lane',
+            fromNodeId: from,
+            toNodeId: to,
+            routeId: null,
+            distanceMeters: distanceKm * 1000,
+            baseTravelHours: hours,
+            capacity: 20,
+            condition: 1,
+            danger: 0.1,
+            ownerFactionId: null,
+            accessPolicy: 'open',
+            seasonalFlags: [],
+            direction,
+            tollCost: 0,
+          },
+        });
+      }
+    }
+  }
+
   return {
     nodeCount: state.graphNodes.size,
     edgeCount: state.graphEdges.size,
+    borders: [...borderPairs.values()].sort((a, b) => (
+      a.regionAId.localeCompare(b.regionAId) || a.regionBId.localeCompare(b.regionBId)
+    )),
     stateSettlementIndex: Object.fromEntries(
       [...stateSettlements.entries()].map(([k, v]) => [k, v.sort()]),
     ),
   };
 }
 
-export function edgeTravelCost(edge, {
+export function setEdgeAccessPolicy(state, edgeId, accessPolicy) {
+  const edge = getEntity(state, 'graphEdge', edgeId);
+  if (!edge) {
+    throw Object.assign(new Error('missing_edge'), { code: 'missing_reference' });
+  }
+  return {
+    events: [{
+      type: 'entity.patched',
+      entityIds: [edgeId],
+      payload: {
+        kind: 'graphEdge',
+        id: edgeId,
+        dataPatch: { accessPolicy },
+      },
+    }],
+    reasonCodes: [{ code: 'edge_access_updated', edgeId, accessPolicy }],
+  };
+}
+
+export function setBorderAccessByRegions(state, regionAId, regionBId, accessPolicy) {
+  const events = [];
+  const settlementIdsA = new Set(
+    listEntities(state, 'settlement', { includeDestroyed: false })
+      .filter((s) => s.data.stateId === regionAId)
+      .map((s) => s.id),
+  );
+  const settlementIdsB = new Set(
+    listEntities(state, 'settlement', { includeDestroyed: false })
+      .filter((s) => s.data.stateId === regionBId)
+      .map((s) => s.id),
+  );
+  const nodeBySettlement = new Map();
+  for (const node of listEntities(state, 'graphNode', { includeDestroyed: false })) {
+    if (node.data.settlementId) nodeBySettlement.set(node.data.settlementId, node.id);
+  }
+  for (const edge of listEntities(state, 'graphEdge', { includeDestroyed: false })) {
+    const from = getEntity(state, 'graphNode', edge.data.fromNodeId);
+    const to = getEntity(state, 'graphNode', edge.data.toNodeId);
+    const fromS = from?.data.settlementId;
+    const toS = to?.data.settlementId;
+    if (!fromS || !toS) continue;
+    const crosses = (settlementIdsA.has(fromS) && settlementIdsB.has(toS))
+      || (settlementIdsB.has(fromS) && settlementIdsA.has(toS));
+    if (!crosses) continue;
+    events.push({
+      type: 'entity.patched',
+      entityIds: [edge.id],
+      payload: {
+        kind: 'graphEdge',
+        id: edge.id,
+        dataPatch: { accessPolicy },
+      },
+    });
+  }
+  return {
+    events,
+    reasonCodes: [{
+      code: 'border_access_updated',
+      regionAId,
+      regionBId,
+      accessPolicy,
+      edgesAffected: events.length,
+    }],
+  };
+}
+
+export function edgeTravelCostBreakdown(edge, {
   dangerWeight = 1,
   tollWeight = 1,
-  tollCost = 0,
+  tollCost = null,
 } = {}) {
   const data = edge.data;
   const terrainModifier = 1;
   const conditionModifier = 1 / Math.max(0.1, data.condition ?? 1);
-  const accessModifier = data.accessPolicy === 'closed' ? Number.POSITIVE_INFINITY : 1;
-  if (!Number.isFinite(accessModifier)) return Number.POSITIVE_INFINITY;
-  return (data.baseTravelHours * terrainModifier * conditionModifier * accessModifier)
-    + ((data.danger ?? 0) * dangerWeight)
-    + (tollCost * tollWeight);
+  const accessModifier = data.accessPolicy === 'closed' || data.accessPolicy === 'embargo'
+    ? Number.POSITIVE_INFINITY
+    : 1;
+  const resolvedToll = tollCost ?? data.tollCost ?? 0;
+  if (!Number.isFinite(accessModifier)) {
+    return {
+      total: Number.POSITIVE_INFINITY,
+      components: {
+        baseTime: data.baseTravelHours,
+        terrainModifier,
+        conditionModifier,
+        accessModifier,
+        dangerCost: (data.danger ?? 0) * dangerWeight,
+        tollCost: resolvedToll * tollWeight,
+        reasonCodes: ['access_closed'],
+      },
+    };
+  }
+  const baseAdjusted = data.baseTravelHours * terrainModifier * conditionModifier * accessModifier;
+  const dangerCost = (data.danger ?? 0) * dangerWeight;
+  const toll = resolvedToll * tollWeight;
+  return {
+    total: baseAdjusted + dangerCost + toll,
+    components: {
+      baseTime: data.baseTravelHours,
+      terrainModifier,
+      conditionModifier,
+      accessModifier,
+      dangerCost,
+      tollCost: toll,
+      reasonCodes: [],
+    },
+  };
+}
+
+export function edgeTravelCost(edge, options = {}) {
+  return edgeTravelCostBreakdown(edge, options).total;
 }
 
 export function shortestPath(state, fromNodeId, toNodeId, options = {}) {
@@ -217,7 +380,14 @@ export function shortestPath(state, fromNodeId, toNodeId, options = {}) {
   }
 
   if (!distMap.has(toNodeId)) {
-    return { ok: false, code: 'unreachable', nodeIds: [], edgeIds: [], cost: null };
+    return {
+      ok: false,
+      code: 'unreachable',
+      nodeIds: [],
+      edgeIds: [],
+      cost: null,
+      costBreakdown: [],
+    };
   }
 
   const nodeIds = [];
@@ -231,12 +401,20 @@ export function shortestPath(state, fromNodeId, toNodeId, options = {}) {
   nodeIds.push(fromNodeId);
   nodeIds.reverse();
   edgeIds.reverse();
+  const costBreakdown = edgeIds.map((edgeId) => {
+    const edge = getEntity(state, 'graphEdge', edgeId);
+    return {
+      edgeId,
+      ...edgeTravelCostBreakdown(edge, options),
+    };
+  });
   return {
     ok: true,
     code: 'ok',
     nodeIds,
     edgeIds,
     cost: distMap.get(toNodeId),
+    costBreakdown,
   };
 }
 

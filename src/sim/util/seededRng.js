@@ -1,5 +1,5 @@
 /**
- * Deterministic mulberry32 PRNG. Authoritative simulation must never use Math.random().
+ * Deterministic mulberry32 PRNG. Authoritative simulation must never use non-seeded RNG APIs.
  */
 export function createSeededRng(seed) {
   let state = (Number(seed) >>> 0) || 1;

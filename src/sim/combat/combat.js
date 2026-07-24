@@ -111,6 +111,30 @@ export function runFixedStepCombat(state, definition, {
       enemies.sort((a, b) => a.hp - b.hp || a.actorId.localeCompare(b.actorId));
       const target = enemies[0];
       const useRanged = rng.nextFloat() < 0.35;
+      // Flee when low HP
+      if (actor.hp <= actor.maxHp * 0.2 && rng.nextFloat() < 0.4) {
+        actor.status = 'fled';
+        log.push({
+          round,
+          actorId: actor.actorId,
+          event: 'flee',
+          reasonCodes: ['low_hp'],
+        });
+        continue;
+      }
+      // Surrender when outnumbered heavily
+      const allies = working.filter((a) => a.status === 'active' && a.team === actor.team).length;
+      const foes = enemies.length;
+      if (foes >= allies * 3 && rng.nextFloat() < 0.25) {
+        actor.status = 'surrendered';
+        log.push({
+          round,
+          actorId: actor.actorId,
+          event: 'surrender',
+          reasonCodes: ['outnumbered'],
+        });
+        continue;
+      }
       const base = useRanged ? ranged : melee;
       const variance = rng.nextInt(0, 3);
       const damage = Math.max(1, base + variance - 1);

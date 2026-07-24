@@ -203,3 +203,133 @@ export function declareConflict(state, definition, {
     reasonCodes: [{ code: 'conflict_declared', conflictId: id, type, factionIds }],
   };
 }
+
+export function setFactionEmbargo(state, factionId, againstFactionId, enabled = true) {
+  const faction = getEntity(state, 'faction', factionId);
+  if (!faction) {
+    throw Object.assign(new Error('missing_faction'), { code: 'missing_reference' });
+  }
+  const embargoes = { ...(faction.data.embargoes ?? {}) };
+  if (enabled) embargoes[againstFactionId] = true;
+  else delete embargoes[againstFactionId];
+  return {
+    events: [{
+      type: 'entity.patched',
+      entityIds: [factionId],
+      payload: {
+        kind: 'faction',
+        id: factionId,
+        dataPatch: {
+          embargoes,
+          policies: {
+            ...(faction.data.policies ?? {}),
+            trade: enabled ? 'embargo' : 'open',
+          },
+        },
+      },
+    }],
+    reasonCodes: [{
+      code: enabled ? 'embargo_declared' : 'embargo_lifted',
+      factionId,
+      againstFactionId,
+    }],
+  };
+}
+
+export function isShipmentEmbargoed(state, originSettlementId, destinationSettlementId) {
+  const origin = getEntity(state, 'settlement', originSettlementId);
+  const dest = getEntity(state, 'settlement', destinationSettlementId);
+  if (!origin || !dest) return false;
+  const originFaction = listEntities(state, 'faction', { includeDestroyed: false })
+    .find((f) => f.data.homeRegionId === origin.data.stateId);
+  const destFaction = listEntities(state, 'faction', { includeDestroyed: false })
+    .find((f) => f.data.homeRegionId === dest.data.stateId);
+  if (!originFaction || !destFaction) return false;
+  if (originFaction.id === destFaction.id) return false;
+  return !!(originFaction.data.embargoes?.[destFaction.id]
+    || destFaction.data.embargoes?.[originFaction.id]);
+}
+
+export function handleLeaderDeath(state, definition, {
+  commandId,
+  factionId,
+  ordinal = 0,
+}) {
+  const faction = getEntity(state, 'faction', factionId);
+  if (!faction) {
+    throw Object.assign(new Error('missing_faction'), { code: 'missing_reference' });
+  }
+  const successorId = generatedEntityId('character', definition.worldId, commandId, ordinal);
+  return {
+    successorId,
+    events: [
+      {
+        type: 'entity.upserted',
+        entityIds: [successorId],
+        payload: {
+          kind: 'character',
+          id: successorId,
+          data: {
+            personId: successorId,
+            name: `Successor of ${faction.data.name}`,
+            speciesId: 'human',
+            factionId,
+            homeSettlementId: faction.data.influencedSettlementIds?.[0] ?? null,
+            role: 'noble',
+            level: 2,
+            attributes: { str: 10, dex: 10, con: 10, int: 12, wis: 11, cha: 14 },
+            skills: {},
+            equipmentInventoryId: null,
+            healthState: { hp: 25, maxHp: 25 },
+            relationshipState: {},
+            tags: ['leader', 'successor'],
+          },
+        },
+      },
+      {
+        type: 'entity.patched',
+        entityIds: [factionId],
+        payload: {
+          kind: 'faction',
+          id: factionId,
+          dataPatch: {
+            leaderPersonId: successorId,
+            succession: {
+              tick: state.calendar.tick,
+              previousLeaderId: faction.data.leaderPersonId,
+              reasonCodes: ['leader_death'],
+            },
+          },
+        },
+      },
+    ],
+    reasonCodes: [{ code: 'succession_completed', factionId, successorId }],
+  };
+}
+
+export function createMilitaryCompany(state, definition, {
+  commandId,
+  factionId,
+  strength = 50,
+  ordinal = 0,
+}) {
+  const id = generatedEntityId('militaryCompany', definition.worldId, commandId, ordinal);
+  return {
+    companyId: id,
+    events: [{
+      type: 'entity.upserted',
+      entityIds: [id],
+      payload: {
+        kind: 'militaryCompany',
+        id,
+        data: {
+          factionId,
+          strength,
+          status: 'active',
+          locationRegionId: getEntity(state, 'faction', factionId)?.data.homeRegionId ?? null,
+        },
+      },
+    }],
+    reasonCodes: [{ code: 'military_company_created', companyId: id, factionId }],
+  };
+}

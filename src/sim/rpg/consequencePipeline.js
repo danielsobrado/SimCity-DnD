@@ -69,7 +69,7 @@ export function detectOpportunities(state, definition, { commandId, ordinalBase 
           urgency: 1 - (market.data.foodSecurity ?? 0),
           createdAtTick: state.calendar.tick,
           expiresAtTick: state.calendar.tick + 1440 * 10,
-          visibility: 'public',
+          visibility: 'hidden',
           proposedObjectives: [
             { id: 'deliver_food', description: 'Deliver food or grain to the settlement' },
           ],
@@ -157,6 +157,12 @@ export function applyContractOutcome(state, {
   if (!contract) {
     throw Object.assign(new Error('missing_contract'), { code: 'missing_reference' });
   }
+  if (contract.data.status === 'completed' || contract.data.rewardSettled) {
+    return {
+      events: [],
+      reasonCodes: [{ code: 'reward_already_settled', contractId }],
+    };
+  }
   const events = [...outcomeEvents];
   const reasonCodes = [];
 
@@ -215,6 +221,7 @@ export function applyContractOutcome(state, {
         id: contractId,
         dataPatch: {
           status: 'completed',
+          rewardSettled: true,
           objectives: (contract.data.objectives ?? []).map((o) => ({ ...o, status: 'completed' })),
           completedAtTick: state.calendar.tick,
         },
@@ -278,4 +285,60 @@ export function createProseAdapter() {
       };
     },
   };
+}
+
+export function discoverOpportunity(state, opportunityId, actorId = 'player') {
+  const opportunity = getEntity(state, 'opportunity', opportunityId);
+  if (!opportunity) {
+    throw Object.assign(new Error('missing_opportunity'), { code: 'missing_reference' });
+  }
+  const discoveredBy = [...new Set([...(opportunity.data.discoveredBy ?? []), actorId])].sort();
+  return {
+    events: [{
+      type: 'entity.patched',
+      entityIds: [opportunityId],
+      payload: {
+        kind: 'opportunity',
+        id: opportunityId,
+        dataPatch: {
+          visibility: 'discovered',
+          discoveredBy,
+        },
+      },
+    }],
+    reasonCodes: [{ code: 'opportunity_discovered', opportunityId, actorId }],
+  };
+}
+
+export function listVisibleOpportunities(state, actorId = 'player') {
+  return listEntities(state, 'opportunity', { includeDestroyed: false })
+    .filter((o) => {
+      if (o.data.opportunityStatus === 'open' && o.data.visibility === 'public') return true;
+      if (o.data.visibility === 'discovered' && (o.data.discoveredBy ?? []).includes(actorId)) return true;
+      return false;
+    });
+}
+
+export function expireContracts(state) {
+  const events = [];
+  const reasonCodes = [];
+  for (const contract of listEntities(state, 'contract', { includeDestroyed: false })) {
+    if (contract.data.status !== 'accepted' && contract.data.status !== 'active') continue;
+    if (contract.data.deadlineTick != null && state.calendar.tick > contract.data.deadlineTick) {
+      events.push({
+        type: 'entity.patched',
+        entityIds: [contract.id],
+        payload: {
+          kind: 'contract',
+          id: contract.id,
+          dataPatch: {
+            status: 'expired',
+            failedAtTick: state.calendar.tick,
+          },
+        },
+      });
+      reasonCodes.push({ code: 'contract_expired', contractId: contract.id });
+    }
+  }
+  return { events, reasonCodes };
 }

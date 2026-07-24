@@ -125,9 +125,16 @@ export function runMonthlyPopulation(state, definition, config) {
     }
 
     const foodPressure = Math.max(0, 1 - foodSecurity);
-    const unrest = Math.min(1, (settlement.data.social?.unrest ?? 0.1) * 0.9 + foodPressure * 0.2);
+    const housing = applyHousingAndDisease(state, settlement, foodSecurity, config);
+    reasonCodes.push(...housing.reasonCodes);
+    const unrest = Math.min(
+      1,
+      (settlement.data.social?.unrest ?? 0.1) * 0.9
+        + foodPressure * 0.2
+        + housing.diseasePressure * 0.1,
+    );
     const migrationPressure = foodPressure > migrationThreshold
-      ? foodPressure + rng.nextFloat() * 0.1
+      ? foodPressure + rng.nextFloat() * 0.1 + housing.housingPressure * 0.2
       : Math.max(0, (settlement.data.social?.migrationPressure ?? 0) * 0.8);
 
     if (migrationPressure > migrationThreshold) {
@@ -135,6 +142,11 @@ export function runMonthlyPopulation(state, definition, config) {
         code: 'migration_pressure',
         settlementId: settlement.id,
         migrationPressure,
+        components: {
+          foodPressure,
+          housingPressure: housing.housingPressure,
+          diseasePressure: housing.diseasePressure,
+        },
       });
     }
 
@@ -146,16 +158,23 @@ export function runMonthlyPopulation(state, definition, config) {
         id: settlement.id,
         dataPatch: {
           population: total,
+          housingCapacity: housing.housingCapacity,
           social: {
             happiness: Math.max(0, Math.min(1, foodSecurity * 0.8 + (1 - unrest) * 0.2)),
             unrest,
             foodPressure,
             migrationPressure,
+            housingPressure: housing.housingPressure,
+            diseasePressure: housing.diseasePressure,
           },
         },
       },
     });
   }
+
+  const migration = migrateBetweenSettlements(state, definition, config);
+  events.push(...migration.events);
+  reasonCodes.push(...migration.reasonCodes);
 
   return { events, reasonCodes };
 }
@@ -199,3 +218,102 @@ export function promoteNamedPerson(state, definition, {
 }
 
 export { AGE_BANDS, ROLES, WEALTH_BANDS };
+
+export function settlementPopulationTotal(state, settlementId) {
+  const cohorts = listEntities(state, 'populationCohort', { includeDestroyed: false })
+    .filter((c) => c.data.settlementId === settlementId && c.status === 'active');
+  const promoted = listEntities(state, 'character', { includeDestroyed: false })
+    .filter((c) => c.data.homeSettlementId === settlementId && c.status === 'active' && c.data.countsInPopulation !== false);
+  return cohorts.reduce((n, c) => n + c.data.count, 0) + promoted.length;
+}
+
+export function applyHousingAndDisease(state, settlement, foodSecurity, config) {
+  const housingCapacity = settlement.data.housingCapacity
+    ?? Math.max(50, Math.floor((settlement.data.population || 100) * 1.2));
+  const population = settlement.data.population || 0;
+  const housingPressure = Math.max(0, (population - housingCapacity) / Math.max(1, housingCapacity));
+  const diseasePressure = Math.max(0, (1 - foodSecurity) * 0.5 + housingPressure * 0.5);
+  return {
+    housingCapacity,
+    housingPressure,
+    diseasePressure,
+    reasonCodes: diseasePressure > 0.3
+      ? [{ code: 'disease_pressure', settlementId: settlement.id, diseasePressure, housingPressure }]
+      : [],
+  };
+}
+
+export function migrateBetweenSettlements(state, definition, config) {
+  const events = [];
+  const reasonCodes = [];
+  const settlements = listEntities(state, 'settlement', { includeDestroyed: false });
+  const threshold = config.population?.migrationThreshold ?? 0.4;
+
+  for (const from of settlements) {
+    const pressure = from.data.social?.migrationPressure ?? 0;
+    if (pressure < threshold) continue;
+    const candidates = settlements
+      .filter((s) => s.id !== from.id)
+      .map((s) => ({
+        settlement: s,
+        score: (s.data.social?.happiness ?? 0.5) - (s.data.social?.foodPressure ?? 0),
+      }))
+      .sort((a, b) => b.score - a.score || a.settlement.id.localeCompare(b.settlement.id));
+    if (candidates.length === 0) continue;
+    const to = candidates[0].settlement;
+    // Require a graph path if graph exists
+    const fromNode = listEntities(state, 'graphNode', { includeDestroyed: false })
+      .find((n) => n.data.settlementId === from.id);
+    const toNode = listEntities(state, 'graphNode', { includeDestroyed: false })
+      .find((n) => n.data.settlementId === to.id);
+    if (fromNode && toNode) {
+      // soft check: if no edges from fromNode, skip
+      const hasEdge = listEntities(state, 'graphEdge', { includeDestroyed: false })
+        .some((e) => e.data.fromNodeId === fromNode.id && e.data.accessPolicy !== 'closed');
+      if (!hasEdge) {
+        reasonCodes.push({ code: 'migration_blocked_no_route', from: from.id, to: to.id });
+        continue;
+      }
+    }
+    const fromCohorts = listEntities(state, 'populationCohort', { includeDestroyed: false })
+      .filter((c) => c.data.settlementId === from.id && c.data.ageBand === 'working' && c.data.count > 0)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    if (fromCohorts.length === 0) continue;
+    const movers = Math.min(5, Math.floor(fromCohorts[0].data.count * 0.05) || 1);
+    const source = fromCohorts[0];
+    const destCohort = listEntities(state, 'populationCohort', { includeDestroyed: false })
+      .find((c) => c.data.settlementId === to.id
+        && c.data.ageBand === source.data.ageBand
+        && c.data.role === source.data.role);
+    events.push({
+      type: 'entity.patched',
+      entityIds: [source.id],
+      payload: {
+        kind: 'populationCohort',
+        id: source.id,
+        dataPatch: { count: source.data.count - movers },
+      },
+    });
+    source.data.count -= movers;
+    if (destCohort) {
+      events.push({
+        type: 'entity.patched',
+        entityIds: [destCohort.id],
+        payload: {
+          kind: 'populationCohort',
+          id: destCohort.id,
+          dataPatch: { count: destCohort.data.count + movers },
+        },
+      });
+      destCohort.data.count += movers;
+    }
+    reasonCodes.push({
+      code: 'migration_moved',
+      fromSettlementId: from.id,
+      toSettlementId: to.id,
+      movers,
+      routeRisk: true,
+    });
+  }
+  return { events, reasonCodes };
+}

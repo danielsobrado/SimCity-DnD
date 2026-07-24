@@ -1,6 +1,6 @@
 import { createCommandEnvelope } from './commands/commandEnvelope.js';
 import { createCommandDispatcher, registerCommandHandler } from './commands/dispatcher.js';
-import './events/reducers.js';
+import { applyEvent } from './events/reducers.js';
 import { mergeSimulationConfig } from './config/defaultSimulationConfig.js';
 import { projectAzgaarWorld } from './import/projectAzgaarWorld.js';
 import { createWorldQueries, checksumWorldState } from './queries/worldQueries.js';
@@ -10,6 +10,8 @@ import {
   findSettlementNodeId,
   shortestPath,
   PathCache,
+  setBorderAccessByRegions,
+  setEdgeAccessPolicy,
 } from './geography/geographicGraph.js';
 import {
   createWorldClock,
@@ -24,28 +26,40 @@ import {
   createLedger,
   initializeSettlementEconomy,
   runDailyEconomy,
+  verifyConservation,
+  labourSupply,
 } from './economy/stockFlow.js';
 import {
   planGrainShipment,
   advanceShipments,
   setRouteDanger,
+  createTradeOffer,
+  matchTradeOffers,
+  loseShipment,
 } from './logistics/shipments.js';
 import {
   initializeSettlementPopulation,
   runMonthlyPopulation,
   promoteNamedPerson,
+  settlementPopulationTotal,
 } from './population/cohorts.js';
 import {
   initializeFactionsFromRegions,
   evaluateFactionDecisions,
   declareConflict,
   setFactionRelationship,
+  setFactionEmbargo,
+  handleLeaderDeath,
+  createMilitaryCompany,
 } from './factions/politics.js';
 import {
   detectOpportunities,
   createContractFromOpportunity,
   applyContractOutcome,
   createProseAdapter,
+  discoverOpportunity,
+  listVisibleOpportunities,
+  expireContracts,
 } from './rpg/consequencePipeline.js';
 import { createLodController } from './lod/simLod.js';
 import {
@@ -57,6 +71,9 @@ import {
   createReplayRunner,
   createMigrationRegistry,
   buildDiagnosticReport,
+  detectCorruption,
+  localizeReplayDivergence,
+  SIMULATION_SCHEMA_VERSION,
 } from './persistence/snapshot.js';
 import {
   createEncounterParty,
@@ -64,7 +81,12 @@ import {
   runFixedStepCombat,
   createEncounterSite,
 } from './combat/combat.js';
-import { buildAllOverlays } from './presentation/viewModels.js';
+import {
+  buildAllOverlays,
+  explainFoodShortage,
+  buildOpportunityVisibilityViewModel,
+  buildPriceCauseViewModel,
+} from './presentation/viewModels.js';
 import { listEntities, getEntity, cloneWorldState, createAndPutEntity } from './model/worldState.js';
 import { createEntityEnvelope } from './model/entityEnvelope.js';
 import { generatedEntityId } from './model/ids.js';
@@ -116,10 +138,11 @@ function ensureHandlersRegistered() {
     const { definition, config } = command.payload.__ctx;
     const pop = runMonthlyPopulation(state, definition, config);
     const factions = evaluateFactionDecisions(state, definition);
+    const expired = expireContracts(state);
     command.payload.__result = {
-      reasonCodes: [...pop.reasonCodes, ...factions.reasonCodes],
+      reasonCodes: [...pop.reasonCodes, ...factions.reasonCodes, ...expired.reasonCodes],
     };
-    return [...pop.events, ...factions.events];
+    return [...pop.events, ...factions.events, ...expired.events];
   });
 
   registerCommandHandler('sim.planShipment', (state, command) => {
@@ -507,6 +530,170 @@ export function createSimulationWorld({
       });
     },
 
+    setBorderAccess(regionAId, regionBId, accessPolicy) {
+      const result = setBorderAccessByRegions(state, regionAId, regionBId, accessPolicy);
+      let current = state;
+      for (const ev of result.events) {
+        const r = dispatcher.dispatch(current, createCommandEnvelope({
+          id: nextCommandId('border'),
+          type: 'sim.patchEntity',
+          issuedAtTick: clock.getTick(),
+          payload: ev.payload,
+        }), ctx());
+        if (!r.ok) return r;
+        current = r.state;
+      }
+      state = current;
+      pathCache.clear();
+      reasonLog.push(...result.reasonCodes);
+      return { ok: true, reasonCodes: result.reasonCodes };
+    },
+
+    setEdgeAccess(edgeId, accessPolicy) {
+      const result = setEdgeAccessPolicy(state, edgeId, accessPolicy);
+      pathCache.clear();
+      const dispatched = dispatch('sim.patchEntity', result.events[0].payload);
+      if (dispatched.ok) reasonLog.push(...result.reasonCodes);
+      return { ...dispatched, reasonCodes: result.reasonCodes };
+    },
+
+    createTradeOffer(payload) {
+      const result = createTradeOffer(state, definition, {
+        commandId: nextCommandId('offer'),
+        ...payload,
+      });
+      let current = state;
+      for (const ev of result.events) {
+        const r = dispatcher.dispatch(current, createCommandEnvelope({
+          id: nextCommandId('offer'),
+          type: 'sim.upsertEntity',
+          issuedAtTick: clock.getTick(),
+          payload: ev.payload,
+        }), ctx());
+        if (!r.ok) return r;
+        current = r.state;
+      }
+      state = current;
+      reasonLog.push(...result.reasonCodes);
+      return { ok: true, result: { offerId: result.offerId }, reasonCodes: result.reasonCodes };
+    },
+
+    matchTrades() {
+      const result = matchTradeOffers(state, definition, {
+        commandId: nextCommandId('match'),
+        config,
+      });
+      const current = cloneWorldState(state);
+      for (const [index, ev] of result.events.entries()) {
+        applyEvent(current, {
+          id: `${nextCommandId('match-ev')}:${index}`,
+          type: ev.type,
+          tick: clock.getTick(),
+          causedByCommandId: 'match',
+          entityIds: ev.entityIds ?? [],
+          payload: ev.payload,
+          schemaVersion: 1,
+        });
+      }
+      state = current;
+      reasonLog.push(...result.reasonCodes);
+      return { ok: true, result: { shipments: result.shipments }, reasonCodes: result.reasonCodes };
+    },
+
+    loseShipment(shipmentId, options = {}) {
+      const result = loseShipment(state, shipmentId, options);
+      let current = state;
+      for (const ev of result.events) {
+        const r = dispatcher.dispatch(current, createCommandEnvelope({
+          id: nextCommandId('lose'),
+          type: 'sim.patchEntity',
+          issuedAtTick: clock.getTick(),
+          payload: ev.payload,
+        }), ctx());
+        if (!r.ok) return r;
+        current = r.state;
+      }
+      state = current;
+      reasonLog.push(...result.reasonCodes);
+      return { ok: true, reasonCodes: result.reasonCodes };
+    },
+
+    setEmbargo(factionId, againstFactionId, enabled = true) {
+      const result = setFactionEmbargo(state, factionId, againstFactionId, enabled);
+      return dispatch('sim.patchEntity', result.events[0].payload);
+    },
+
+    succeedLeader(factionId) {
+      const result = handleLeaderDeath(state, definition, {
+        commandId: nextCommandId('succession'),
+        factionId,
+      });
+      let current = state;
+      for (const ev of result.events) {
+        const type = ev.type === 'entity.upserted' ? 'sim.upsertEntity' : 'sim.patchEntity';
+        const r = dispatcher.dispatch(current, createCommandEnvelope({
+          id: nextCommandId('succession'),
+          type,
+          issuedAtTick: clock.getTick(),
+          payload: ev.payload,
+        }), ctx());
+        if (!r.ok) return r;
+        current = r.state;
+      }
+      state = current;
+      reasonLog.push(...result.reasonCodes);
+      return { ok: true, result: { successorId: result.successorId }, reasonCodes: result.reasonCodes };
+    },
+
+    createMilitaryCompany(payload) {
+      const result = createMilitaryCompany(state, definition, {
+        commandId: nextCommandId('military'),
+        ...payload,
+      });
+      return dispatch('sim.upsertEntity', result.events[0].payload);
+    },
+
+    discoverOpportunity(opportunityId, actorId = 'player') {
+      const result = discoverOpportunity(state, opportunityId, actorId);
+      return dispatch('sim.patchEntity', result.events[0].payload);
+    },
+
+    visibleOpportunities(actorId = 'player') {
+      return listVisibleOpportunities(state, actorId).map((o) => structuredClone(o));
+    },
+
+    verifyConservation() {
+      return verifyConservation(state, ledger, config.commodities);
+    },
+
+    labourSupply(settlementId) {
+      return labourSupply(state, settlementId);
+    },
+
+    populationTotal(settlementId) {
+      return settlementPopulationTotal(state, settlementId);
+    },
+
+    explainFoodShortage(settlementId) {
+      return explainFoodShortage(createWorldQueries(definition, state), settlementId);
+    },
+
+    opportunityVisibility(actorId = 'player') {
+      return buildOpportunityVisibilityViewModel(createWorldQueries(definition, state), actorId);
+    },
+
+    priceCause(settlementId) {
+      return buildPriceCauseViewModel(createWorldQueries(definition, state), settlementId);
+    },
+
+    detectCorruption(snapshot) {
+      return detectCorruption(snapshot ?? this.snapshot());
+    },
+
+    localizeDivergence(otherState) {
+      return localizeReplayDivergence(state, otherState);
+    },
+
     findPath(fromSettlementId, toSettlementId) {
       const from = findSettlementNodeId(state, fromSettlementId);
       const to = findSettlementNodeId(state, toSettlementId);
@@ -531,22 +718,28 @@ export function createSimulationWorld({
 
     async save(slot = 'default') {
       const snap = this.snapshot();
-      return saveStore.save(slot, {
+      const payload = {
         snapshot: snap,
         journal: journal.list(),
         lod: lod.serialize(),
         clockTick: clock.getTick(),
-      });
+        scheduler: scheduler.serialize(),
+      };
+      await saveStore.beginSave(slot, payload);
+      return saveStore.commitSave(slot);
     },
 
     async load(slot = 'default') {
       const loaded = await saveStore.load(slot);
       if (!loaded.ok) return loaded;
+      const corruption = detectCorruption(loaded.payload.snapshot);
+      if (!corruption.ok) return corruption;
       const restored = restoreWorldSnapshot(loaded.payload.snapshot);
       definition = restored.definition;
       state = restored.state;
       clock.setTick(loaded.payload.clockTick ?? state.calendar.tick);
       lod.restore(loaded.payload.lod ?? { ownership: [], manifests: [] });
+      if (loaded.payload.scheduler) scheduler.restore(loaded.payload.scheduler);
       journal.clear();
       for (const cmd of loaded.payload.journal ?? []) journal.append(cmd);
       return { ok: true, checksum: restored.checksum };
@@ -667,4 +860,10 @@ export {
   ticksPerDay,
   ticksPerYear,
   createWorldQueries,
+  detectCorruption,
+  localizeReplayDivergence,
+  SIMULATION_SCHEMA_VERSION,
+  explainFoodShortage,
+  verifyConservation,
+  createMigrationRegistry,
 };

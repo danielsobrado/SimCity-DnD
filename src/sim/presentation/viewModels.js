@@ -255,3 +255,66 @@ export function buildAllOverlays(queries, { reasonCodes = [], clock = null, repo
 // silence unused import lint-style usage in some bundlers
 void getEntity;
 void listEntities;
+
+export function explainFoodShortage(queries, settlementId) {
+  const settlement = queries.getEntity('settlement', settlementId);
+  if (!settlement) return null;
+  const market = settlement.data.marketId
+    ? queries.getEntity('market', settlement.data.marketId)
+    : null;
+  const inbound = queries.list('shipment', { includeDestroyed: false })
+    .filter((s) => s.data.destinationSettlementId === settlementId
+      && (s.data.commodityId === 'grain' || s.data.commodityId === 'food')
+      && ['in_transit', 'blocked', 'delayed', 'planned'].includes(s.data.status))
+    .map((s) => ({
+      id: s.id,
+      status: s.data.status,
+      quantity: s.data.quantity,
+      commodityId: s.data.commodityId,
+      originSettlementId: s.data.originSettlementId,
+      risk: s.data.riskState ?? null,
+      contractIds: s.data.contractIds ?? [],
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  return freezeDto({
+    kind: 'foodShortageExplanation',
+    settlementId,
+    foodSecurity: market?.data.foodSecurity ?? null,
+    foodPrice: market?.data.prices?.food ?? null,
+    reasonCodes: (market?.data.foodSecurity ?? 1) < 1 ? ['food_shortage'] : [],
+    resolvingShipments: inbound,
+  });
+}
+
+export function buildOpportunityVisibilityViewModel(queries, actorId = 'player') {
+  const all = queries.list('opportunity', { includeDestroyed: false });
+  const visible = all.filter((o) => {
+    if (o.data.visibility === 'public') return true;
+    if (o.data.visibility === 'discovered' && (o.data.discoveredBy ?? []).includes(actorId)) return true;
+    return false;
+  });
+  const hidden = all.filter((o) => !visible.some((v) => v.id === o.id));
+  return freezeDto({
+    kind: 'opportunityVisibility',
+    visible: visible.map((o) => ({ id: o.id, type: o.data.type, visibility: o.data.visibility }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    hiddenCount: hidden.length,
+  });
+}
+
+export function buildPriceCauseViewModel(queries, settlementId) {
+  const settlement = queries.getEntity('settlement', settlementId);
+  const market = settlement?.data.marketId
+    ? queries.getEntity('market', settlement.data.marketId)
+    : null;
+  if (!market) return null;
+  return freezeDto({
+    kind: 'priceCause',
+    settlementId,
+    foodSecurity: market.data.foodSecurity,
+    prices: market.data.prices,
+    reasonCodes: (market.data.foodSecurity ?? 1) < 1
+      ? ['food_shortage', 'price_elasticity']
+      : ['market_clearing'],
+  });
+}

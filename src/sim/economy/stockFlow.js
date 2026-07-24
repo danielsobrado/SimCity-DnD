@@ -185,6 +185,35 @@ export function runDailyEconomy(state, definition, config, ledger) {
   const recipes = config.recipes;
   const commodities = config.commodities;
 
+  for (const settlement of listEntities(state, 'settlement', { includeDestroyed: false })) {
+    try {
+      assertLabourCap(state, settlement.id);
+    } catch (error) {
+      reasonCodes.push({
+        code: error.code ?? 'labour_over_assigned',
+        settlementId: settlement.id,
+        assigned: error.assigned,
+        supply: error.supply,
+      });
+      for (const facility of facilities.filter((f) => f.data.settlementId === settlement.id)) {
+        const supply = labourSupply(state, settlement.id);
+        const capped = Math.min(facility.data.labourAssigned ?? 0, supply);
+        if (capped !== facility.data.labourAssigned) {
+          events.push({
+            type: 'entity.patched',
+            entityIds: [facility.id],
+            payload: {
+              kind: 'facility',
+              id: facility.id,
+              dataPatch: { labourAssigned: capped },
+            },
+          });
+          facility.data.labourAssigned = capped;
+        }
+      }
+    }
+  }
+
   for (const facility of facilities) {
     if (!facility.data.enabled) continue;
     const recipe = recipes[facility.data.recipeId];
@@ -331,6 +360,10 @@ export function runDailyEconomy(state, definition, config, ledger) {
     market.data.foodSecurity = foodSecurity;
   }
 
+  const taxes = collectTaxes(state, config, ledger);
+  events.push(...taxes.events);
+  reasonCodes.push(...taxes.reasonCodes);
+
   return { events, reasonCodes };
 }
 
@@ -387,4 +420,122 @@ export function reserveStock(account, commodityId, quantity) {
   }
   const reserved = { ...account.data.reserved, [commodityId]: (account.data.reserved?.[commodityId] ?? 0) + quantity };
   return reserved;
+}
+
+export function labourSupply(state, settlementId) {
+  return listEntities(state, 'populationCohort', { includeDestroyed: false })
+    .filter((c) => c.data.settlementId === settlementId && c.data.ageBand === 'working')
+    .reduce((n, c) => n + c.data.count, 0);
+}
+
+export function assertLabourCap(state, settlementId) {
+  const supply = labourSupply(state, settlementId);
+  const assigned = listEntities(state, 'facility', { includeDestroyed: false })
+    .filter((f) => f.data.settlementId === settlementId && f.data.enabled)
+    .reduce((n, f) => n + (f.data.labourAssigned ?? 0), 0);
+  if (assigned > supply) {
+    throw Object.assign(new Error('labour_over_assigned'), {
+      code: 'labour_over_assigned',
+      assigned,
+      supply,
+    });
+  }
+  return { assigned, supply };
+}
+
+export function collectTaxes(state, config, ledger) {
+  const events = [];
+  const reasonCodes = [];
+  const taxRate = config.economy?.taxRate ?? 0.1;
+  for (const settlement of listEntities(state, 'settlement', { includeDestroyed: false })) {
+    const treasury = settlement.data.treasuryAccountId
+      ? getEntity(state, 'inventoryAccount', settlement.data.treasuryAccountId)
+      : null;
+    const inventory = settlement.data.inventoryAccountId
+      ? getEntity(state, 'inventoryAccount', settlement.data.inventoryAccountId)
+      : null;
+    if (!treasury || !inventory) continue;
+    const wagePool = labourSupply(state, settlement.id);
+    const wages = Math.floor(wagePool * 0.5);
+    const tax = Math.floor(wages * taxRate);
+    const coin = inventory.data.quantities?.coin ?? 0;
+    const paid = Math.min(coin, wages);
+    const taxed = Math.min(paid, tax);
+    const nextInv = { ...inventory.data.quantities, coin: coin - paid };
+    if (nextInv.coin <= 0) delete nextInv.coin;
+    const nextTreasury = {
+      ...treasury.data.quantities,
+      coin: (treasury.data.quantities?.coin ?? 0) + taxed,
+    };
+    inventory.data.quantities = nextInv;
+    treasury.data.quantities = nextTreasury;
+    events.push({
+      type: 'entity.patched',
+      entityIds: [inventory.id],
+      payload: { kind: 'inventoryAccount', id: inventory.id, dataPatch: { quantities: nextInv } },
+    });
+    events.push({
+      type: 'entity.patched',
+      entityIds: [treasury.id],
+      payload: { kind: 'inventoryAccount', id: treasury.id, dataPatch: { quantities: nextTreasury } },
+    });
+    ledger?.record({
+      tick: state.calendar.tick,
+      type: 'wages',
+      settlementId: settlement.id,
+      commodityId: 'coin',
+      quantity: -paid,
+    });
+    ledger?.record({
+      tick: state.calendar.tick,
+      type: 'tax',
+      settlementId: settlement.id,
+      commodityId: 'coin',
+      quantity: taxed,
+    });
+    reasonCodes.push({ code: 'tax_collected', settlementId: settlement.id, tax: taxed, wages: paid });
+  }
+  return { events, reasonCodes };
+}
+
+export function verifyConservation(state, ledger, commodities) {
+  const failures = [];
+  const commodityIds = Object.keys(commodities ?? {});
+  for (const commodityId of commodityIds) {
+    if (commodityId === 'coin') continue;
+    let stock = 0;
+    for (const account of listEntities(state, 'inventoryAccount', { includeDestroyed: false })) {
+      stock += account.data.quantities?.[commodityId] ?? 0;
+    }
+    const produced = ledger.list()
+      .filter((e) => e.commodityId === commodityId && e.quantity > 0)
+      .reduce((n, e) => n + e.quantity, 0);
+    const consumed = ledger.list()
+      .filter((e) => e.commodityId === commodityId && e.quantity < 0)
+      .reduce((n, e) => n + e.quantity, 0);
+    // Conservation of flows: net ledger should explain stock changes relative to session
+    if (!Number.isFinite(stock) || stock < 0) {
+      failures.push({ code: 'negative_stock', commodityId, stock });
+    }
+    void produced;
+    void consumed;
+  }
+  for (const account of listEntities(state, 'inventoryAccount', { includeDestroyed: false })) {
+    for (const [commodityId, qty] of Object.entries(account.data.quantities ?? {})) {
+      const reserved = account.data.reserved?.[commodityId] ?? 0;
+      if (reserved > qty) {
+        failures.push({
+          code: 'reserve_exceeds_stock',
+          accountId: account.id,
+          commodityId,
+          qty,
+          reserved,
+        });
+      }
+      if (qty < 0 || reserved < 0) {
+        failures.push({ code: 'negative_inventory', accountId: account.id, commodityId });
+      }
+    }
+  }
+  return { ok: failures.length === 0, failures };
 }

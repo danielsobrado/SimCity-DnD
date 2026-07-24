@@ -121,10 +121,28 @@ export function createEventHistory({ maxImportant = 10000 } = {}) {
 
 export function createInMemorySaveStore() {
   const saves = new Map();
+  const pending = new Map();
   return {
-    async save(slot, payload) {
-      saves.set(slot, structuredClone(payload));
+    async beginSave(slot, payload) {
+      pending.set(slot, structuredClone(payload));
+      return { ok: true, slot, pending: true };
+    },
+    async commitSave(slot) {
+      if (!pending.has(slot)) {
+        return { ok: false, code: 'missing_pending_save' };
+      }
+      saves.set(slot, pending.get(slot));
+      pending.delete(slot);
       return { ok: true, slot };
+    },
+    async abortSave(slot) {
+      pending.delete(slot);
+      return { ok: true, slot };
+    },
+    async save(slot, payload) {
+      // Transactional: write pending then commit. Crash between leaves prior save.
+      await this.beginSave(slot, payload);
+      return this.commitSave(slot);
     },
     async load(slot) {
       if (!saves.has(slot)) {
@@ -135,7 +153,66 @@ export function createInMemorySaveStore() {
     async list() {
       return [...saves.keys()].sort();
     },
+    /** IndexedDB adapter interface stub for future browser integration. */
+    async openIndexedDb() {
+      return {
+        kind: 'indexeddb-stub',
+        ready: false,
+        reasonCodes: ['indexeddb_not_wired'],
+      };
+    },
   };
+}
+
+export function detectCorruption(snapshot) {
+  try {
+    if (!snapshot || typeof snapshot !== 'object') {
+      return { ok: false, code: 'invalid_snapshot' };
+    }
+    if (!snapshot.snapshotChecksum) {
+      return { ok: false, code: 'missing_checksum' };
+    }
+    const forCheck = { ...snapshot };
+    delete forCheck.snapshotChecksum;
+    const actual = checksumCanonical(forCheck);
+    if (actual !== snapshot.snapshotChecksum) {
+      return { ok: false, code: 'checksum_mismatch', expected: snapshot.snapshotChecksum, actual };
+    }
+    return { ok: true, code: 'ok' };
+  } catch (error) {
+    return { ok: false, code: 'corruption_detected', message: error.message };
+  }
+}
+
+export function localizeReplayDivergence(a, b) {
+  const diffs = [];
+  if (a.revision !== b.revision) diffs.push({ path: 'revision', a: a.revision, b: b.revision });
+  if (a.calendar?.tick !== b.calendar?.tick) {
+    diffs.push({ path: 'calendar.tick', a: a.calendar?.tick, b: b.calendar?.tick });
+  }
+  const kinds = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of [...kinds].sort()) {
+    if (!key.endsWith('s') && key !== 'regions' && key !== 'settlements') continue;
+    if (!(a[key] instanceof Map) || !(b[key] instanceof Map)) continue;
+    const ids = new Set([...a[key].keys(), ...b[key].keys()]);
+    for (const id of [...ids].sort()) {
+      const left = a[key].get(id);
+      const right = b[key].get(id);
+      if (!left || !right) {
+        diffs.push({ path: `${key}.${id}`, code: 'missing_entity' });
+        continue;
+      }
+      if (checksumCanonical(left) !== checksumCanonical(right)) {
+        diffs.push({
+          path: `${key}.${id}`,
+          code: 'entity_divergence',
+          kind: left.kind,
+          subsystem: key,
+        });
+      }
+    }
+  }
+  return { ok: diffs.length === 0, diffs };
 }
 
 export function createReplayRunner({ dispatcher }) {
