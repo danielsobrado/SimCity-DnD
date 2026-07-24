@@ -1,3 +1,4 @@
+import * as THREE from 'three/webgpu';
 import { TILE_CATALOG } from '../tileCatalog.js';
 import { disposeModelParts } from '../assets/modelParts.js';
 import { unregisterProceduralDefinitions } from './ProceduralDefinitionLifecycle.js';
@@ -12,7 +13,27 @@ const TERRAIN_CLASSES = Object.freeze([
   'road', 'stone', 'corruption',
 ]);
 
-function definitionFor(record, tileSize) {
+function authoredFootprint(parts, tileSize) {
+  const bounds = new THREE.Box3();
+  bounds.makeEmpty();
+  for (const part of parts) {
+    part.geometry.computeBoundingBox();
+    const geometryBounds = part.geometry.boundingBox?.clone();
+    if (!geometryBounds || geometryBounds.isEmpty()) continue;
+    geometryBounds.applyMatrix4(part.matrix ?? new THREE.Matrix4());
+    bounds.union(geometryBounds);
+  }
+  if (bounds.isEmpty()) return Object.freeze({ width: 1, depth: 1 });
+
+  const symmetricWidth = Math.max(Math.abs(bounds.min.x), Math.abs(bounds.max.x)) * 2;
+  const symmetricDepth = Math.max(Math.abs(bounds.min.z), Math.abs(bounds.max.z)) * 2;
+  return Object.freeze({
+    width: Math.max(1, Math.ceil(symmetricWidth / tileSize)),
+    depth: Math.max(1, Math.ceil(symmetricDepth / tileSize)),
+  });
+}
+
+function definitionFor(record, tileSize, parts) {
   const { recipe } = record;
   const manorLike = recipe.archetype === 'manor';
   const castleWallLike = recipe.archetype === 'wall' && recipe.shape !== 'classic';
@@ -24,9 +45,9 @@ function definitionFor(record, tileSize) {
     : manorHasTower
       ? recipe.width + manorTowerRadius * 0.62
       : castleWallLike ? recipe.width + CASTLE_WALL_WIDTH_PADDING : recipe.width;
-  const footprintWidth = Math.max(1, Math.ceil(radiusWidth / tileSize));
+  const formulaWidth = Math.max(1, Math.ceil(radiusWidth / tileSize));
   const towerLike = recipe.archetype === 'tower' || recipe.archetype === 'square-tower';
-  const footprintDepth = Math.max(1, Math.ceil(
+  const formulaDepth = Math.max(1, Math.ceil(
     (
       towerLike
         ? recipe.width
@@ -35,6 +56,9 @@ function definitionFor(record, tileSize) {
           : castleWallLike ? recipe.depth * CASTLE_WALL_DEPTH_FACTOR : recipe.depth
     ) / tileSize,
   ));
+  const authored = authoredFootprint(parts, tileSize);
+  const footprintWidth = Math.max(formulaWidth, authored.width);
+  const footprintDepth = Math.max(formulaDepth, authored.depth);
   return Object.freeze({
     key: record.key,
     label: record.label,
@@ -118,18 +142,20 @@ export class ProceduralAssetManager {
   }
 
   install(record) {
-    const definition = definitionFor(record, this.tileSize);
     const parts = createProceduralWorkshopComponentParts(record.recipe);
+    let definition;
     try {
+      definition = definitionFor(record, this.tileSize, parts);
       this.objectMap.registerDefinition(definition);
       this.objectView.registerDefinition(definition, parts);
     } catch (error) {
       try {
-        this.cleanupFailedInstall(definition, parts);
+        if (definition) this.cleanupFailedInstall(definition, parts);
+        else disposeModelParts(parts);
       } catch (cleanupError) {
         throw new AggregateError(
           [error, cleanupError],
-          `Failed to install or clean up procedural object ${definition.key}.`,
+          `Failed to install or clean up procedural object ${record.key}.`,
         );
       }
       throw error;
