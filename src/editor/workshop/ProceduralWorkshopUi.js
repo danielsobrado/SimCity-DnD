@@ -29,6 +29,9 @@ export class ProceduralWorkshopUi {
     this.surfaceEditor = null;
     this.animationFrame = 0;
     this.previewTimer = 0;
+    this.onWindowKeyDown = (event) => {
+      if (event.key === 'Escape' && !this.overlay.hidden) this.close();
+    };
 
     root.insertAdjacentHTML('beforeend', `
       <div class="workshop-overlay" data-role="workshop-overlay" hidden>
@@ -157,6 +160,7 @@ export class ProceduralWorkshopUi {
                 <button type="button" data-workshop-action="rotate">Rotate</button>
                 <button type="button" data-workshop-action="scale">Scale</button>
                 <button type="button" data-workshop-action="reset-component">Reset part</button>
+                <button type="button" data-workshop-action="reset-all-components">Reset all</button>
                 <button type="button" data-workshop-action="center">Center scene</button>
                 <button type="button" data-workshop-action="frame">Frame</button>
               </div>
@@ -194,6 +198,7 @@ export class ProceduralWorkshopUi {
         this.setTransformMode(action);
       }
       if (action === 'reset-component') this.componentController?.resetSelected();
+      if (action === 'reset-all-components') this.componentController?.resetAll();
       if (action === 'center') this.centerPreview();
       if (action === 'frame') this.framePreview();
       if (action === 'reroll') {
@@ -208,16 +213,17 @@ export class ProceduralWorkshopUi {
       event.preventDefault();
       this.bake();
     });
-    this.form.addEventListener('change', () => this.schedulePreview(40));
+    this.form.addEventListener('change', (event) => {
+      if (event.target.name === 'archetype') this.componentController?.resetAll();
+      this.schedulePreview(40);
+    });
     this.form.addEventListener('input', (event) => {
       if (event.target.matches('input[type="range"]')) {
         this.syncRangeOutputs();
         this.schedulePreview(90);
       }
     });
-    window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && !this.overlay.hidden) this.close();
-    });
+    window.addEventListener('keydown', this.onWindowKeyDown);
     this.syncRangeOutputs();
   }
 
@@ -360,7 +366,9 @@ export class ProceduralWorkshopUi {
       orbitControls: this.controls,
       transformControls: this.transformControls,
       onChange: (component) => {
-        this.status.textContent = `${component.label} edit stored in the object recipe.`;
+        this.status.textContent = component
+          ? `${component.label} edit stored in the object recipe.`
+          : 'All component edits were reset.';
         this.status.classList.remove('is-error');
       },
     });
@@ -380,6 +388,9 @@ export class ProceduralWorkshopUi {
 
   generatePreview() {
     try {
+      if (!this.componentController) {
+        throw new Error('The workshop component editor is not ready.');
+      }
       const { recipe } = this.readInput();
       const nextParts = this.manager.createPreviewParts(recipe);
       this.clearPreview();
@@ -396,7 +407,7 @@ export class ProceduralWorkshopUi {
   }
 
   framePreview() {
-    if (!this.camera || !this.controls || this.previewRoot.children.length === 0) return;
+    if (!this.camera || !this.controls || this.componentController?.groups.size === 0) return;
     const bounds = new THREE.Box3().setFromObject(this.previewRoot);
     const center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3());
@@ -423,8 +434,8 @@ export class ProceduralWorkshopUi {
   }
 
   clearPreview() {
-    this.componentController?.clear();
-    this.previewRoot.clear();
+    if (this.componentController) this.componentController.clear();
+    else this.previewRoot.clear();
     disposeModelParts(this.previewParts);
     this.previewParts = [];
   }
@@ -438,11 +449,12 @@ export class ProceduralWorkshopUi {
 
   dispose() {
     this.close();
+    window.removeEventListener('keydown', this.onWindowKeyDown);
     this.resizeObserver?.disconnect();
+    this.clearPreview();
     this.componentController?.dispose();
     this.transformControls?.dispose();
     this.controls?.dispose();
-    this.clearPreview();
     this.stage?.dispose();
     this.surfaceEditor?.dispose();
     this.renderer?.dispose();
