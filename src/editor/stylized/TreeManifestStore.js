@@ -10,16 +10,28 @@ import {
   createForestPlacementEvaluator,
 } from './forest/ForestHabitatField.js';
 
-function forestSeed(terrainView) {
-  const value = terrainView.worldStore?.seed ?? terrainView.worldStore?.worldSeed ?? 0;
-  return Number.isInteger(value) ? value : Math.trunc(value) || 0;
+export function resolveForestSeed(terrainView) {
+  const worldStore = terrainView.worldStore;
+  const value = worldStore?.generator?.toMetadata?.().seed
+    ?? worldStore?.generator?.seed
+    ?? worldStore?.seed
+    ?? worldStore?.worldSeed
+    ?? 0;
+  const seed = Number(value);
+  return Number.isSafeInteger(seed) ? seed : 0;
+}
+
+function resolveCandidateBudget(perChunk, configuredBudget) {
+  const value = Number(configuredBudget);
+  const requested = Number.isInteger(value) && value >= 0 ? value : perChunk * 2;
+  return Math.max(perChunk, requested);
 }
 
 function createForestField(terrainView, config) {
   const habitat = config.trees.habitat ?? {};
   if (habitat.enabled === false) return null;
   return new ForestHabitatField({
-    seed: forestSeed(terrainView),
+    seed: resolveForestSeed(terrainView),
     tileSize: terrainView.worldStore.tileSize,
     tileAt: (cellX, cellZ) => terrainView.tileMap.get(cellX, cellZ),
     heightAt: (x, z) => terrainView.getCanonicalHeight(x, z),
@@ -83,9 +95,11 @@ export class TreeManifestStore {
   build(chunkX, chunkZ, rockSource) {
     const context = this.context(chunkX, chunkZ, rockSource);
     const perChunk = this.config.trees.perChunk;
-    const configuredBudget = this.config.trees.habitat?.candidateBudgetPerChunk;
     const candidateBudget = this.forestField
-      ? Math.max(perChunk, Math.floor(configuredBudget ?? perChunk * 2))
+      ? resolveCandidateBudget(
+        perChunk,
+        this.config.trees.habitat?.candidateBudgetPerChunk,
+      )
       : perChunk;
     const counters = { evaluated: 0, rejectedHabitat: 0 };
     const placements = buildStableChunkManifest({
