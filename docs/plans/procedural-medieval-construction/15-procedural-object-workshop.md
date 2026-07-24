@@ -40,7 +40,7 @@ authoritative.
 7. Use the on-canvas gizmo to translate or rotate the preview for inspection. Center and frame
    commands recover the authored view immediately.
 8. Enable remeshing to consolidate each material family into one runtime mesh.
-9. Leave procedural albedo enabled to fill every semantic area without an imported image.
+9. Leave procedural stone albedo enabled to fill masonry and trim without an imported image.
 10. Bake the asset; it appears in the normal Objects palette and is selected for placement.
 11. Move placed objects with the existing relocate workflow and rotate them with **R** or the
     selection action.
