@@ -1,5 +1,11 @@
-const ASSET_VERSION = 1;
+import {
+  normalizeSurfaceTextures,
+  serializeSurfaceTextures,
+} from './ProceduralWorkshopTextureConfig.js';
+
+const ASSET_VERSION = 2;
 const MAX_ASSETS = 32;
+const SUPPORTED_ASSET_VERSIONS = new Set([1, ASSET_VERSION]);
 const VALID_ARCHETYPES = new Set(['wall', 'gatehouse', 'tower', 'square-tower', 'manor']);
 const VALID_STYLES = new Set(['granite', 'limestone', 'sandstone']);
 const VALID_TOP_STYLES = new Set(['battlements', 'slate', 'terracotta']);
@@ -78,6 +84,7 @@ export function normalizeProceduralRecipe(input = {}) {
     ivy: input.ivy === true,
     remesh: input.remesh !== false,
     albedo: input.albedo !== false,
+    surfaceTextures: normalizeSurfaceTextures(input.surfaceTextures),
   });
 }
 
@@ -104,7 +111,7 @@ export function createProceduralAssetRecord({ label, recipe }, existingKeys = ne
 }
 
 function normalizeRecord(input) {
-  if (input?.version !== ASSET_VERSION) {
+  if (!SUPPORTED_ASSET_VERSIONS.has(input?.version)) {
     throw new Error('Unsupported procedural game-object version.');
   }
   if (typeof input.key !== 'string' || !/^workshop-[a-z0-9-]+$/.test(input.key)) {
@@ -167,7 +174,10 @@ export class ProceduralAssetStore {
       version: record.version,
       key: record.key,
       label: record.label,
-      recipe: { ...record.recipe },
+      recipe: {
+        ...record.recipe,
+        surfaceTextures: serializeSurfaceTextures(record.recipe.surfaceTextures),
+      },
     }));
   }
 }
