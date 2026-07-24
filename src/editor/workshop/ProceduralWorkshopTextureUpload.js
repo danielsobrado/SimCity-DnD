@@ -1,6 +1,6 @@
+import { parseWorkshopImageDimensions } from './ProceduralWorkshopImageMetadata.js';
+
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
-const MAX_SOURCE_DIMENSION = 16_384;
-const MAX_SOURCE_PIXELS = 64 * 1024 * 1024;
 const OUTPUT_SIZE = 512;
 const OUTPUT_TYPE = 'image/webp';
 const OUTPUT_QUALITY = 0.88;
@@ -56,19 +56,6 @@ function blobToDataUrl(blob) {
   });
 }
 
-function validateSourceDimensions(width, height) {
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    throw new Error('The selected albedo image has invalid dimensions.');
-  }
-  if (
-    width > MAX_SOURCE_DIMENSION
-    || height > MAX_SOURCE_DIMENSION
-    || width * height > MAX_SOURCE_PIXELS
-  ) {
-    throw new Error('The selected albedo image dimensions are too large.');
-  }
-}
-
 export async function prepareWorkshopAlbedo(file) {
   if (typeof File === 'undefined' || !(file instanceof File)) {
     throw new Error('Choose an albedo image first.');
@@ -80,15 +67,18 @@ export async function prepareWorkshopAlbedo(file) {
     throw new Error('The source albedo image must be smaller than 8 MB.');
   }
 
+  const sourceDimensions = parseWorkshopImageDimensions(await file.arrayBuffer(), file.type);
   const decoded = await decodeImage(file);
   try {
-    const sourceWidth = decoded.image.naturalWidth ?? decoded.image.width;
-    const sourceHeight = decoded.image.naturalHeight ?? decoded.image.height;
-    validateSourceDimensions(sourceWidth, sourceHeight);
+    const decodedWidth = decoded.image.naturalWidth ?? decoded.image.width;
+    const decodedHeight = decoded.image.naturalHeight ?? decoded.image.height;
+    if (decodedWidth !== sourceDimensions.width || decodedHeight !== sourceDimensions.height) {
+      throw new Error('The decoded albedo dimensions do not match its image header.');
+    }
 
-    const cropSize = Math.min(sourceWidth, sourceHeight);
-    const sourceX = (sourceWidth - cropSize) / 2;
-    const sourceY = (sourceHeight - cropSize) / 2;
+    const cropSize = Math.min(decodedWidth, decodedHeight);
+    const sourceX = (decodedWidth - cropSize) / 2;
+    const sourceY = (decodedHeight - cropSize) / 2;
     const canvas = document.createElement('canvas');
     canvas.width = OUTPUT_SIZE;
     canvas.height = OUTPUT_SIZE;
