@@ -7,9 +7,14 @@ const recipe = {
   archetype: 'wall',
   style: 'limestone',
   topStyle: 'battlements',
+  finish: 'masonry',
+  shape: 'classic',
+  towerSide: 'left',
   width: 6,
   depth: 1.5,
   height: 4,
+  roofScale: 1,
+  roofOverhang: 0.35,
   seed: 77,
   detail: 2,
   weathering: 0.35,
@@ -52,9 +57,9 @@ test('albedo baking creates a reusable sRGB data texture', () => {
   try {
     const texture = parts[0].material.map;
     assert.ok(texture?.isDataTexture);
-    assert.equal(texture.image.width, 128);
-    assert.equal(texture.image.height, 128);
-    assert.equal(texture.image.data.length, 128 * 128 * 4);
+    assert.equal(texture.image.width, 256);
+    assert.equal(texture.image.height, 256);
+    assert.equal(texture.image.data.length, 256 * 256 * 4);
   } finally {
     disposeModelParts(parts);
   }
@@ -103,6 +108,38 @@ test('square keep towers generate openings, battlements, and mortar backing dete
     assert.ok(first.stats.features > 30);
     assert.ok(first.length <= 7);
     assert.equal(positionSignature(first), positionSignature(second));
+  } finally {
+    disposeModelParts(first);
+    disposeModelParts(second);
+  }
+});
+
+test('tower houses combine plaster, stepped gables, adjustable roofs, and a tower deterministically', () => {
+  const manorRecipe = {
+    ...recipe,
+    archetype: 'manor',
+    finish: 'ochre',
+    shape: 'stepped',
+    towerSide: 'left',
+    topStyle: 'slate',
+    width: 8,
+    depth: 2.5,
+    height: 5.5,
+    roofScale: 1.35,
+    roofOverhang: 0.5,
+    windows: true,
+    ivy: true,
+  };
+  const first = createProceduralMedievalParts(manorRecipe);
+  const second = createProceduralMedievalParts(manorRecipe);
+  try {
+    assert.ok(first.stats.stones > 30);
+    assert.ok(first.stats.features > 40);
+    assert.ok(first.length <= 7);
+    assert.equal(positionSignature(first), positionSignature(second));
+    const roofPart = first.find((part) => part.material.bumpScale === 0.095);
+    assert.ok(roofPart?.material.map?.isDataTexture);
+    assert.ok(roofPart.material.bumpMap?.isDataTexture);
   } finally {
     disposeModelParts(first);
     disposeModelParts(second);

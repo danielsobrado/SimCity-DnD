@@ -1,8 +1,11 @@
 const ASSET_VERSION = 1;
 const MAX_ASSETS = 32;
-const VALID_ARCHETYPES = new Set(['wall', 'gatehouse', 'tower', 'square-tower']);
+const VALID_ARCHETYPES = new Set(['wall', 'gatehouse', 'tower', 'square-tower', 'manor']);
 const VALID_STYLES = new Set(['granite', 'limestone', 'sandstone']);
 const VALID_TOP_STYLES = new Set(['battlements', 'slate', 'terracotta']);
+const VALID_FINISHES = new Set(['masonry', 'ochre', 'limewash', 'rose']);
+const VALID_SHAPES = new Set(['classic', 'stepped', 'tapered']);
+const VALID_TOWER_SIDES = new Set(['left', 'right', 'none']);
 
 function requireFinite(value, field, minimum, maximum) {
   const number = Number(value);
@@ -34,6 +37,9 @@ export function normalizeProceduralRecipe(input = {}) {
   const archetype = String(input.archetype ?? 'wall');
   const style = String(input.style ?? 'granite');
   const topStyle = String(input.topStyle ?? 'battlements');
+  const finish = String(input.finish ?? 'masonry');
+  const shape = String(input.shape ?? 'classic');
+  const towerSide = String(input.towerSide ?? 'left');
   if (!VALID_ARCHETYPES.has(archetype)) {
     throw new Error(`Unknown workshop archetype: ${archetype}.`);
   }
@@ -43,14 +49,28 @@ export function normalizeProceduralRecipe(input = {}) {
   if (!VALID_TOP_STYLES.has(topStyle)) {
     throw new Error(`Unknown workshop top style: ${topStyle}.`);
   }
+  if (!VALID_FINISHES.has(finish)) {
+    throw new Error(`Unknown workshop wall finish: ${finish}.`);
+  }
+  if (!VALID_SHAPES.has(shape)) {
+    throw new Error(`Unknown workshop silhouette: ${shape}.`);
+  }
+  if (!VALID_TOWER_SIDES.has(towerSide)) {
+    throw new Error(`Unknown workshop tower position: ${towerSide}.`);
+  }
 
   return Object.freeze({
     archetype,
     style,
     topStyle,
+    finish,
+    shape,
+    towerSide,
     width: requireFinite(input.width ?? 8, 'Width', 2, 16),
     depth: requireFinite(input.depth ?? 2, 'Depth', 1, 12),
     height: requireFinite(input.height ?? 5, 'Height', 2, 14),
+    roofScale: requireFinite(input.roofScale ?? 1, 'Roof height', 0.55, 2),
+    roofOverhang: requireFinite(input.roofOverhang ?? 0.35, 'Roof overhang', 0.1, 0.9),
     seed: Math.trunc(requireFinite(input.seed ?? 1, 'Seed', 0, 0x7fffffff)),
     detail: Math.trunc(requireFinite(input.detail ?? 2, 'Detail', 1, 3)),
     weathering: requireFinite(input.weathering ?? 0.35, 'Weathering', 0, 1),

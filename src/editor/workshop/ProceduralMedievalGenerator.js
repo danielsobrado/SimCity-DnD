@@ -7,6 +7,7 @@ import {
   coneRoof,
   cylinder,
   flagGeometry,
+  gablePanel,
   leaf,
   wallRoofPlanes,
 } from './ProceduralWorkshopGeometry.js';
@@ -393,9 +394,9 @@ function addTowerTop(sets, recipe, {
       seedOffset: seedOffset + 20,
     });
   } else {
-    const roofHeight = Math.min(3.2, Math.max(1.4, radius * 1.25));
+    const roofHeight = Math.min(5.2, Math.max(0.9, radius * 1.25 * recipe.roofScale));
     sets.roof.push(coneRoof({
-      radius: radius + depth * 0.85,
+      radius: radius + depth * 0.52 + recipe.roofOverhang,
       height: roofHeight,
       y: height + 0.06,
       centerX,
@@ -561,8 +562,9 @@ function buildWall(recipe) {
       width: recipe.width,
       depth: recipe.depth,
       y: recipe.height,
-      height: Math.min(1.1, recipe.depth * 0.65),
+      height: Math.min(3.8, recipe.depth * 0.65 * recipe.roofScale),
       detail: recipe.detail,
+      overhang: recipe.roofOverhang,
     }));
   }
   buildIvy(sets, recipe, {
@@ -642,9 +644,9 @@ function addSquareTowerTop(sets, recipe, {
       });
     });
   } else {
-    const roofHeight = Math.min(3.1, Math.max(1.5, width * 0.38));
+    const roofHeight = Math.min(5, Math.max(0.9, width * 0.38 * recipe.roofScale));
     const roof = coneRoof({
-      radius: width / Math.sqrt(2) + 0.36,
+      radius: width / Math.sqrt(2) + recipe.roofOverhang,
       height: roofHeight,
       y: height + 0.06,
       sides: 4,
@@ -653,9 +655,9 @@ function addSquareTowerTop(sets, recipe, {
     roof.scale(1, 1, depth / width);
     sets.roof.push(roof);
     sets.roof.push(beveledBox({
-      width: width + 0.52,
+      width: width + recipe.roofOverhang * 2,
       height: 0.13,
-      depth: depth + 0.52,
+      depth: depth + recipe.roofOverhang * 2,
       position: [0, height + 0.04, 0],
       detail: 2,
       bevelRatio: 0.16,
@@ -845,15 +847,293 @@ function buildGatehouse(recipe) {
   return sets;
 }
 
+function addRoofCourseLips(sets, recipe, {
+  width,
+  depth,
+  y,
+  height,
+  centerX = 0,
+  centerZ = 0,
+}) {
+  const roofDepth = depth + recipe.roofOverhang * 2;
+  const angle = Math.atan2(height, roofDepth / 2);
+  const rows = Math.max(5, Math.round(height * 3.2));
+  for (const side of [-1, 1]) {
+    for (let row = 1; row < rows; row += 1) {
+      const progress = row / rows;
+      sets.roof.push(beveledBox({
+        width: width + recipe.roofOverhang * 2.03,
+        height: 0.045,
+        depth: 0.105,
+        position: [
+          centerX,
+          y + height * progress + 0.045,
+          centerZ + side * roofDepth / 2 * (1 - progress),
+        ],
+        rotation: [side > 0 ? angle : -angle, 0, 0],
+        detail: 1,
+        bevelRatio: 0.12,
+      }));
+    }
+  }
+  sets.roof.push(cylinder({
+    radius: 0.095,
+    height: width + recipe.roofOverhang * 2.12,
+    position: [centerX, y + height + 0.08, centerZ],
+    sides: 10,
+    rotation: [0, 0, Math.PI / 2],
+  }));
+}
+
+function addSteppedGableCoping(sets, recipe, {
+  endX,
+  depth,
+  y,
+  height,
+  seedOffset,
+}) {
+  if (recipe.shape === 'classic') return;
+  const steps = Math.max(5, Math.ceil(height / 0.38));
+  let stableIndex = seedOffset * 10000;
+  for (const side of [-1, 1]) {
+    for (let step = 0; step < steps; step += 1) {
+      const progress = (step + 0.5) / steps;
+      const blockHeight = height / steps;
+      const z = side * depth / 2 * (1 - progress);
+      addStone(sets.stone, recipe, {
+        width: 0.34,
+        height: blockHeight * 0.92,
+        depth: Math.max(0.34, depth / steps * 0.94),
+        position: [endX, y + blockHeight * (step + 0.5), z],
+      }, stableIndex, 0.9 + progress * 0.1);
+      stableIndex += 1;
+    }
+  }
+}
+
+function addFlowerBox(sets, recipe, {
+  x,
+  y,
+  z,
+  seedOffset,
+}) {
+  sets.wood.push(beveledBox({
+    width: 0.72,
+    height: 0.16,
+    depth: 0.25,
+    position: [x, y, z],
+    detail: 2,
+    bevelRatio: 0.16,
+  }));
+  const random = createRandom(mixSeed(recipe.seed, seedOffset));
+  for (let index = 0; index < 7; index += 1) {
+    sets.foliage.push(leaf({
+      radius: 0.075 + random() * 0.035,
+      position: [
+        x - 0.28 + index * 0.093,
+        y + 0.13 + random() * 0.11,
+        z + 0.04 + random() * 0.08,
+      ],
+      rotation: [random(), random(), random() * Math.PI],
+    }));
+  }
+}
+
+function buildManor(recipe) {
+  const sets = createEmptySets();
+  const width = recipe.width;
+  const depth = Math.max(3.2, Math.min(7.5, recipe.depth * 2.2));
+  const height = recipe.height;
+  const roofHeight = Math.min(5.4, Math.max(0.85, depth * 0.47 * recipe.roofScale));
+  const wallDepth = 0.34;
+
+  sets.mortar.push(beveledBox({
+    width,
+    height,
+    depth,
+    position: [0, height / 2, 0],
+    detail: recipe.detail,
+    bevelRatio: 0.018,
+  }));
+  sets.mortar.push(
+    gablePanel({
+      width: depth,
+      height: roofHeight * 0.98,
+      depth: wallDepth,
+      position: [width / 2 - wallDepth * 0.35, height, 0],
+      rotation: [0, Math.PI / 2, 0],
+    }),
+    gablePanel({
+      width: depth,
+      height: roofHeight * 0.98,
+      depth: wallDepth,
+      position: [-width / 2 + wallDepth * 0.35, height, 0],
+      rotation: [0, Math.PI / 2, 0],
+    }),
+  );
+
+  sets.stone.push(...buildWallCourses(recipe, {
+    width,
+    depth: 0.36,
+    height: 0.62,
+    centerZ: depth / 2 + 0.06,
+    seedOffset: 710,
+  }));
+
+  const openings = recipe.windows
+    ? [
+      {
+        centerX: -width * 0.08,
+        bottom: 0,
+        width: Math.min(1.25, width * 0.18),
+        springHeight: Math.min(1.75, height * 0.34),
+        radius: Math.min(0.625, width * 0.09),
+        door: true,
+      },
+      {
+        centerX: width * 0.2,
+        bottom: height * 0.49,
+        width: 0.68,
+        springHeight: 0.72,
+        radius: 0.24,
+      },
+      {
+        centerX: width * 0.39,
+        bottom: height * 0.49,
+        width: 0.68,
+        springHeight: 0.72,
+        radius: 0.24,
+      },
+    ]
+    : [];
+  openings.forEach((opening, index) => {
+    addOpeningDetails(sets, recipe, opening, {
+      frontZ: depth / 2 + 0.2,
+      seedOffset: 730 + index,
+      door: opening.door,
+    });
+    if (!opening.door) {
+      addFlowerBox(sets, recipe, {
+        x: opening.centerX,
+        y: opening.bottom - 0.08,
+        z: depth / 2 + 0.39,
+        seedOffset: 750 + index,
+      });
+    }
+  });
+
+  sets.roof.push(...wallRoofPlanes({
+    width,
+    depth,
+    y: height,
+    height: roofHeight,
+    detail: recipe.detail,
+    overhang: recipe.roofOverhang,
+  }));
+  addRoofCourseLips(sets, recipe, {
+    width,
+    depth,
+    y: height,
+    height: roofHeight,
+  });
+  for (const endX of [-width / 2 - 0.04, width / 2 + 0.04]) {
+    addSteppedGableCoping(sets, recipe, {
+      endX,
+      depth: depth + 0.08,
+      y: height,
+      height: roofHeight,
+      seedOffset: endX < 0 ? 770 : 780,
+    });
+  }
+
+  if (recipe.towerSide !== 'none') {
+    const side = recipe.towerSide === 'left' ? -1 : 1;
+    const towerRadius = Math.max(1.25, Math.min(2.15, width * 0.22));
+    const towerHeight = Math.min(13.2, height * 1.2);
+    const towerX = side * (width / 2 - towerRadius * 0.42);
+    const towerZ = depth * 0.32;
+    const tapered = recipe.shape === 'tapered';
+    sets.mortar.push(cylinder({
+      radius: towerRadius,
+      radiusTop: tapered ? towerRadius * 0.87 : towerRadius,
+      radiusBottom: towerRadius * 1.02,
+      height: towerHeight,
+      position: [towerX, towerHeight / 2, towerZ],
+      sides: recipe.detail === 3 ? 48 : 36,
+    }));
+    const towerOpeningsList = recipe.windows
+      ? [
+        {
+          centerX: 0,
+          bottom: towerHeight * 0.31,
+          width: 0.56,
+          springHeight: 0.68,
+          radius: 0.22,
+        },
+        {
+          centerX: 0,
+          bottom: towerHeight * 0.63,
+          width: 0.52,
+          springHeight: 0.64,
+          radius: 0.2,
+        },
+      ]
+      : [];
+    addTowerOpeningDetails(sets, recipe, towerOpeningsList, {
+      centerX: towerX,
+      centerZ: towerZ,
+      radius: towerRadius,
+      depth: 0.18,
+      seedOffset: 800,
+    });
+    const towerRoofHeight = Math.min(6.2, roofHeight * 1.4);
+    sets.roof.push(
+      coneRoof({
+        radius: towerRadius + recipe.roofOverhang,
+        height: towerRoofHeight,
+        y: towerHeight + 0.04,
+        centerX: towerX,
+        centerZ: towerZ,
+        sides: recipe.detail === 3 ? 40 : 28,
+      }),
+      cylinder({
+        radius: towerRadius + recipe.roofOverhang * 1.04,
+        height: 0.11,
+        position: [towerX, towerHeight + 0.04, towerZ],
+        sides: recipe.detail === 3 ? 40 : 28,
+      }),
+    );
+    sets.metal.push(cylinder({
+      radius: 0.028,
+      height: 0.72,
+      position: [towerX, towerHeight + towerRoofHeight + 0.36, towerZ],
+      sides: 8,
+    }));
+  }
+
+  buildIvy(sets, recipe, {
+    width,
+    height,
+    frontZ: depth / 2 + 0.22,
+    centerX: 0,
+    seedOffset: 830,
+  });
+  return sets;
+}
+
 function createGeometrySets(recipe) {
   if (recipe.archetype === 'wall') return buildWall(recipe);
   if (recipe.archetype === 'tower') return buildTower(recipe);
   if (recipe.archetype === 'square-tower') return buildSquareTower(recipe);
+  if (recipe.archetype === 'manor') return buildManor(recipe);
   return buildGatehouse(recipe);
 }
 
 function createPartsForSet(geometries, material, remesh) {
   if (geometries.length === 0) {
+    for (const value of Object.values(material)) {
+      if (value?.isTexture) value.dispose();
+    }
     material.dispose();
     return [];
   }

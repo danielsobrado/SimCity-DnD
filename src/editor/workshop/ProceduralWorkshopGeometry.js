@@ -113,25 +113,29 @@ export function wallRoofPlanes({
   y,
   height,
   detail = 2,
+  overhang = 0.17,
+  centerX = 0,
+  centerZ = 0,
 }) {
-  const slant = Math.hypot(depth / 2, height);
-  const angle = Math.atan2(height, depth / 2);
+  const roofDepth = depth + overhang * 2;
+  const slant = Math.hypot(roofDepth / 2, height);
+  const angle = Math.atan2(height, roofDepth / 2);
   return [
     beveledBox({
-      width: width + 0.34,
+      width: width + overhang * 2,
       height: 0.11,
-      depth: slant + 0.26,
-      position: [0, y + height / 2, -depth / 4],
-      rotation: [angle, 0, 0],
+      depth: slant + 0.12,
+      position: [centerX, y + height / 2, centerZ - roofDepth / 4],
+      rotation: [-angle, 0, 0],
       detail,
       bevelRatio: 0.12,
     }),
     beveledBox({
-      width: width + 0.34,
+      width: width + overhang * 2,
       height: 0.11,
-      depth: slant + 0.26,
-      position: [0, y + height / 2, depth / 4],
-      rotation: [-angle, 0, 0],
+      depth: slant + 0.12,
+      position: [centerX, y + height / 2, centerZ + roofDepth / 4],
+      rotation: [angle, 0, 0],
       detail,
       bevelRatio: 0.12,
     }),
@@ -140,15 +144,38 @@ export function wallRoofPlanes({
 
 export function cylinder({
   radius,
+  radiusTop = radius,
+  radiusBottom = radius,
   height,
   position = [0, 0, 0],
   sides = 10,
   rotation = [0, 0, 0],
 }) {
   return transformGeometry(
-    normalizeGeometry(new THREE.CylinderGeometry(radius, radius, height, sides)),
+    normalizeGeometry(new THREE.CylinderGeometry(radiusTop, radiusBottom, height, sides)),
     { position, rotation },
   );
+}
+
+export function gablePanel({
+  width,
+  height,
+  depth,
+  position = [0, 0, 0],
+  rotation = [0, 0, 0],
+}) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-width / 2, 0);
+  shape.lineTo(width / 2, 0);
+  shape.lineTo(0, height);
+  shape.closePath();
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    steps: 1,
+    bevelEnabled: false,
+  });
+  geometry.translate(0, 0, -depth / 2);
+  return transformGeometry(normalizeGeometry(geometry), { position, rotation });
 }
 
 export function flagGeometry({

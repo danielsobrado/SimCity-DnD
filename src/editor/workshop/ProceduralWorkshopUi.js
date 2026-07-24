@@ -1,6 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { disposeModelParts } from '../assets/modelParts.js';
+import { createWorkshopStage } from './ProceduralWorkshopStage.js';
 
 function randomSeed() {
   const values = new Uint32Array(1);
@@ -18,7 +20,10 @@ export class ProceduralWorkshopUi {
     this.renderer = null;
     this.camera = null;
     this.controls = null;
+    this.transformControls = null;
+    this.stage = null;
     this.animationFrame = 0;
+    this.previewTimer = 0;
 
     root.insertAdjacentHTML('beforeend', `
       <div class="workshop-overlay" data-role="workshop-overlay" hidden>
@@ -26,42 +31,60 @@ export class ProceduralWorkshopUi {
           <header class="workshop-header">
             <div>
               <p class="workshop-eyebrow">Procedural object workshop</p>
-              <h2 id="workshop-title">Medieval construction bench</h2>
-              <p>Generate inside this bounded preview, then bake the result into the Objects palette.</p>
+              <h2 id="workshop-title">Sunlit medieval atelier</h2>
+              <p>Sculpt the silhouette and materials, inspect it in game light, then bake it into Objects.</p>
             </div>
             <button class="workshop-close" type="button" data-workshop-action="close" aria-label="Close workshop">×</button>
           </header>
           <div class="workshop-body">
             <form class="workshop-controls" data-role="workshop-form">
               <label>Game-object name
-                <input name="label" value="Granite Gatehouse" maxlength="48" required />
+                <input name="label" value="Sunlit Tower House" maxlength="48" required />
               </label>
               <label>Build
                 <select name="archetype">
+                  <option value="manor" selected>Tower house</option>
                   <option value="wall">Wall</option>
-                  <option value="gatehouse" selected>Gatehouse</option>
+                  <option value="gatehouse">Gatehouse</option>
                   <option value="tower">Round tower</option>
                   <option value="square-tower">Square keep tower</option>
                 </select>
               </label>
-              <label>Stone
-                <select name="style">
-                  <option value="granite">Grey granite</option>
-                  <option value="limestone">Warm limestone</option>
-                  <option value="sandstone">Red sandstone</option>
-                </select>
-              </label>
-              <label>Top
-                <select name="topStyle">
-                  <option value="battlements">Battlements</option>
-                  <option value="slate">Slate roof</option>
-                  <option value="terracotta" selected>Terracotta roof</option>
-                </select>
-              </label>
+              <div class="workshop-field-grid">
+                <label>Wall finish
+                  <select name="finish">
+                    <option value="masonry">Exposed masonry</option>
+                    <option value="ochre" selected>Sun-washed ochre</option>
+                    <option value="limewash">Warm limewash</option>
+                    <option value="rose">Faded rose plaster</option>
+                  </select>
+                </label>
+                <label>Trim stone
+                  <select name="style">
+                    <option value="granite">Grey granite</option>
+                    <option value="limestone" selected>Warm limestone</option>
+                    <option value="sandstone">Red sandstone</option>
+                  </select>
+                </label>
+                <label>Roof / top
+                  <select name="topStyle">
+                    <option value="battlements">Battlements</option>
+                    <option value="slate" selected>Mossy slate</option>
+                    <option value="terracotta">Terracotta tile</option>
+                  </select>
+                </label>
+                <label>Silhouette
+                  <select name="shape">
+                    <option value="classic">Classic</option>
+                    <option value="stepped" selected>Stepped gables</option>
+                    <option value="tapered">Tapered tower</option>
+                  </select>
+                </label>
+              </div>
               <div class="workshop-field-grid">
                 <label>Width (m)<input name="width" type="number" min="2" max="16" step="0.5" value="8" /></label>
-                <label>Depth (m)<input name="depth" type="number" min="1" max="12" step="0.5" value="2" /></label>
-                <label>Height (m)<input name="height" type="number" min="2" max="14" step="0.5" value="5" /></label>
+                <label>Depth factor<input name="depth" type="number" min="1" max="12" step="0.5" value="2.5" /></label>
+                <label>Wall height (m)<input name="height" type="number" min="2" max="14" step="0.5" value="5.5" /></label>
                 <label>Detail
                   <select name="detail">
                     <option value="1">Draft</option>
@@ -70,15 +93,33 @@ export class ProceduralWorkshopUi {
                   </select>
                 </label>
               </div>
+              <div class="workshop-field-grid">
+                <label>Tower wing
+                  <select name="towerSide">
+                    <option value="left" selected>Left</option>
+                    <option value="right">Right</option>
+                    <option value="none">None</option>
+                  </select>
+                </label>
+                <span class="workshop-range">
+                  <label for="workshop-roof-height">Roof height <output data-output-for="roofScale">1.15×</output></label>
+                  <input id="workshop-roof-height" name="roofScale" type="range" min="0.55" max="2" step="0.05" value="1.15" />
+                </span>
+                <span class="workshop-range workshop-range--wide">
+                  <label for="workshop-roof-overhang">Roof overhang <output data-output-for="roofOverhang">0.45 m</output></label>
+                  <input id="workshop-roof-overhang" name="roofOverhang" type="range" min="0.1" max="0.9" step="0.05" value="0.45" />
+                </span>
+              </div>
               <label>Deterministic seed
                 <span class="workshop-inline">
                   <input name="seed" type="number" min="0" max="2147483647" step="1" value="1848" />
                   <button type="button" class="action-button" data-workshop-action="reroll">Reroll</button>
                 </span>
               </label>
-              <label>Age and weathering
-                <input name="weathering" type="range" min="0" max="1" step="0.05" value="0.35" />
-              </label>
+              <span class="workshop-range">
+                <label for="workshop-weathering">Age and weathering <output data-output-for="weathering">35%</output></label>
+                <input id="workshop-weathering" name="weathering" type="range" min="0" max="1" step="0.05" value="0.35" />
+              </span>
               <div class="workshop-option-grid">
                 <label class="workshop-check">
                   <input name="windows" type="checkbox" checked />
@@ -104,9 +145,15 @@ export class ProceduralWorkshopUi {
               </div>
             </form>
             <div class="workshop-preview">
-              <div class="workshop-preview__badge">16 × 16 m bounded work area</div>
+              <div class="workshop-preview__badge">16 × 16 m sunlit work garden</div>
+              <div class="workshop-gizmo-tools" role="toolbar" aria-label="Preview transform tools">
+                <button type="button" class="is-active" data-workshop-action="move">Move</button>
+                <button type="button" data-workshop-action="rotate">Rotate</button>
+                <button type="button" data-workshop-action="center">Center</button>
+                <button type="button" data-workshop-action="frame">Frame</button>
+              </div>
               <div class="workshop-canvas" data-role="workshop-canvas"></div>
-              <p>Drag to orbit · wheel to zoom. Baked placements share one mesh and material set.</p>
+              <p>Drag the gizmo to move or rotate · drag empty space to orbit · wheel to zoom · R rotates placed game objects.</p>
             </div>
           </div>
         </section>
@@ -125,6 +172,9 @@ export class ProceduralWorkshopUi {
       const action = event.target.closest('[data-workshop-action]')?.dataset.workshopAction;
       if (action === 'close') this.close();
       if (action === 'preview') this.generatePreview();
+      if (action === 'move' || action === 'rotate') this.setTransformMode(action);
+      if (action === 'center') this.centerPreview();
+      if (action === 'frame') this.framePreview();
       if (action === 'reroll') {
         this.form.elements.seed.value = String(randomSeed());
         this.generatePreview();
@@ -137,10 +187,55 @@ export class ProceduralWorkshopUi {
       event.preventDefault();
       this.bake();
     });
-    this.form.addEventListener('change', () => this.generatePreview());
+    this.form.addEventListener('change', () => this.schedulePreview(40));
+    this.form.addEventListener('input', (event) => {
+      if (event.target.matches('input[type="range"]')) {
+        this.syncRangeOutputs();
+        this.schedulePreview(90);
+      }
+    });
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && !this.overlay.hidden) this.close();
     });
+    this.syncRangeOutputs();
+  }
+
+  syncRangeOutputs() {
+    const values = {
+      roofScale: `${Number(this.form.elements.roofScale.value).toFixed(2)}×`,
+      roofOverhang: `${Number(this.form.elements.roofOverhang.value).toFixed(2)} m`,
+      weathering: `${Math.round(Number(this.form.elements.weathering.value) * 100)}%`,
+    };
+    for (const [name, value] of Object.entries(values)) {
+      const output = this.form.querySelector(`[data-output-for="${name}"]`);
+      if (output) output.textContent = value;
+    }
+  }
+
+  schedulePreview(delay = 60) {
+    window.clearTimeout(this.previewTimer);
+    this.previewTimer = window.setTimeout(() => {
+      this.previewTimer = 0;
+      this.generatePreview();
+    }, delay);
+  }
+
+  setTransformMode(mode) {
+    if (!this.transformControls) return;
+    this.transformControls.setMode(mode === 'rotate' ? 'rotate' : 'translate');
+    this.transformControls.showX = true;
+    this.transformControls.showY = mode === 'rotate';
+    this.transformControls.showZ = true;
+    for (const button of this.overlay.querySelectorAll('[data-workshop-action="move"], [data-workshop-action="rotate"]')) {
+      button.classList.toggle('is-active', button.dataset.workshopAction === mode);
+    }
+  }
+
+  centerPreview() {
+    this.previewRoot.position.set(0, 0, 0);
+    this.previewRoot.rotation.set(0, 0, 0);
+    this.transformControls?.reset?.();
+    this.framePreview();
   }
 
   readInput() {
@@ -151,9 +246,14 @@ export class ProceduralWorkshopUi {
         archetype: values.get('archetype'),
         style: values.get('style'),
         topStyle: values.get('topStyle'),
+        finish: values.get('finish'),
+        shape: values.get('shape'),
+        towerSide: values.get('towerSide'),
         width: Number(values.get('width')),
         depth: Number(values.get('depth')),
         height: Number(values.get('height')),
+        roofScale: Number(values.get('roofScale')),
+        roofOverhang: Number(values.get('roofOverhang')),
         detail: Number(values.get('detail')),
         seed: Number(values.get('seed')),
         weathering: Number(values.get('weathering')),
@@ -179,48 +279,66 @@ export class ProceduralWorkshopUi {
 
   close() {
     this.overlay.hidden = true;
+    window.clearTimeout(this.previewTimer);
+    this.previewTimer = 0;
     cancelAnimationFrame(this.animationFrame);
     this.animationFrame = 0;
   }
 
   async ensureRenderer() {
     if (this.renderer) return;
-    this.renderer = new THREE.WebGPURenderer({ antialias: true, alpha: true });
+    this.renderer = new THREE.WebGPURenderer({
+      antialias: true,
+      alpha: false,
+      powerPreference: 'high-performance',
+    });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(this.canvasHost.clientWidth, this.canvasHost.clientHeight);
-    this.renderer.setClearColor('#111713', 1);
+    this.renderer.setClearColor('#9bc8ec', 1);
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.12;
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     await this.renderer.init();
     this.canvasHost.append(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
     this.scene.add(this.previewRoot);
     this.camera = new THREE.PerspectiveCamera(
-      38,
+      36,
       this.canvasHost.clientWidth / this.canvasHost.clientHeight,
       0.1,
       100,
     );
-    this.camera.position.set(13, 9, 15);
+    this.camera.position.set(13, 10, 16);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.target.set(0, 3, 0);
     this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.075;
+    this.controls.screenSpacePanning = false;
     this.controls.minDistance = 5;
-    this.controls.maxDistance = 35;
+    this.controls.maxDistance = 52;
+    this.controls.maxPolarAngle = Math.PI * 0.475;
 
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(16, 16, 16, 16),
-      new THREE.MeshStandardMaterial({ color: '#28372d', roughness: 1 }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    this.scene.add(floor);
-    this.scene.add(new THREE.GridHelper(16, 16, '#738b76', '#34483a'));
-    this.scene.add(new THREE.HemisphereLight('#cfe0ff', '#283122', 2.2));
-    const sun = new THREE.DirectionalLight('#fff0ce', 3);
-    sun.position.set(7, 14, 9);
-    sun.castShadow = true;
-    this.scene.add(sun);
+    this.stage = createWorkshopStage(this.scene);
+    this.transformControls = new TransformControls(this.camera, this.renderer.domElement);
+    this.transformControls.attach(this.previewRoot);
+    this.transformControls.setTranslationSnap(0.25);
+    this.transformControls.setRotationSnap(THREE.MathUtils.degToRad(15));
+    this.transformControls.setSize(0.68);
+    this.transformControls.showY = false;
+    this.transformControls.addEventListener('dragging-changed', ({ value }) => {
+      this.controls.enabled = !value;
+    });
+    this.transformControls.addEventListener('objectChange', () => {
+      this.previewRoot.position.x = THREE.MathUtils.clamp(this.previewRoot.position.x, -7.5, 7.5);
+      this.previewRoot.position.y = 0;
+      this.previewRoot.position.z = THREE.MathUtils.clamp(this.previewRoot.position.z, -7.5, 7.5);
+      this.previewRoot.rotation.x = 0;
+      this.previewRoot.rotation.z = 0;
+    });
+    this.scene.add(this.transformControls.getHelper());
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.canvasHost);
@@ -263,7 +381,7 @@ export class ProceduralWorkshopUi {
     const bounds = new THREE.Box3().setFromObject(this.previewRoot);
     const center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3());
-    const distance = Math.max(size.x, size.y, size.z) * 2.15;
+    const distance = Math.max(size.x, size.y, size.z) * 2.85;
     const direction = this.camera.position.clone().sub(this.controls.target).normalize();
     this.controls.target.copy(center);
     this.camera.position.copy(center).addScaledVector(direction, Math.max(6, distance));
@@ -301,8 +419,10 @@ export class ProceduralWorkshopUi {
   dispose() {
     this.close();
     this.resizeObserver?.disconnect();
+    this.transformControls?.dispose();
     this.controls?.dispose();
     this.clearPreview();
+    this.stage?.dispose();
     this.renderer?.dispose();
     this.overlay.remove();
   }

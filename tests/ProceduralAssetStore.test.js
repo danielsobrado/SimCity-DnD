@@ -10,9 +10,14 @@ const recipe = {
   archetype: 'gatehouse',
   style: 'granite',
   topStyle: 'terracotta',
+  finish: 'masonry',
+  shape: 'classic',
+  towerSide: 'left',
   width: 8,
   depth: 2,
   height: 5,
+  roofScale: 1,
+  roofOverhang: 0.35,
   seed: 1848,
   detail: 2,
   weathering: 0.35,
@@ -52,6 +57,11 @@ test('older workshop recipes receive compatible quality defaults', () => {
     albedo: true,
   });
   assert.equal(normalized.topStyle, 'battlements');
+  assert.equal(normalized.finish, 'masonry');
+  assert.equal(normalized.shape, 'classic');
+  assert.equal(normalized.towerSide, 'left');
+  assert.equal(normalized.roofScale, 1);
+  assert.equal(normalized.roofOverhang, 0.35);
   assert.equal(normalized.weathering, 0.35);
   assert.equal(normalized.windows, true);
   assert.equal(normalized.ivy, false);

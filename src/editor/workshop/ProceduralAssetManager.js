@@ -10,22 +10,38 @@ const TERRAIN_CLASSES = Object.freeze([
 
 function definitionFor(record, tileSize) {
   const { recipe } = record;
+  const manorLike = recipe.archetype === 'manor';
+  const manorTowerRadius = Math.max(1.25, Math.min(2.15, recipe.width * 0.22));
+  const manorDepth = Math.max(3.2, Math.min(7.5, recipe.depth * 2.2));
+  const manorHasTower = manorLike && recipe.towerSide !== 'none';
   const radiusWidth = recipe.archetype === 'gatehouse'
     ? recipe.width + recipe.depth * 1.4
-    : recipe.width;
+    : manorHasTower ? recipe.width + manorTowerRadius * 0.62 : recipe.width;
   const footprintWidth = Math.max(1, Math.ceil(radiusWidth / tileSize));
   const towerLike = recipe.archetype === 'tower' || recipe.archetype === 'square-tower';
   const footprintDepth = Math.max(1, Math.ceil(
-    (towerLike ? recipe.width : recipe.depth) / tileSize,
+    (
+      towerLike
+        ? recipe.width
+        : manorLike
+          ? manorDepth + (manorHasTower ? manorTowerRadius * 0.82 : 0)
+          : recipe.depth
+    ) / tileSize,
   ));
   return Object.freeze({
     key: record.key,
     label: record.label,
-    icon: towerLike ? '🗼' : recipe.archetype === 'gatehouse' ? '🏯' : '🧱',
+    icon: manorLike ? '🏡' : towerLike ? '🗼' : recipe.archetype === 'gatehouse' ? '🏯' : '🧱',
     category: 'workshop',
-    color: recipe.style === 'sandstone'
-      ? '#b7774f'
-      : recipe.style === 'limestone' ? '#b9a983' : '#858b8e',
+    color: recipe.finish === 'ochre'
+      ? '#d9a13b'
+      : recipe.finish === 'limewash'
+        ? '#d9d0ae'
+        : recipe.finish === 'rose'
+          ? '#bb7564'
+          : recipe.style === 'sandstone'
+            ? '#b7774f'
+            : recipe.style === 'limestone' ? '#b9a983' : '#858b8e',
     model: 'workshop',
     footprint: Object.freeze({ width: footprintWidth, depth: footprintDepth }),
     foundation: Object.freeze({
