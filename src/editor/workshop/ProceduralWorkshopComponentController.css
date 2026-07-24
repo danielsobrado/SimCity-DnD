@@ -1,0 +1,53 @@
+.workshop-component-editor {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  z-index: 5;
+  display: grid;
+  gap: 6px;
+  width: min(300px, calc(100% - 36px));
+  padding: 10px 12px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 10px;
+  background: rgb(12 24 19 / 86%);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
+  backdrop-filter: blur(8px);
+}
+
+.workshop-component-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: #dce5dc;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.workshop-component-select select {
+  min-width: 0;
+  padding: 6px 28px 6px 8px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 7px;
+  color: #f3f6ef;
+  background: #14231b;
+}
+
+.workshop-component-hint {
+  color: #aebdb1;
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+.workshop-gizmo-tools [data-workshop-action="scale"] {
+  min-width: 48px;
+}
+
+@media (max-width: 860px) {
+  .workshop-component-editor {
+    bottom: 12px;
+    left: 12px;
+    width: calc(100% - 24px);
+  }
+}
