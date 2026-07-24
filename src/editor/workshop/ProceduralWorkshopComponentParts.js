@@ -3,7 +3,10 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { disposeModelParts } from '../assets/modelParts.js';
 import { normalizeProceduralRecipe } from './ProceduralAssetStore.js';
 import { getCastleWallOpenings } from './ProceduralCastleWallLayout.js';
-import { getComponentTransform } from './ProceduralWorkshopComponentTransforms.js';
+import {
+  createIdentityComponentTransform,
+  getComponentTransform,
+} from './ProceduralWorkshopComponentTransforms.js';
 import { createProceduralWorkshopParts } from './ProceduralWorkshopGenerator.js';
 
 const STRUCTURE_MIN_HEIGHT = 1.4;
@@ -283,6 +286,12 @@ function childDefinition(structure, suffix, label, kind) {
   };
 }
 
+function isTopologyDrivenOpening(recipe, component) {
+  return recipe.archetype === 'wall'
+    && recipe.shape !== 'classic'
+    && component.kind === 'opening';
+}
+
 function classifyComponents(entries, recipe) {
   const structures = createStructureAnchors(entries);
   const openings = createOpeningAnchors(entries, recipe, structures);
@@ -330,7 +339,11 @@ function classifyComponents(entries, recipe) {
       floorPivot ? component.bounds.min.y : component.center.y,
       component.center.z,
     );
-    component.transform = getComponentTransform(recipe.componentTransforms, componentId);
+    component.storedTransform = getComponentTransform(recipe.componentTransforms, componentId);
+    component.transformPolicy = isTopologyDrivenOpening(recipe, component) ? 'opening2d' : 'free';
+    component.transform = component.transformPolicy === 'opening2d'
+      ? createIdentityComponentTransform()
+      : component.storedTransform;
     if (component.parentId && !components.has(component.parentId)) {
       throw new Error(`Workshop component ${componentId} has a missing parent.`);
     }
@@ -347,6 +360,8 @@ function componentMetadata(component) {
     parentId: component.parentId,
     pivot: Object.freeze(component.pivot.toArray()),
     transform: component.transform,
+    storedTransform: component.storedTransform,
+    transformPolicy: component.transformPolicy,
   });
 }
 
@@ -505,7 +520,6 @@ export function createProceduralWorkshopComponentParts(input, {
   const rawParts = createProceduralWorkshopParts({
     ...recipe,
     remesh: false,
-    componentTransforms: {},
   });
   try {
     const entries = rawParts.map(geometryEntry);
