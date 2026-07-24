@@ -86,8 +86,9 @@ export async function prepareWorkshopAlbedo(file) {
         colorSpace: 'srgb',
       });
     } catch {
-      context = canvas.getContext('2d');
+      context = null;
     }
+    context ??= canvas.getContext('2d');
     if (!context) {
       throw new Error('The browser could not prepare the albedo texture.');
     }
