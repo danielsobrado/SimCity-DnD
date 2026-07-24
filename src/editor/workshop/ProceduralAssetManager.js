@@ -84,6 +84,27 @@ export class ProceduralAssetManager {
     return createProceduralMedievalParts(recipe);
   }
 
+  cleanupFailedInstall(definition, parts) {
+    const renderer = this.objectView.renderers.get(definition.key);
+    if (renderer?.parts === parts) {
+      unregisterProceduralDefinitions({
+        objectMap: this.objectMap,
+        objectView: this.objectView,
+        definitionKeys: [definition.key],
+      });
+      return;
+    }
+    const viewDefinition = this.objectView.definitionByKey.get(definition.key);
+    if (viewDefinition?.procedural === true) {
+      this.objectView.definitionByKey.delete(definition.key);
+    }
+    const mapDefinition = this.objectMap.definitionByKey.get(definition.key);
+    if (mapDefinition?.procedural === true) {
+      this.objectMap.definitionByKey.delete(definition.key);
+    }
+    disposeModelParts(parts);
+  }
+
   install(record) {
     const definition = definitionFor(record, this.tileSize);
     const parts = createProceduralMedievalParts(record.recipe);
@@ -91,8 +112,14 @@ export class ProceduralAssetManager {
       this.objectMap.registerDefinition(definition);
       this.objectView.registerDefinition(definition, parts);
     } catch (error) {
-      this.objectMap.definitionByKey.delete(definition.key);
-      disposeModelParts(parts);
+      try {
+        this.cleanupFailedInstall(definition, parts);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Failed to install or clean up procedural object ${definition.key}.`,
+        );
+      }
       throw error;
     }
     this.definitions.set(definition.key, definition);
