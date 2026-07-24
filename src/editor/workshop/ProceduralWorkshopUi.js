@@ -13,6 +13,10 @@ function randomSeed() {
   return values[0] & 0x7fffffff;
 }
 
+function actionForTransformMode(mode) {
+  return mode === 'rotate' ? 'rotate' : mode === 'scale' ? 'scale' : 'move';
+}
+
 export class ProceduralWorkshopUi {
   constructor({ root, manager, onBaked }) {
     this.root = root;
@@ -247,15 +251,20 @@ export class ProceduralWorkshopUi {
     }, delay);
   }
 
-  setTransformMode(mode) {
-    if (!this.transformControls) return;
-    const transformMode = mode === 'rotate' ? 'rotate' : mode === 'scale' ? 'scale' : 'translate';
-    this.componentController?.setMode(transformMode);
+  syncTransformModeButtons(mode) {
+    const activeAction = actionForTransformMode(mode);
     for (const button of this.overlay.querySelectorAll(
       '[data-workshop-action="move"], [data-workshop-action="rotate"], [data-workshop-action="scale"]',
     )) {
-      button.classList.toggle('is-active', button.dataset.workshopAction === mode);
+      button.classList.toggle('is-active', button.dataset.workshopAction === activeAction);
     }
+  }
+
+  setTransformMode(action) {
+    if (!this.transformControls) return;
+    const requestedMode = action === 'rotate' ? 'rotate' : action === 'scale' ? 'scale' : 'translate';
+    const activeMode = this.componentController?.setMode(requestedMode) ?? requestedMode;
+    this.syncTransformModeButtons(activeMode);
   }
 
   centerPreview() {
@@ -370,6 +379,9 @@ export class ProceduralWorkshopUi {
           ? `${component.label} edit stored in the object recipe.`
           : 'All component edits were reset.';
         this.status.classList.remove('is-error');
+        if (!component || component.transformPolicy === 'opening2d') {
+          this.schedulePreview(0);
+        }
       },
     });
 
@@ -396,6 +408,7 @@ export class ProceduralWorkshopUi {
       this.clearPreview();
       this.previewParts = nextParts;
       this.componentController.replaceParts(nextParts);
+      this.syncTransformModeButtons(this.componentController.mode);
       this.framePreview();
       const stats = nextParts.stats;
       this.status.textContent = `${stats.components} editable components · ${stats.stones} stones · ${stats.features} semantic details · ${stats.sourceVertices.toLocaleString()} source vertices · ${stats.drawParts} preview parts.`;
