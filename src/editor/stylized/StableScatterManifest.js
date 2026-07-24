@@ -3,6 +3,20 @@ import { hash32, overlaps, scatterRandom01 } from './scatterMath.js';
 
 const DEFAULT_PRIORITY_CHANNEL = 23;
 const SIGNATURE_SCALE = 1000;
+const CANDIDATE_AUTHORITY_FIELDS = new Set([
+  'stableId',
+  'ownerChunkX',
+  'ownerChunkZ',
+  'index',
+  'x',
+  'z',
+  'height',
+  'scale',
+  'rotationY',
+  'prototypeIndex',
+  'radius',
+  'priority',
+]);
 
 function candidateOrder(left, right) {
   if (left.priority !== right.priority) return left.priority - right.priority;
@@ -66,13 +80,24 @@ export function blockersForChunk({
   });
 }
 
+function isMetadataObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function evaluateCandidate(candidate, candidateEvaluator) {
   if (!candidateEvaluator) return candidate;
   const metadata = candidateEvaluator(candidate);
   if (!metadata) return null;
   if (metadata === true) return candidate;
-  if (typeof metadata !== 'object') {
-    throw new Error('candidateEvaluator must return an object, true, or a falsy rejection.');
+  if (!isMetadataObject(metadata)) {
+    throw new Error('candidateEvaluator must return a plain object, true, or a falsy rejection.');
+  }
+  for (const key of Object.keys(metadata)) {
+    if (CANDIDATE_AUTHORITY_FIELDS.has(key)) {
+      throw new Error(`candidateEvaluator cannot override canonical field "${key}".`);
+    }
   }
   return Object.freeze({ ...candidate, ...metadata });
 }
