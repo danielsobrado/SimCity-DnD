@@ -263,7 +263,7 @@ export class ProceduralWorkshopUi {
     const bounds = new THREE.Box3().setFromObject(this.previewRoot);
     const center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3());
-    const distance = Math.max(size.x, size.y, size.z) * 1.95;
+    const distance = Math.max(size.x, size.y, size.z) * 2.15;
     const direction = this.camera.position.clone().sub(this.controls.target).normalize();
     this.controls.target.copy(center);
     this.camera.position.copy(center).addScaledVector(direction, Math.max(6, distance));

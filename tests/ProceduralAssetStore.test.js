@@ -39,6 +39,24 @@ test('procedural asset recipes are normalized and bounded', () => {
   );
 });
 
+test('older workshop recipes receive compatible quality defaults', () => {
+  const normalized = normalizeProceduralRecipe({
+    archetype: 'tower',
+    style: 'granite',
+    width: 6,
+    depth: 2,
+    height: 7,
+    seed: 5,
+    detail: 2,
+    remesh: true,
+    albedo: true,
+  });
+  assert.equal(normalized.topStyle, 'battlements');
+  assert.equal(normalized.weathering, 0.35);
+  assert.equal(normalized.windows, true);
+  assert.equal(normalized.ivy, false);
+});
+
 test('procedural object keys are stable and collision safe', () => {
   const first = createProceduralAssetRecord({ label: 'Granite Gatehouse', recipe });
   const repeat = createProceduralAssetRecord({ label: 'Granite Gatehouse', recipe });

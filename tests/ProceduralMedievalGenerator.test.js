@@ -85,3 +85,26 @@ test('semantic gatehouse details remain bounded after remeshing', () => {
     disposeModelParts(parts);
   }
 });
+
+test('square keep towers generate openings, battlements, and mortar backing deterministically', () => {
+  const towerRecipe = {
+    ...recipe,
+    archetype: 'square-tower',
+    width: 6,
+    depth: 2,
+    height: 7,
+    windows: true,
+    ivy: true,
+  };
+  const first = createProceduralMedievalParts(towerRecipe);
+  const second = createProceduralMedievalParts(towerRecipe);
+  try {
+    assert.ok(first.stats.stones > 300);
+    assert.ok(first.stats.features > 30);
+    assert.ok(first.length <= 7);
+    assert.equal(positionSignature(first), positionSignature(second));
+  } finally {
+    disposeModelParts(first);
+    disposeModelParts(second);
+  }
+});
