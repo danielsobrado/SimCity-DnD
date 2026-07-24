@@ -1,8 +1,11 @@
 import { TILE_CATALOG } from '../tileCatalog.js';
 import { disposeModelParts } from '../assets/modelParts.js';
 import { unregisterProceduralDefinitions } from './ProceduralDefinitionLifecycle.js';
-import { createProceduralMedievalParts } from './ProceduralMedievalGenerator.js';
 import { ProceduralAssetStore } from './ProceduralAssetStore.js';
+import { createProceduralWorkshopComponentParts } from './ProceduralWorkshopComponentParts.js';
+
+const CASTLE_WALL_WIDTH_PADDING = 0.7;
+const CASTLE_WALL_DEPTH_FACTOR = 2.3;
 
 const TERRAIN_CLASSES = Object.freeze([
   'ocean', 'plains', 'forest', 'desert', 'wetland', 'tundra', 'ice',
@@ -12,12 +15,15 @@ const TERRAIN_CLASSES = Object.freeze([
 function definitionFor(record, tileSize) {
   const { recipe } = record;
   const manorLike = recipe.archetype === 'manor';
+  const castleWallLike = recipe.archetype === 'wall' && recipe.shape !== 'classic';
   const manorTowerRadius = Math.max(1.25, Math.min(2.15, recipe.width * 0.22));
   const manorDepth = Math.max(3.2, Math.min(7.5, recipe.depth * 2.2));
   const manorHasTower = manorLike && recipe.towerSide !== 'none';
   const radiusWidth = recipe.archetype === 'gatehouse'
     ? recipe.width + recipe.depth * 1.4
-    : manorHasTower ? recipe.width + manorTowerRadius * 0.62 : recipe.width;
+    : manorHasTower
+      ? recipe.width + manorTowerRadius * 0.62
+      : castleWallLike ? recipe.width + CASTLE_WALL_WIDTH_PADDING : recipe.width;
   const footprintWidth = Math.max(1, Math.ceil(radiusWidth / tileSize));
   const towerLike = recipe.archetype === 'tower' || recipe.archetype === 'square-tower';
   const footprintDepth = Math.max(1, Math.ceil(
@@ -26,13 +32,19 @@ function definitionFor(record, tileSize) {
         ? recipe.width
         : manorLike
           ? manorDepth + (manorHasTower ? manorTowerRadius * 0.82 : 0)
-          : recipe.depth
+          : castleWallLike ? recipe.depth * CASTLE_WALL_DEPTH_FACTOR : recipe.depth
     ) / tileSize,
   ));
   return Object.freeze({
     key: record.key,
     label: record.label,
-    icon: manorLike ? '🏡' : towerLike ? '🗼' : recipe.archetype === 'gatehouse' ? '🏯' : '🧱',
+    icon: manorLike
+      ? '🏡'
+      : towerLike
+        ? '🗼'
+        : recipe.archetype === 'gatehouse'
+          ? '🏯'
+          : castleWallLike ? '🏰' : '🧱',
     category: 'workshop',
     color: recipe.finish === 'ochre'
       ? '#d9a13b'
@@ -81,7 +93,7 @@ export class ProceduralAssetManager {
   }
 
   createPreviewParts(recipe) {
-    return createProceduralMedievalParts(recipe);
+    return createProceduralWorkshopComponentParts(recipe, { preserveComponents: true });
   }
 
   cleanupFailedInstall(definition, parts) {
@@ -107,7 +119,7 @@ export class ProceduralAssetManager {
 
   install(record) {
     const definition = definitionFor(record, this.tileSize);
-    const parts = createProceduralMedievalParts(record.recipe);
+    const parts = createProceduralWorkshopComponentParts(record.recipe);
     try {
       this.objectMap.registerDefinition(definition);
       this.objectView.registerDefinition(definition, parts);

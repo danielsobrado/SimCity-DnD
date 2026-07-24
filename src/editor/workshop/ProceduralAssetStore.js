@@ -1,11 +1,15 @@
 import {
+  normalizeComponentTransforms,
+  serializeComponentTransforms,
+} from './ProceduralWorkshopComponentTransforms.js';
+import {
   normalizeSurfaceTextures,
   serializeSurfaceTextures,
 } from './ProceduralWorkshopTextureConfig.js';
 
-const ASSET_VERSION = 2;
+const ASSET_VERSION = 3;
 const MAX_ASSETS = 32;
-const SUPPORTED_ASSET_VERSIONS = new Set([1, ASSET_VERSION]);
+const SUPPORTED_ASSET_VERSIONS = new Set([1, 2, ASSET_VERSION]);
 const VALID_ARCHETYPES = new Set(['wall', 'gatehouse', 'tower', 'square-tower', 'manor']);
 const VALID_STYLES = new Set(['granite', 'limestone', 'sandstone']);
 const VALID_TOP_STYLES = new Set(['battlements', 'slate', 'terracotta']);
@@ -85,6 +89,7 @@ export function normalizeProceduralRecipe(input = {}) {
     remesh: input.remesh !== false,
     albedo: input.albedo !== false,
     surfaceTextures: normalizeSurfaceTextures(input.surfaceTextures),
+    componentTransforms: normalizeComponentTransforms(input.componentTransforms),
   });
 }
 
@@ -177,6 +182,7 @@ export class ProceduralAssetStore {
       recipe: {
         ...record.recipe,
         surfaceTextures: serializeSurfaceTextures(record.recipe.surfaceTextures),
+        componentTransforms: serializeComponentTransforms(record.recipe.componentTransforms),
       },
     }));
   }
