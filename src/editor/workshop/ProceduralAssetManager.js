@@ -1,8 +1,8 @@
 import { TILE_CATALOG } from '../tileCatalog.js';
 import { disposeModelParts } from '../assets/modelParts.js';
 import { unregisterProceduralDefinitions } from './ProceduralDefinitionLifecycle.js';
-import { createProceduralMedievalParts } from './ProceduralMedievalGenerator.js';
 import { ProceduralAssetStore } from './ProceduralAssetStore.js';
+import { createProceduralWorkshopParts } from './ProceduralWorkshopGenerator.js';
 
 const TERRAIN_CLASSES = Object.freeze([
   'ocean', 'plains', 'forest', 'desert', 'wetland', 'tundra', 'ice',
@@ -12,6 +12,7 @@ const TERRAIN_CLASSES = Object.freeze([
 function definitionFor(record, tileSize) {
   const { recipe } = record;
   const manorLike = recipe.archetype === 'manor';
+  const castleWallLike = recipe.archetype === 'wall' && recipe.shape !== 'classic';
   const manorTowerRadius = Math.max(1.25, Math.min(2.15, recipe.width * 0.22));
   const manorDepth = Math.max(3.2, Math.min(7.5, recipe.depth * 2.2));
   const manorHasTower = manorLike && recipe.towerSide !== 'none';
@@ -32,7 +33,13 @@ function definitionFor(record, tileSize) {
   return Object.freeze({
     key: record.key,
     label: record.label,
-    icon: manorLike ? '🏡' : towerLike ? '🗼' : recipe.archetype === 'gatehouse' ? '🏯' : '🧱',
+    icon: manorLike
+      ? '🏡'
+      : towerLike
+        ? '🗼'
+        : recipe.archetype === 'gatehouse'
+          ? '🏯'
+          : castleWallLike ? '🏰' : '🧱',
     category: 'workshop',
     color: recipe.finish === 'ochre'
       ? '#d9a13b'
@@ -81,7 +88,7 @@ export class ProceduralAssetManager {
   }
 
   createPreviewParts(recipe) {
-    return createProceduralMedievalParts(recipe);
+    return createProceduralWorkshopParts(recipe);
   }
 
   cleanupFailedInstall(definition, parts) {
@@ -107,7 +114,7 @@ export class ProceduralAssetManager {
 
   install(record) {
     const definition = definitionFor(record, this.tileSize);
-    const parts = createProceduralMedievalParts(record.recipe);
+    const parts = createProceduralWorkshopParts(record.recipe);
     try {
       this.objectMap.registerDefinition(definition);
       this.objectView.registerDefinition(definition, parts);
