@@ -148,6 +148,54 @@ test('stable scatter caps accepted records and preserves evaluator metadata', ()
   assert.ok(placements[0].index < placements[1].index);
 });
 
+test('accepted limits are applied to every owner chunk before spacing', () => {
+  const target = { chunkX: 2, chunkZ: -5 };
+  const selectedIds = new Set();
+  for (let chunkZ = target.chunkZ - 1; chunkZ <= target.chunkZ + 1; chunkZ += 1) {
+    for (let chunkX = target.chunkX - 1; chunkX <= target.chunkX + 1; chunkX += 1) {
+      const selected = buildStableChunkManifest(baseManifest({
+        chunkX,
+        chunkZ,
+        perChunk: 3,
+        maxAccepted: 1,
+        haloChunks: 0,
+      }));
+      assert.equal(selected.length, 1);
+      selectedIds.add(selected[0].stableId);
+    }
+  }
+
+  const expected = buildStableChunkManifest(baseManifest({
+    ...target,
+    perChunk: 3,
+    maxAccepted: Number.POSITIVE_INFINITY,
+    radiusForScale: () => 3,
+    candidateEvaluator: (candidate) => selectedIds.has(candidate.stableId),
+  }));
+  const actual = buildStableChunkManifest(baseManifest({
+    ...target,
+    perChunk: 3,
+    maxAccepted: 1,
+    radiusForScale: () => 3,
+  }));
+
+  assert.deepEqual(
+    actual.map(({ stableId }) => stableId),
+    expected.map(({ stableId }) => stableId),
+  );
+});
+
+test('stable scatter rejects invalid accepted limits', () => {
+  assert.throws(
+    () => buildStableChunkManifest(baseManifest({ maxAccepted: 1.5 })),
+    /maxAccepted must be a non-negative integer or Infinity/,
+  );
+  assert.throws(
+    () => buildStableChunkManifest(baseManifest({ maxAccepted: -1 })),
+    /maxAccepted must be a non-negative integer or Infinity/,
+  );
+});
+
 test('candidate metadata cannot replace canonical placement authority', () => {
   assert.throws(
     () => buildStableChunkManifest(baseManifest({
