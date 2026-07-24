@@ -1,4 +1,6 @@
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+const MAX_SOURCE_DIMENSION = 16_384;
+const MAX_SOURCE_PIXELS = 64 * 1024 * 1024;
 const OUTPUT_SIZE = 512;
 const OUTPUT_TYPE = 'image/webp';
 const OUTPUT_QUALITY = 0.88;
@@ -54,6 +56,19 @@ function blobToDataUrl(blob) {
   });
 }
 
+function validateSourceDimensions(width, height) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error('The selected albedo image has invalid dimensions.');
+  }
+  if (
+    width > MAX_SOURCE_DIMENSION
+    || height > MAX_SOURCE_DIMENSION
+    || width * height > MAX_SOURCE_PIXELS
+  ) {
+    throw new Error('The selected albedo image dimensions are too large.');
+  }
+}
+
 export async function prepareWorkshopAlbedo(file) {
   if (typeof File === 'undefined' || !(file instanceof File)) {
     throw new Error('Choose an albedo image first.');
@@ -69,9 +84,7 @@ export async function prepareWorkshopAlbedo(file) {
   try {
     const sourceWidth = decoded.image.naturalWidth ?? decoded.image.width;
     const sourceHeight = decoded.image.naturalHeight ?? decoded.image.height;
-    if (!sourceWidth || !sourceHeight) {
-      throw new Error('The selected albedo image has invalid dimensions.');
-    }
+    validateSourceDimensions(sourceWidth, sourceHeight);
 
     const cropSize = Math.min(sourceWidth, sourceHeight);
     const sourceX = (sourceWidth - cropSize) / 2;
@@ -82,16 +95,19 @@ export async function prepareWorkshopAlbedo(file) {
     let context;
     try {
       context = canvas.getContext('2d', {
-        alpha: true,
+        alpha: false,
         colorSpace: 'srgb',
       });
     } catch {
       context = null;
     }
+    context ??= canvas.getContext('2d', { alpha: false });
     context ??= canvas.getContext('2d');
     if (!context) {
       throw new Error('The browser could not prepare the albedo texture.');
     }
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
     context.drawImage(
