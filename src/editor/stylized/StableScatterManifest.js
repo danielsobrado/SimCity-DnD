@@ -71,10 +71,44 @@ function evaluateCandidate(candidate, candidateEvaluator) {
   const metadata = candidateEvaluator(candidate);
   if (!metadata) return null;
   if (metadata === true) return candidate;
-  if (typeof metadata !== 'object') {
+  if (typeof metadata !== 'object' || Array.isArray(metadata)) {
     throw new Error('candidateEvaluator must return an object, true, or a falsy rejection.');
   }
+  for (const key of Object.keys(metadata)) {
+    if (Object.hasOwn(candidate, key)) {
+      throw new Error(`candidateEvaluator metadata cannot override candidate field: ${key}.`);
+    }
+  }
   return Object.freeze({ ...candidate, ...metadata });
+}
+
+function normalizeAcceptedLimit(maxAccepted) {
+  if (maxAccepted === Number.POSITIVE_INFINITY) return maxAccepted;
+  if (!Number.isInteger(maxAccepted) || maxAccepted < 0) {
+    throw new Error('maxAccepted must be a non-negative integer or Infinity.');
+  }
+  return maxAccepted;
+}
+
+function ownerKey(candidate) {
+  return `${candidate.ownerChunkX}:${candidate.ownerChunkZ}`;
+}
+
+function limitCandidatesByOwner(candidates, acceptedLimit) {
+  if (!Number.isFinite(acceptedLimit)) return candidates;
+  const candidatesByOwner = new Map();
+  for (const candidate of candidates) {
+    const key = ownerKey(candidate);
+    const owned = candidatesByOwner.get(key) ?? [];
+    owned.push(candidate);
+    candidatesByOwner.set(key, owned);
+  }
+
+  const limited = [];
+  for (const owned of candidatesByOwner.values()) {
+    limited.push(...owned.sort(candidateOrder).slice(0, acceptedLimit));
+  }
+  return limited;
 }
 
 function createCandidate({
@@ -133,9 +167,9 @@ function createCandidate({
  * survives only when no overlapping candidate has a lower stable priority.
  * Acceptance is independent of focus-window size and traversal order.
  *
- * candidateEvaluator may reject a candidate or attach immutable domain metadata
- * before spacing is resolved. maxAccepted is applied deterministically after the
- * spacing rule and does not affect neighboring chunks' candidate authority.
+ * candidateEvaluator may reject a candidate or attach immutable domain metadata.
+ * maxAccepted limits each owner chunk's authoritative candidate set before
+ * spacing, so discarded candidates cannot create invisible blockers.
  */
 export function buildStableChunkManifest({
   kind,
@@ -158,6 +192,10 @@ export function buildStableChunkManifest({
   maxAccepted = Number.POSITIVE_INFINITY,
 }) {
   if (!Number.isInteger(prototypeCount) || prototypeCount < 1) return Object.freeze([]);
+  if (candidateEvaluator !== null && typeof candidateEvaluator !== 'function') {
+    throw new Error('candidateEvaluator must be a function or null.');
+  }
+  const acceptedLimit = normalizeAcceptedLimit(maxAccepted);
   const eligibleTileIds = tileIds instanceof Set ? tileIds : new Set(tileIds);
   const candidates = [];
 
@@ -190,23 +228,18 @@ export function buildStableChunkManifest({
     }
   }
 
-  const accepted = candidates.filter((candidate) => {
+  const authoritativeCandidates = limitCandidatesByOwner(candidates, acceptedLimit);
+  const accepted = authoritativeCandidates.filter((candidate) => {
     if (overlaps(candidate.x, candidate.z, blockers, candidate.radius)) return false;
-    for (const other of candidates) {
+    for (const other of authoritativeCandidates) {
       if (other === candidate || !candidateWins(other, candidate)) continue;
       if (candidateOverlaps(candidate, other)) return false;
     }
     return true;
   });
-  const acceptedLimit = Number.isInteger(maxAccepted)
-    ? Math.max(0, maxAccepted)
-    : Number.POSITIVE_INFINITY;
   const owned = accepted.filter((candidate) => (
     candidate.ownerChunkX === chunkX && candidate.ownerChunkZ === chunkZ
   ));
-  const limited = Number.isFinite(acceptedLimit)
-    ? owned.sort(candidateOrder).slice(0, acceptedLimit)
-    : owned;
 
-  return Object.freeze(limited.sort((left, right) => left.index - right.index));
+  return Object.freeze(owned.sort((left, right) => left.index - right.index));
 }
