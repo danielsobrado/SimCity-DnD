@@ -53,3 +53,12 @@ test('castle wall openings can be disabled without changing profile validity', (
     [-solidRecipe.width / 2, solidRecipe.width / 2],
   );
 });
+
+test('short castle walls keep arch crowns inside the authored height', () => {
+  const shortRecipe = { ...recipe, width: 12, height: 2 };
+  const openings = getCastleWallOpenings(shortRecipe);
+  assert.ok(openings.length > 0);
+  assert.ok(openings.every((opening) => (
+    opening.springHeight + opening.radius <= shortRecipe.height
+  )));
+});
