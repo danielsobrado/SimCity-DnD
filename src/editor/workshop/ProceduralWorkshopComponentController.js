@@ -44,9 +44,17 @@ function componentTransformFromGroup(group) {
 
 function combineComponentTransforms(base, delta) {
   return normalizeComponentTransform({
-    position: base.position.map((value, index) => value + delta.position[index]),
+    position: base.position.map((value, index) => THREE.MathUtils.clamp(
+      value + delta.position[index],
+      -COMPONENT_POSITION_LIMIT,
+      COMPONENT_POSITION_LIMIT,
+    )),
     rotation: base.rotation.map((value, index) => normalizeAngle(value + delta.rotation[index])),
-    scale: base.scale.map((value, index) => value * delta.scale[index]),
+    scale: base.scale.map((value, index) => THREE.MathUtils.clamp(
+      value * delta.scale[index],
+      WORKSHOP_COMPONENT_TRANSFORM_LIMITS.scaleMin,
+      WORKSHOP_COMPONENT_TRANSFORM_LIMITS.scaleMax,
+    )),
   });
 }
 
@@ -89,6 +97,7 @@ export class ProceduralWorkshopComponentController {
     orbitControls,
     transformControls,
     onChange,
+    onModeChange,
   }) {
     this.root = root;
     this.previewRoot = previewRoot;
@@ -97,6 +106,7 @@ export class ProceduralWorkshopComponentController {
     this.orbitControls = orbitControls;
     this.transformControls = transformControls;
     this.onChange = onChange;
+    this.onModeChange = onModeChange;
     this.transforms = {};
     this.groups = new Map();
     this.meshes = [];
@@ -291,6 +301,7 @@ export class ProceduralWorkshopComponentController {
       this.transformControls.showY = true;
       this.transformControls.showZ = true;
     }
+    this.onModeChange?.(mode);
     return mode;
   }
 
