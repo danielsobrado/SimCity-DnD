@@ -1,3 +1,5 @@
+import { parseWorkshopImageDimensions } from './ProceduralWorkshopImageMetadata.js';
+
 const MAX_SOURCE_COUNT = 4;
 const MAX_SOURCE_INPUT_COUNT = 8;
 const MAX_SOURCE_DATA_URL_LENGTH = 800_000;
@@ -34,33 +36,22 @@ function requireFinite(value, field, minimum, maximum) {
   return number;
 }
 
-function decodeBase64Prefix(payload, byteCount = 12) {
+function decodeBase64(payload) {
   if (payload.length % 4 === 1) {
     throw new Error('Workshop albedo image data is not valid base64.');
   }
-  const encodedLength = Math.ceil(byteCount / 3) * 4;
-  const encoded = payload.slice(0, encodedLength);
   try {
-    const decoded = atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '='));
+    const decoded = atob(payload);
     return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
   } catch {
     throw new Error('Workshop albedo image data is not valid base64.');
   }
 }
 
-function matchesBytes(bytes, offset, expected) {
-  return expected.every((value, index) => bytes[offset + index] === value);
-}
-
-function validateImageSignature(mimeType, payload) {
-  const bytes = decodeBase64Prefix(payload);
-  const valid = mimeType === 'png'
-    ? matchesBytes(bytes, 0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-    : mimeType === 'jpeg'
-      ? matchesBytes(bytes, 0, [0xff, 0xd8, 0xff])
-      : matchesBytes(bytes, 0, [0x52, 0x49, 0x46, 0x46])
-        && matchesBytes(bytes, 8, [0x57, 0x45, 0x42, 0x50]);
-  if (!valid) {
+function validateImageData(mimeType, payload) {
+  try {
+    parseWorkshopImageDimensions(decodeBase64(payload), `image/${mimeType}`);
+  } catch {
     throw new Error('Workshop albedo image data does not match its declared format.');
   }
 }
@@ -78,7 +69,7 @@ function normalizeSource(id, input) {
   if (dataUrl.length > MAX_SOURCE_DATA_URL_LENGTH) {
     throw new Error('A workshop albedo texture is too large after processing.');
   }
-  validateImageSignature(match[1].toLowerCase(), match[2]);
+  validateImageData(match[1].toLowerCase(), match[2]);
   return Object.freeze({
     name: String(source.name ?? 'Imported texture').trim().slice(0, 80) || 'Imported texture',
     dataUrl,
