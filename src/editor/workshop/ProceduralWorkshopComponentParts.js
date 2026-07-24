@@ -4,6 +4,7 @@ import { disposeModelParts } from '../assets/modelParts.js';
 import { normalizeProceduralRecipe } from './ProceduralAssetStore.js';
 import { getCastleWallOpenings } from './ProceduralCastleWallLayout.js';
 import {
+  createIdentityComponentTransform,
   getComponentTransform,
 } from './ProceduralWorkshopComponentTransforms.js';
 import { createProceduralWorkshopParts } from './ProceduralWorkshopGenerator.js';
@@ -12,6 +13,7 @@ const STRUCTURE_MIN_HEIGHT = 1.4;
 const STRUCTURE_MIN_HORIZONTAL = 0.55;
 const OPENING_EXPANSION = Object.freeze({ x: 0.42, y: 0.36, z: 0.52 });
 const EMPTY_MATRIX = new THREE.Matrix4();
+const ZERO = new THREE.Vector3();
 
 function materialSlot(material) {
   if (material?.userData?.workshopSlot) return material.userData.workshopSlot;
@@ -84,6 +86,7 @@ function createFallbackStructure(entries) {
     id: 'structure-main',
     label: 'Main walls',
     kind: 'structure',
+    parentId: null,
     bounds,
     center: bounds.getCenter(new THREE.Vector3()),
     size: bounds.getSize(new THREE.Vector3()),
@@ -111,6 +114,7 @@ function createStructureAnchors(entries) {
     id: 'structure-main',
     label: 'Main walls',
     kind: 'structure',
+    parentId: null,
     bounds: main.bounds.clone(),
     center: main.center.clone(),
     size: main.size.clone(),
@@ -127,6 +131,7 @@ function createStructureAnchors(entries) {
       id: `structure-${side}${suffix}`,
       label: count === 1 ? sideLabel : `${sideLabel} ${count}`,
       kind: 'structure',
+      parentId: null,
       bounds: entry.bounds.clone(),
       center: entry.center.clone(),
       size: entry.size.clone(),
@@ -134,6 +139,19 @@ function createStructureAnchors(entries) {
     });
   }
   return anchors;
+}
+
+function nearestStructure(entry, structures) {
+  let best = structures[0];
+  let bestDistance = horizontalDistance(entry, best);
+  for (let index = 1; index < structures.length; index += 1) {
+    const distance = horizontalDistance(entry, structures[index]);
+    if (distance < bestDistance) {
+      best = structures[index];
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 function expandedBounds(bounds, expansion = OPENING_EXPANSION) {
@@ -156,7 +174,7 @@ function openingCandidate(entry) {
   return null;
 }
 
-function inferredOpeningAnchors(entries) {
+function inferredOpeningAnchors(entries, structures) {
   const candidates = entries
     .map((entry) => ({ entry, kind: openingCandidate(entry) }))
     .filter(({ kind }) => Boolean(kind))
@@ -178,6 +196,7 @@ function inferredOpeningAnchors(entries) {
       id: `${kind}-${count}`,
       label,
       kind,
+      parentId: nearestStructure(entry, structures).id,
       bounds: expandedBounds(entry.bounds),
       center: entry.center.clone(),
       size: entry.size.clone(),
@@ -207,6 +226,7 @@ function castleOpeningAnchors(recipe) {
       id: `arch-${index + 1}`,
       label: `Arch ${index + 1}`,
       kind: 'opening',
+      parentId: 'structure-main',
       bounds,
       center: bounds.getCenter(new THREE.Vector3()),
       size: bounds.getSize(new THREE.Vector3()),
@@ -215,9 +235,9 @@ function castleOpeningAnchors(recipe) {
   });
 }
 
-function createOpeningAnchors(entries, recipe) {
+function createOpeningAnchors(entries, recipe, structures) {
   const castle = castleOpeningAnchors(recipe);
-  return castle.length > 0 ? castle : inferredOpeningAnchors(entries);
+  return castle.length > 0 ? castle : inferredOpeningAnchors(entries, structures);
 }
 
 function openingScore(entry, opening) {
@@ -244,34 +264,37 @@ function matchingOpening(entry, openings) {
   return best;
 }
 
-function nearestStructure(entry, structures) {
-  let best = structures[0];
-  let bestDistance = horizontalDistance(entry, best);
-  for (let index = 1; index < structures.length; index += 1) {
-    const distance = horizontalDistance(entry, structures[index]);
-    if (distance < bestDistance) {
-      best = structures[index];
-      bestDistance = distance;
-    }
-  }
-  return best;
-}
-
 function ensureComponent(components, definition) {
   if (!components.has(definition.id)) {
     components.set(definition.id, {
       id: definition.id,
       label: definition.label,
       kind: definition.kind,
+      parentId: definition.parentId ?? null,
       entries: [],
     });
   }
   return components.get(definition.id);
 }
 
+function childDefinition(structure, suffix, label, kind) {
+  return {
+    id: `${structure.id}-${suffix}`,
+    label: structure.id === 'structure-main' ? label : `${structure.label} ${label.toLowerCase()}`,
+    kind,
+    parentId: structure.id,
+  };
+}
+
+function isTopologyDrivenOpening(recipe, component) {
+  return recipe.archetype === 'wall'
+    && recipe.shape !== 'classic'
+    && component.kind === 'opening';
+}
+
 function classifyComponents(entries, recipe) {
   const structures = createStructureAnchors(entries);
-  const openings = createOpeningAnchors(entries, recipe);
+  const openings = createOpeningAnchors(entries, recipe, structures);
   const components = new Map();
   structures.forEach((structure) => ensureComponent(components, structure));
   openings.forEach((opening) => ensureComponent(components, opening));
@@ -284,40 +307,19 @@ function classifyComponents(entries, recipe) {
       continue;
     }
 
-    if (entry.slot === 'foliage') {
-      const definition = { id: 'foliage', label: 'Ivy and plants', kind: 'foliage' };
-      entry.componentId = definition.id;
-      ensureComponent(components, definition).entries.push(entry);
-      continue;
-    }
-
     const structure = nearestStructure(entry, structures);
     let definition = structure;
-    if (entry.slot === 'roof') {
-      definition = {
-        id: `${structure.id}-roof`,
-        label: structures.length === 1 ? 'Roof' : `${structure.label} roof`,
-        kind: 'roof',
-      };
+    if (entry.slot === 'foliage') {
+      definition = childDefinition(structure, 'foliage', 'Ivy and plants', 'foliage');
+    } else if (entry.slot === 'roof') {
+      definition = childDefinition(structure, 'roof', 'Roof', 'roof');
     } else if (entry.slot === 'wood' || entry.slot === 'recess') {
-      definition = {
-        id: `${structure.id}-woodwork`,
-        label: structures.length === 1 ? 'Woodwork' : `${structure.label} woodwork`,
-        kind: 'woodwork',
-      };
+      definition = childDefinition(structure, 'woodwork', 'Woodwork', 'woodwork');
     } else if (entry.slot === 'metal') {
       const high = entry.center.y >= structure.bounds.max.y - 0.2;
       definition = high
-        ? {
-          id: `${structure.id}-roof`,
-          label: structures.length === 1 ? 'Roof' : `${structure.label} roof`,
-          kind: 'roof',
-        }
-        : {
-          id: `${structure.id}-metalwork`,
-          label: structures.length === 1 ? 'Metalwork' : `${structure.label} metalwork`,
-          kind: 'metalwork',
-        };
+        ? childDefinition(structure, 'roof', 'Roof', 'roof')
+        : childDefinition(structure, 'metalwork', 'Metalwork', 'metalwork');
     }
     entry.componentId = definition.id;
     ensureComponent(components, definition).entries.push(entry);
@@ -337,25 +339,17 @@ function classifyComponents(entries, recipe) {
       floorPivot ? component.bounds.min.y : component.center.y,
       component.center.z,
     );
-    component.transform = getComponentTransform(recipe.componentTransforms, componentId);
+    component.storedTransform = getComponentTransform(recipe.componentTransforms, componentId);
+    component.transformPolicy = isTopologyDrivenOpening(recipe, component) ? 'opening2d' : 'free';
+    component.transform = component.transformPolicy === 'opening2d'
+      ? createIdentityComponentTransform()
+      : component.storedTransform;
+    if (component.parentId && !components.has(component.parentId)) {
+      throw new Error(`Workshop component ${componentId} has a missing parent.`);
+    }
     Object.freeze(component);
   }
   return components;
-}
-
-function composeComponentMatrix(component) {
-  const transform = component.transform;
-  const position = component.pivot.clone().add(new THREE.Vector3(...transform.position));
-  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(...transform.rotation));
-  return new THREE.Matrix4().compose(
-    position,
-    quaternion,
-    new THREE.Vector3(...transform.scale),
-  ).multiply(new THREE.Matrix4().makeTranslation(
-    -component.pivot.x,
-    -component.pivot.y,
-    -component.pivot.z,
-  ));
 }
 
 function componentMetadata(component) {
@@ -363,9 +357,57 @@ function componentMetadata(component) {
     id: component.id,
     label: component.label,
     kind: component.kind,
+    parentId: component.parentId,
     pivot: Object.freeze(component.pivot.toArray()),
     transform: component.transform,
+    storedTransform: component.storedTransform,
+    transformPolicy: component.transformPolicy,
   });
+}
+
+function componentLocalMatrix(component, components) {
+  const parentPivot = component.parentId
+    ? components.get(component.parentId).pivot
+    : ZERO;
+  const transform = component.transform;
+  const position = component.pivot
+    .clone()
+    .sub(parentPivot)
+    .add(new THREE.Vector3(...transform.position));
+  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(...transform.rotation));
+  return new THREE.Matrix4().compose(
+    position,
+    quaternion,
+    new THREE.Vector3(...transform.scale),
+  );
+}
+
+function componentWorldMatrix(component, components, cache, visiting = new Set()) {
+  const cached = cache.get(component.id);
+  if (cached) return cached;
+  if (visiting.has(component.id)) {
+    throw new Error(`Workshop component hierarchy contains a cycle at ${component.id}.`);
+  }
+  visiting.add(component.id);
+  const local = componentLocalMatrix(component, components);
+  const world = component.parentId
+    ? componentWorldMatrix(components.get(component.parentId), components, cache, visiting)
+      .clone()
+      .multiply(local)
+    : local;
+  visiting.delete(component.id);
+  cache.set(component.id, world);
+  return world;
+}
+
+function componentGeometryMatrix(component, components, cache) {
+  return componentWorldMatrix(component, components, cache)
+    .clone()
+    .multiply(new THREE.Matrix4().makeTranslation(
+      -component.pivot.x,
+      -component.pivot.y,
+      -component.pivot.z,
+    ));
 }
 
 function mergedGeometry(geometries, errorMessage) {
@@ -425,9 +467,10 @@ function buildPreviewParts(entries, components, remesh) {
 
 function buildRuntimeParts(entries, components, remesh) {
   const groups = new Map();
+  const worldMatrices = new Map();
   for (const entry of entries) {
     const component = components.get(entry.componentId);
-    entry.geometry.applyMatrix4(composeComponentMatrix(component));
+    entry.geometry.applyMatrix4(componentGeometryMatrix(component, components, worldMatrices));
     const group = groups.get(entry.slot) ?? {
       material: entry.material,
       geometries: [],
@@ -477,7 +520,6 @@ export function createProceduralWorkshopComponentParts(input, {
   const rawParts = createProceduralWorkshopParts({
     ...recipe,
     remesh: false,
-    componentTransforms: {},
   });
   try {
     const entries = rawParts.map(geometryEntry);

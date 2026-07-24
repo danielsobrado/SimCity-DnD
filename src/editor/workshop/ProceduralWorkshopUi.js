@@ -13,6 +13,10 @@ function randomSeed() {
   return values[0] & 0x7fffffff;
 }
 
+function actionForTransformMode(mode) {
+  return mode === 'rotate' ? 'rotate' : mode === 'scale' ? 'scale' : 'move';
+}
+
 export class ProceduralWorkshopUi {
   constructor({ root, manager, onBaked }) {
     this.root = root;
@@ -29,6 +33,9 @@ export class ProceduralWorkshopUi {
     this.surfaceEditor = null;
     this.animationFrame = 0;
     this.previewTimer = 0;
+    this.onWindowKeyDown = (event) => {
+      if (event.key === 'Escape' && !this.overlay.hidden) this.close();
+    };
 
     root.insertAdjacentHTML('beforeend', `
       <div class="workshop-overlay" data-role="workshop-overlay" hidden>
@@ -157,6 +164,7 @@ export class ProceduralWorkshopUi {
                 <button type="button" data-workshop-action="rotate">Rotate</button>
                 <button type="button" data-workshop-action="scale">Scale</button>
                 <button type="button" data-workshop-action="reset-component">Reset part</button>
+                <button type="button" data-workshop-action="reset-all-components">Reset all</button>
                 <button type="button" data-workshop-action="center">Center scene</button>
                 <button type="button" data-workshop-action="frame">Frame</button>
               </div>
@@ -194,6 +202,7 @@ export class ProceduralWorkshopUi {
         this.setTransformMode(action);
       }
       if (action === 'reset-component') this.componentController?.resetSelected();
+      if (action === 'reset-all-components') this.componentController?.resetAll();
       if (action === 'center') this.centerPreview();
       if (action === 'frame') this.framePreview();
       if (action === 'reroll') {
@@ -208,16 +217,17 @@ export class ProceduralWorkshopUi {
       event.preventDefault();
       this.bake();
     });
-    this.form.addEventListener('change', () => this.schedulePreview(40));
+    this.form.addEventListener('change', (event) => {
+      if (event.target.name === 'archetype') this.componentController?.resetAll();
+      this.schedulePreview(40);
+    });
     this.form.addEventListener('input', (event) => {
       if (event.target.matches('input[type="range"]')) {
         this.syncRangeOutputs();
         this.schedulePreview(90);
       }
     });
-    window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && !this.overlay.hidden) this.close();
-    });
+    window.addEventListener('keydown', this.onWindowKeyDown);
     this.syncRangeOutputs();
   }
 
@@ -241,15 +251,20 @@ export class ProceduralWorkshopUi {
     }, delay);
   }
 
-  setTransformMode(mode) {
-    if (!this.transformControls) return;
-    const transformMode = mode === 'rotate' ? 'rotate' : mode === 'scale' ? 'scale' : 'translate';
-    this.componentController?.setMode(transformMode);
+  syncTransformModeButtons(mode) {
+    const activeAction = actionForTransformMode(mode);
     for (const button of this.overlay.querySelectorAll(
       '[data-workshop-action="move"], [data-workshop-action="rotate"], [data-workshop-action="scale"]',
     )) {
-      button.classList.toggle('is-active', button.dataset.workshopAction === mode);
+      button.classList.toggle('is-active', button.dataset.workshopAction === activeAction);
     }
+  }
+
+  setTransformMode(action) {
+    if (!this.transformControls) return;
+    const requestedMode = action === 'rotate' ? 'rotate' : action === 'scale' ? 'scale' : 'translate';
+    const activeMode = this.componentController?.setMode(requestedMode) ?? requestedMode;
+    this.syncTransformModeButtons(activeMode);
   }
 
   centerPreview() {
@@ -359,9 +374,15 @@ export class ProceduralWorkshopUi {
       camera: this.camera,
       orbitControls: this.controls,
       transformControls: this.transformControls,
+      onModeChange: (mode) => this.syncTransformModeButtons(mode),
       onChange: (component) => {
-        this.status.textContent = `${component.label} edit stored in the object recipe.`;
+        this.status.textContent = component
+          ? `${component.label} edit stored in the object recipe.`
+          : 'All component edits were reset.';
         this.status.classList.remove('is-error');
+        if (!component || component.transformPolicy === 'opening2d') {
+          this.schedulePreview(0);
+        }
       },
     });
 
@@ -380,11 +401,22 @@ export class ProceduralWorkshopUi {
 
   generatePreview() {
     try {
+      if (!this.componentController) {
+        throw new Error('The workshop component editor is not ready.');
+      }
       const { recipe } = this.readInput();
       const nextParts = this.manager.createPreviewParts(recipe);
       this.clearPreview();
       this.previewParts = nextParts;
-      this.componentController.replaceParts(nextParts);
+      try {
+        this.componentController.replaceParts(nextParts);
+      } catch (error) {
+        this.componentController.clear();
+        disposeModelParts(nextParts);
+        this.previewParts = [];
+        throw error;
+      }
+      this.syncTransformModeButtons(this.componentController.mode);
       this.framePreview();
       const stats = nextParts.stats;
       this.status.textContent = `${stats.components} editable components · ${stats.stones} stones · ${stats.features} semantic details · ${stats.sourceVertices.toLocaleString()} source vertices · ${stats.drawParts} preview parts.`;
@@ -396,7 +428,7 @@ export class ProceduralWorkshopUi {
   }
 
   framePreview() {
-    if (!this.camera || !this.controls || this.previewRoot.children.length === 0) return;
+    if (!this.camera || !this.controls || this.componentController?.groups.size === 0) return;
     const bounds = new THREE.Box3().setFromObject(this.previewRoot);
     const center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3());
@@ -423,8 +455,8 @@ export class ProceduralWorkshopUi {
   }
 
   clearPreview() {
-    this.componentController?.clear();
-    this.previewRoot.clear();
+    if (this.componentController) this.componentController.clear();
+    else this.previewRoot.clear();
     disposeModelParts(this.previewParts);
     this.previewParts = [];
   }
@@ -438,11 +470,12 @@ export class ProceduralWorkshopUi {
 
   dispose() {
     this.close();
+    window.removeEventListener('keydown', this.onWindowKeyDown);
     this.resizeObserver?.disconnect();
+    this.clearPreview();
     this.componentController?.dispose();
     this.transformControls?.dispose();
     this.controls?.dispose();
-    this.clearPreview();
     this.stage?.dispose();
     this.surfaceEditor?.dispose();
     this.renderer?.dispose();

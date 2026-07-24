@@ -163,6 +163,11 @@ function createImportedAlbedoResolver(recipe) {
   };
 }
 
+function tagWorkshopMaterial(material, slot) {
+  material.userData.workshopSlot = slot;
+  return material;
+}
+
 export function applyStoneColor(geometry, recipe, stableIndex, heightRatio = 0.5) {
   const palette = STONE_PALETTES[recipe.style];
   const tint = (mixSeed(recipe.seed, stableIndex) & 255) / 255;
@@ -195,7 +200,7 @@ export function createWorkshopMaterials(recipe) {
   const stoneBump = surfaceBumpTexture(recipe.seed, 1);
   const roofBump = roofBumpTexture(recipe.seed);
   const plasterBump = surfaceBumpTexture(recipe.seed + 913, 0.72);
-  const stone = new THREE.MeshStandardMaterial({
+  const stone = tagWorkshopMaterial(new THREE.MeshStandardMaterial({
     color: stoneAlbedo?.tint ?? (recipe.albedo ? '#ffffff' : STONE_PALETTES[recipe.style].color),
     map: stoneAlbedo?.texture ?? (recipe.albedo ? stoneTexture(recipe) : null),
     bumpMap: stoneBump,
@@ -203,18 +208,18 @@ export function createWorkshopMaterials(recipe) {
     vertexColors: !stoneAlbedo,
     roughness: 0.88,
     metalness: 0,
-  });
-  const roof = new THREE.MeshStandardMaterial({
+  }), 'stone');
+  const roof = tagWorkshopMaterial(new THREE.MeshStandardMaterial({
     color: roofAlbedo?.tint ?? '#ffffff',
     map: roofAlbedo?.texture ?? roofTexture(recipe.topStyle, recipe.seed),
     bumpMap: roofBump,
     bumpScale: 0.095,
     roughness: 0.8,
     metalness: 0,
-  });
+  }), 'roof');
   return Object.freeze({
     stone,
-    mortar: new THREE.MeshStandardMaterial({
+    mortar: tagWorkshopMaterial(new THREE.MeshStandardMaterial({
       color: wallAlbedo?.tint ?? (recipe.finish === 'masonry'
         ? new THREE.Color(
           STONE_PALETTES[recipe.style].base[0] / 255 * 0.66,
@@ -227,33 +232,33 @@ export function createWorkshopMaterials(recipe) {
       bumpScale: recipe.finish === 'masonry' ? 0.025 : 0.075,
       roughness: 0.96,
       metalness: 0,
-    }),
-    wood: new THREE.MeshStandardMaterial({
+    }), 'mortar'),
+    wood: tagWorkshopMaterial(new THREE.MeshStandardMaterial({
       color: woodAlbedo?.tint ?? '#ffffff',
       map: woodAlbedo?.texture ?? woodTexture(recipe.seed),
       bumpMap: surfaceBumpTexture(recipe.seed + 317, 0.5),
       bumpScale: 0.035,
       roughness: 0.82,
       metalness: 0,
-    }),
+    }), 'wood'),
     roof,
-    metal: new THREE.MeshStandardMaterial({
+    metal: tagWorkshopMaterial(new THREE.MeshStandardMaterial({
       color: '#b38a35',
       roughness: 0.48,
       metalness: 0.55,
       side: THREE.DoubleSide,
-    }),
-    foliage: new THREE.MeshStandardMaterial({
+    }), 'metal'),
+    foliage: tagWorkshopMaterial(new THREE.MeshStandardMaterial({
       color: '#4c8a37',
       roughness: 0.9,
       metalness: 0,
-    }),
-    recess: new THREE.MeshStandardMaterial({
+    }), 'foliage'),
+    recess: tagWorkshopMaterial(new THREE.MeshStandardMaterial({
       color: '#233b43',
       roughness: 0.62,
       metalness: 0.05,
       emissive: '#071216',
       emissiveIntensity: 0.18,
-    }),
+    }), 'recess'),
   });
 }

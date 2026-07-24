@@ -30,9 +30,9 @@ function recipe(overrides = {}) {
   };
 }
 
-function boundsForParts(parts) {
+function boundsForParts(parts, predicate = () => true) {
   const root = new THREE.Group();
-  for (const part of parts) {
+  for (const part of parts.filter(predicate)) {
     const mesh = new THREE.Mesh(part.geometry, part.material);
     part.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
     root.add(mesh);
@@ -40,7 +40,11 @@ function boundsForParts(parts) {
   return new THREE.Box3().setFromObject(root);
 }
 
-test('workshop preview exposes walls, roofs, doors, and windows as editable components', () => {
+function slotBounds(parts, slot) {
+  return boundsForParts(parts, (part) => part.material.userData.workshopSlot === slot);
+}
+
+test('workshop preview exposes semantic components with structure ownership', () => {
   const parts = createProceduralWorkshopComponentParts(recipe(), { preserveComponents: true });
   try {
     const components = new Map(parts.components.map((component) => [component.id, component]));
@@ -50,8 +54,51 @@ test('workshop preview exposes walls, roofs, doors, and windows as editable comp
     assert.ok([...components.values()].some((component) => component.kind === 'window'));
     assert.ok(parts.every((part) => part.component?.id));
     assert.equal(parts.stats.components, components.size);
+
+    for (const component of components.values()) {
+      if (component.kind === 'structure') {
+        assert.equal(component.parentId, null);
+      } else {
+        assert.equal(components.get(component.parentId)?.kind, 'structure');
+      }
+    }
   } finally {
     disposeModelParts(parts);
+  }
+});
+
+test('moving or scaling a wall structure carries its roof and attached details', () => {
+  const base = createProceduralWorkshopComponentParts(recipe({
+    towerSide: 'none',
+    ivy: false,
+  }));
+  const edited = createProceduralWorkshopComponentParts(recipe({
+    towerSide: 'none',
+    ivy: false,
+    componentTransforms: {
+      'structure-main': {
+        position: [1.25, 0, -0.75],
+        rotation: [0, Math.PI / 10, 0],
+        scale: [1.5, 1.2, 1.35],
+      },
+    },
+  }));
+  try {
+    const baseRoof = slotBounds(base, 'roof');
+    const editedRoof = slotBounds(edited, 'roof');
+    const baseRoofSize = baseRoof.getSize(new THREE.Vector3());
+    const editedRoofSize = editedRoof.getSize(new THREE.Vector3());
+    const baseRoofCenter = baseRoof.getCenter(new THREE.Vector3());
+    const editedRoofCenter = editedRoof.getCenter(new THREE.Vector3());
+
+    assert.ok(editedRoofSize.x > baseRoofSize.x);
+    assert.ok(editedRoofSize.z > baseRoofSize.z);
+    assert.ok(editedRoofCenter.distanceTo(baseRoofCenter) > 0.5);
+    assert.ok(edited.every((part) => !part.component));
+    assert.ok(edited.length <= 7);
+  } finally {
+    disposeModelParts(base);
+    disposeModelParts(edited);
   }
 });
 
@@ -92,9 +139,30 @@ test('preview component pivots preserve stored door edits across regeneration', 
   try {
     const door = parts.components.find((component) => component.id === 'door-1');
     assert.ok(door);
+    assert.equal(door.parentId, 'structure-main');
     assert.deepEqual(door.transform.position, [0.75, 0.2, 0]);
     assert.deepEqual(door.transform.scale, [1.25, 1.4, 1]);
     assert.equal(door.pivot.length, 3);
+  } finally {
+    disposeModelParts(parts);
+  }
+});
+
+test('castle wall arches are editable children of the wall structure', () => {
+  const parts = createProceduralWorkshopComponentParts(recipe({
+    archetype: 'wall',
+    shape: 'stepped',
+    towerSide: 'none',
+    topStyle: 'battlements',
+    width: 10,
+    depth: 2,
+    height: 5,
+    ivy: false,
+  }), { preserveComponents: true });
+  try {
+    const arches = parts.components.filter((component) => component.kind === 'opening');
+    assert.ok(arches.length >= 2);
+    assert.ok(arches.every((component) => component.parentId === 'structure-main'));
   } finally {
     disposeModelParts(parts);
   }
