@@ -188,7 +188,7 @@ export function createWorkshopMaterials(recipe) {
   const wallAlbedo = importedAlbedo('walls');
   const explicitStoneAlbedo = importedAlbedo('stone');
   const wallsAreStone = recipe.archetype !== 'manor' || recipe.finish === 'masonry';
-  const stoneAlbedo = explicitStoneAlbedo ?? (wallsAreStone ? wallAlbedo : null);
+  const stoneAlbedo = explicitStoneAlbedo ?? (wallsAreStone ? importedAlbedo('walls') : null);
   const roofAlbedo = importedAlbedo('roof');
   const woodAlbedo = importedAlbedo('wood');
 
