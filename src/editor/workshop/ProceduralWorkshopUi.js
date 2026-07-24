@@ -139,7 +139,7 @@ export class ProceduralWorkshopUi {
               </label>
               <label class="workshop-check">
                 <input name="albedo" type="checkbox" checked />
-                Generate procedural albedo where no image is assigned
+                Generate procedural stone albedo when no wall or trim image is assigned
               </label>
               <p class="workshop-status" data-role="workshop-status">Ready to generate.</p>
               <div class="workshop-actions">
