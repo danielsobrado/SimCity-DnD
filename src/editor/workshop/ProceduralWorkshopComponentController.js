@@ -9,6 +9,7 @@ import {
 
 const POINTER_SELECT_DISTANCE = 5;
 const COMPONENT_POSITION_LIMIT = WORKSHOP_COMPONENT_TRANSFORM_LIMITS.position;
+const SELECTION_COLOR = 0xf0d675;
 const COMPONENT_KIND_ORDER = Object.freeze({
   structure: 0,
   roof: 1,
@@ -25,12 +26,12 @@ function normalizeAngle(value) {
 }
 
 function componentTransformFromGroup(group) {
-  const pivot = group.userData.workshopPivot;
+  const basePosition = group.userData.workshopBasePosition;
   return normalizeComponentTransform({
     position: [
-      group.position.x - pivot.x,
-      group.position.y - pivot.y,
-      group.position.z - pivot.z,
+      group.position.x - basePosition.x,
+      group.position.y - basePosition.y,
+      group.position.z - basePosition.z,
     ],
     rotation: [
       normalizeAngle(group.rotation.x),
@@ -42,11 +43,11 @@ function componentTransformFromGroup(group) {
 }
 
 function applyTransform(group, transform) {
-  const pivot = group.userData.workshopPivot;
+  const basePosition = group.userData.workshopBasePosition;
   group.position.set(
-    pivot.x + transform.position[0],
-    pivot.y + transform.position[1],
-    pivot.z + transform.position[2],
+    basePosition.x + transform.position[0],
+    basePosition.y + transform.position[1],
+    basePosition.z + transform.position[2],
   );
   group.rotation.set(...transform.rotation);
   group.scale.set(...transform.scale);
@@ -57,6 +58,14 @@ function componentSort(left, right) {
   const leftOrder = COMPONENT_KIND_ORDER[left.kind] ?? 99;
   const rightOrder = COMPONENT_KIND_ORDER[right.kind] ?? 99;
   return leftOrder - rightOrder || left.label.localeCompare(right.label) || left.id.localeCompare(right.id);
+}
+
+function createSelectionHelper() {
+  const helper = new THREE.Box3Helper(new THREE.Box3(), SELECTION_COLOR);
+  helper.name = 'workshop-component-selection';
+  helper.visible = false;
+  helper.raycast = () => {};
+  return helper;
 }
 
 export class ProceduralWorkshopComponentController {
@@ -78,12 +87,15 @@ export class ProceduralWorkshopComponentController {
     this.onChange = onChange;
     this.transforms = {};
     this.groups = new Map();
+    this.meshes = [];
     this.selectedComponentId = null;
     this.mode = 'translate';
     this.dragging = false;
     this.pointerStart = null;
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
+    this.selectionHelper = createSelectionHelper();
+    previewRoot.add(this.selectionHelper);
 
     root.innerHTML = `
       <label class="workshop-component-select">
@@ -105,7 +117,10 @@ export class ProceduralWorkshopComponentController {
       this.orbitControls.enabled = !value;
       if (!value) this.commitSelectedTransform();
     };
-    this.onObjectChange = () => this.constrainSelectedTransform();
+    this.onObjectChange = () => {
+      this.constrainSelectedTransform();
+      this.updateSelectionHelper();
+    };
 
     this.select.addEventListener('change', this.onSelectChange);
     renderer.domElement.addEventListener('pointerdown', this.onPointerDown);
@@ -134,13 +149,38 @@ export class ProceduralWorkshopComponentController {
       -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const meshes = [];
-    for (const group of this.groups.values()) {
-      meshes.push(...group.children);
-    }
-    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    const hit = this.raycaster.intersectObjects(this.meshes, false)[0];
     const componentId = hit?.object?.userData?.workshopComponentId;
     if (componentId) this.selectComponent(componentId);
+  }
+
+  pruneTransforms(definitions) {
+    for (const componentId of Object.keys(this.transforms)) {
+      if (!definitions.has(componentId)) delete this.transforms[componentId];
+    }
+  }
+
+  createGroups(definitions) {
+    for (const component of definitions.values()) {
+      const group = new THREE.Group();
+      group.name = `workshop-component-${component.id}`;
+      group.userData.workshopComponent = component;
+      group.userData.workshopPivot = new THREE.Vector3(...component.pivot);
+      this.groups.set(component.id, group);
+    }
+
+    for (const component of definitions.values()) {
+      const group = this.groups.get(component.id);
+      const parent = component.parentId ? this.groups.get(component.parentId) : null;
+      const parentPivot = parent?.userData.workshopPivot ?? new THREE.Vector3();
+      group.userData.workshopBasePosition = group.userData.workshopPivot.clone().sub(parentPivot);
+      if (parent) parent.add(group);
+      else this.previewRoot.add(group);
+
+      const transform = this.transforms[component.id] ?? component.transform;
+      if (!isIdentityComponentTransform(transform)) this.transforms[component.id] = transform;
+      applyTransform(group, transform);
+    }
   }
 
   replaceParts(parts) {
@@ -151,31 +191,25 @@ export class ProceduralWorkshopComponentController {
         id: 'structure-main',
         label: 'Main structure',
         kind: 'structure',
+        parentId: null,
         pivot: Object.freeze([0, 0, 0]),
         transform: createIdentityComponentTransform(),
       });
       definitions.set(component.id, component);
-      let group = this.groups.get(component.id);
-      if (!group) {
-        group = new THREE.Group();
-        group.name = `workshop-component-${component.id}`;
-        group.userData.workshopComponent = component;
-        group.userData.workshopPivot = new THREE.Vector3(...component.pivot);
-        const transform = this.transforms[component.id] ?? component.transform;
-        if (!isIdentityComponentTransform(transform)) {
-          this.transforms[component.id] = transform;
-        }
-        applyTransform(group, transform);
-        this.groups.set(component.id, group);
-        this.previewRoot.add(group);
-      }
+    }
+    this.pruneTransforms(definitions);
+    this.createGroups(definitions);
 
+    for (const part of parts) {
+      const componentId = part.component?.id ?? 'structure-main';
+      const group = this.groups.get(componentId);
       const mesh = new THREE.Mesh(part.geometry, part.material);
       part.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.userData.workshopComponentId = component.id;
+      mesh.userData.workshopComponentId = componentId;
       group.add(mesh);
+      this.meshes.push(mesh);
     }
 
     const ordered = [...definitions.values()].sort(componentSort);
@@ -191,6 +225,17 @@ export class ProceduralWorkshopComponentController {
     if (preferred) this.selectComponent(preferred);
   }
 
+  updateSelectionHelper() {
+    const group = this.groups.get(this.selectedComponentId);
+    if (!group) {
+      this.selectionHelper.visible = false;
+      return;
+    }
+    group.updateWorldMatrix(true, true);
+    this.selectionHelper.box.setFromObject(group);
+    this.selectionHelper.visible = !this.selectionHelper.box.isEmpty();
+  }
+
   selectComponent(componentId) {
     const group = this.groups.get(componentId);
     if (!group) return;
@@ -198,6 +243,7 @@ export class ProceduralWorkshopComponentController {
     this.select.value = componentId;
     this.transformControls.attach(group);
     this.setMode(this.mode);
+    this.updateSelectionHelper();
     const component = group.userData.workshopComponent;
     this.hint.textContent = `${component.label} selected · move, rotate, or scale with the gizmo.`;
   }
@@ -215,21 +261,21 @@ export class ProceduralWorkshopComponentController {
   constrainSelectedTransform() {
     const group = this.groups.get(this.selectedComponentId);
     if (!group || this.transformControls.object !== group) return;
-    const pivot = group.userData.workshopPivot;
+    const basePosition = group.userData.workshopBasePosition;
     group.position.x = THREE.MathUtils.clamp(
       group.position.x,
-      pivot.x - COMPONENT_POSITION_LIMIT,
-      pivot.x + COMPONENT_POSITION_LIMIT,
+      basePosition.x - COMPONENT_POSITION_LIMIT,
+      basePosition.x + COMPONENT_POSITION_LIMIT,
     );
     group.position.y = THREE.MathUtils.clamp(
       group.position.y,
-      pivot.y - COMPONENT_POSITION_LIMIT,
-      pivot.y + COMPONENT_POSITION_LIMIT,
+      basePosition.y - COMPONENT_POSITION_LIMIT,
+      basePosition.y + COMPONENT_POSITION_LIMIT,
     );
     group.position.z = THREE.MathUtils.clamp(
       group.position.z,
-      pivot.z - COMPONENT_POSITION_LIMIT,
-      pivot.z + COMPONENT_POSITION_LIMIT,
+      basePosition.z - COMPONENT_POSITION_LIMIT,
+      basePosition.z + COMPONENT_POSITION_LIMIT,
     );
     group.scale.x = THREE.MathUtils.clamp(
       Math.abs(group.scale.x),
@@ -258,6 +304,7 @@ export class ProceduralWorkshopComponentController {
     } else {
       this.transforms[this.selectedComponentId] = transform;
     }
+    this.updateSelectionHelper();
     this.onChange?.(group.userData.workshopComponent, transform);
   }
 
@@ -267,7 +314,16 @@ export class ProceduralWorkshopComponentController {
     delete this.transforms[this.selectedComponentId];
     const identity = createIdentityComponentTransform();
     applyTransform(group, identity);
+    this.updateSelectionHelper();
     this.onChange?.(group.userData.workshopComponent, identity);
+  }
+
+  resetAll() {
+    this.transforms = {};
+    const identity = createIdentityComponentTransform();
+    for (const group of this.groups.values()) applyTransform(group, identity);
+    this.updateSelectionHelper();
+    this.onChange?.(null, identity);
   }
 
   toDocument() {
@@ -275,18 +331,22 @@ export class ProceduralWorkshopComponentController {
   }
 
   clear() {
-    if (this.transformControls.object && this.groups.has(this.transformControls.object.userData?.workshopComponent?.id)) {
-      this.transformControls.detach();
-    }
+    const attachedId = this.transformControls.object?.userData?.workshopComponent?.id;
+    if (attachedId && this.groups.has(attachedId)) this.transformControls.detach();
     for (const group of this.groups.values()) {
-      this.previewRoot.remove(group);
+      if (!group.userData.workshopComponent.parentId) this.previewRoot.remove(group);
     }
     this.groups.clear();
+    this.meshes = [];
     this.select.replaceChildren();
+    this.selectionHelper.visible = false;
   }
 
   dispose() {
     this.clear();
+    this.previewRoot.remove(this.selectionHelper);
+    this.selectionHelper.geometry.dispose();
+    this.selectionHelper.material.dispose();
     this.select.removeEventListener('change', this.onSelectChange);
     this.renderer.domElement.removeEventListener('pointerdown', this.onPointerDown);
     this.renderer.domElement.removeEventListener('pointerup', this.onPointerUp);
