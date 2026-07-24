@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { QUARTER_TURN_RADIANS } from './constants.js';
+import { disposeModelParts } from './assets/modelParts.js';
 import { createObjectModelParts } from './ObjectModelLibrary.js';
 import { evaluateObjectSurface } from './TerrainPlacement.js';
 
@@ -63,25 +64,58 @@ export class ObjectView {
 
     for (const definition of objectCatalog) {
       const parts = createObjectModelParts(definition, tileMap.tileSize);
-      const hasFoundation = definition.foundation.mode === 'terrace';
-      this.renderers.set(definition.key, {
-        definition,
-        parts,
-        meshes: [],
-        capacity: 0,
-        foundationGeometry: hasFoundation ? new THREE.BoxGeometry(1, 1, 1) : null,
-        foundationMaterial: hasFoundation
-          ? new THREE.MeshStandardMaterial({
-            color: definition.foundation.color,
-            roughness: 0.96,
-            metalness: 0,
-          })
-          : null,
-        foundationMesh: null,
-        foundationCapacity: 0,
-      });
+      this.definitionByKey.set(definition.key, definition);
+      this.renderers.set(definition.key, this.createRendererRecord(definition, parts));
     }
 
+    this.refreshAll();
+  }
+
+  createRendererRecord(definition, parts) {
+    const hasFoundation = definition.foundation.mode === 'terrace';
+    return {
+      definition,
+      parts,
+      meshes: [],
+      capacity: 0,
+      foundationGeometry: hasFoundation ? new THREE.BoxGeometry(1, 1, 1) : null,
+      foundationMaterial: hasFoundation
+        ? new THREE.MeshStandardMaterial({
+          color: definition.foundation.color,
+          roughness: 0.96,
+          metalness: 0,
+        })
+        : null,
+      foundationMesh: null,
+      foundationCapacity: 0,
+    };
+  }
+
+  registerDefinition(definition, parts) {
+    if (!definition || !Array.isArray(parts) || parts.length === 0) {
+      throw new Error('Cannot register an empty procedural object renderer.');
+    }
+    const previous = this.renderers.get(definition.key);
+    if (previous) {
+      for (const mesh of previous.meshes) {
+        this.root.remove(mesh);
+        mesh.dispose?.();
+      }
+      if (previous.foundationMesh) {
+        this.root.remove(previous.foundationMesh);
+        previous.foundationMesh.dispose?.();
+      }
+      previous.foundationGeometry?.dispose();
+      previous.foundationMaterial?.dispose();
+      disposeModelParts(previous.parts);
+    }
+    this.definitionByKey.set(definition.key, definition);
+    this.renderers.set(definition.key, this.createRendererRecord(definition, parts));
+    if (this.previewDefinitionKey === definition.key) {
+      for (const child of this.previewGroup.children) child.material.dispose();
+      this.previewGroup.clear();
+      this.previewDefinitionKey = null;
+    }
     this.refreshAll();
   }
 
@@ -122,7 +156,7 @@ export class ObjectView {
   }
 
   refreshAll() {
-    const grouped = new Map(this.objectCatalog.map((definition) => [definition.key, []]));
+    const grouped = new Map(Array.from(this.renderers.keys(), (definitionKey) => [definitionKey, []]));
     for (const object of this.objectMap.list()) {
       grouped.get(object.definitionKey)?.push(object);
     }
@@ -416,10 +450,7 @@ export class ObjectView {
       }
       renderer.foundationGeometry?.dispose();
       renderer.foundationMaterial?.dispose();
-      for (const part of renderer.parts) {
-        part.geometry.dispose();
-        part.material.dispose();
-      }
+      disposeModelParts(renderer.parts);
     }
     for (const child of this.previewGroup.children) {
       child.material.dispose();

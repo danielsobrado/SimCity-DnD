@@ -11,6 +11,8 @@ import { InfiniteTerrainView } from './editor/InfiniteTerrainView.js';
 import { MacroFarTerrainView } from './editor/world/MacroFarTerrainView.js';
 import { WorldMapController } from './editor/map/WorldMapController.js';
 import { WorldMapUi } from './editor/map/WorldMapUi.js';
+import { ProceduralAssetManager } from './editor/workshop/ProceduralAssetManager.js';
+import { ProceduralWorkshopUi } from './editor/workshop/ProceduralWorkshopUi.js';
 import { ObjectMap } from './editor/ObjectMap.js';
 import { ObjectView } from './editor/ObjectView.js';
 import { OBJECT_CATALOG } from './editor/objectCatalog.js';
@@ -165,6 +167,12 @@ async function startEditor() {
     objectMap,
     objectCatalog: OBJECT_CATALOG,
   });
+  const proceduralAssetManager = new ProceduralAssetManager({
+    tileSize: tileMap.tileSize,
+    objectMap,
+    objectView,
+    ui,
+  });
   const stylizedSurface = new StylizedSurfaceView({
     terrainView,
     objectMap,
@@ -234,6 +242,7 @@ async function startEditor() {
     defaultBrushSize: config.brush.defaultSize,
     terrainConfig: config.terrain,
     voxelStampStore,
+    proceduralAssetManager,
   });
   controller.focusProvider = () => {
     const renderFocus = viewModeController.getFocusWorld();
@@ -241,6 +250,15 @@ async function startEditor() {
   };
 
   ui.bind(controller);
+  const proceduralWorkshop = new ProceduralWorkshopUi({
+    root,
+    manager: proceduralAssetManager,
+    onBaked: (record) => {
+      controller.selectObjectDefinition(record.key);
+      ui.showToast(`${record.label} is ready to place from Objects.`);
+    },
+  });
+  ui.attachWorkshop(proceduralWorkshop);
   const viewModeUi = new ViewModeUi({ root, controller: viewModeController });
 
   // Switch between near and far view distance depending on whether the imported
@@ -259,7 +277,13 @@ async function startEditor() {
   // Dev-only test hook: lets the perf/screenshot harness import a world and
   // drive the player without the file picker + prompt. Never exposed in builds.
   if (import.meta.env.DEV) {
-    window.__editor = { controller, worldMapController, config, ui };
+    window.__editor = {
+      controller,
+      worldMapController,
+      config,
+      ui,
+      proceduralWorkshop,
+    };
   }
   const assetPipeline = installObjectAssets({
     objectView,
@@ -418,6 +442,7 @@ async function startEditor() {
     worldMapUi.dispose();
     worldMapController.dispose();
     macroFarTerrain.dispose();
+    proceduralWorkshop.dispose();
     viewModeUi.dispose();
     viewModeController.dispose();
     controller.dispose();

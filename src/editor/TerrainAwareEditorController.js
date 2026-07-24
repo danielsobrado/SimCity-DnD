@@ -15,6 +15,7 @@ export class TerrainAwareEditorController extends EditorController {
     this.campaign = null;
     this.importWarnings = [];
     this.focusProvider = null;
+    this.proceduralAssetManager = options.proceduralAssetManager ?? null;
   }
 
   getState() {
@@ -205,18 +206,30 @@ export class TerrainAwareEditorController extends EditorController {
       ),
       ...(this.campaign ? { campaign: cloneCampaign(this.campaign) } : {}),
       ...(this.importWarnings.length > 0 ? { importWarnings: [...this.importWarnings] } : {}),
+      ...(this.proceduralAssetManager
+        ? { proceduralAssets: this.proceduralAssetManager.toDocument() }
+        : {}),
     };
   }
 
   loadDocument(document) {
-    loadWorldDocument(
-      document,
-      this.tileMap,
-      this.heightField,
-      this.objectMap,
-      this.voxelStampStore,
-      () => this.validateLoadedObjectSurfaces(),
-    );
+    const previousProceduralAssets = this.proceduralAssetManager?.toDocument() ?? null;
+    try {
+      this.proceduralAssetManager?.replaceAll(document.proceduralAssets ?? []);
+      loadWorldDocument(
+        document,
+        this.tileMap,
+        this.heightField,
+        this.objectMap,
+        this.voxelStampStore,
+        () => this.validateLoadedObjectSurfaces(),
+      );
+    } catch (error) {
+      if (previousProceduralAssets) {
+        this.proceduralAssetManager.replaceAll(previousProceduralAssets);
+      }
+      throw error;
+    }
     this.campaign = cloneCampaign(document.campaign);
     this.importWarnings = Array.isArray(document.importWarnings)
       ? [...document.importWarnings]

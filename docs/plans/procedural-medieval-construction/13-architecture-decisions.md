@@ -42,6 +42,12 @@ Wave Function Collapse or model-synthesis methods may choose bounded decorative 
 
 The existing one-cell wall object remains valid. Conversion to path-based construction is explicit and reversible until confirmed.
 
+### AD-11 — Bounded workshop assets are ordinary game objects
+
+Procedural asset authoring occurs in a bounded workshop preview. A bake merges geometry by material,
+creates reusable material textures, and registers the result with the existing instanced object
+pipeline. Saves persist the versioned recipe, not generated vertices or per-placement stones.
+
 ## Deferred
 
 - curved authoritative paths;

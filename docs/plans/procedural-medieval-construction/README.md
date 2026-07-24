@@ -1,12 +1,13 @@
 # Procedural Medieval Construction Plans
 
-Status: proposed architecture  
-Target: `Simulator-Test` / Three.js r185.1 / WebGPU-first renderer  
+Status: workshop vertical slice implemented; live construction architecture proposed
+Target: `Simulator-Test` / Three.js r185.1 / WebGPU-first renderer
 Scope: procedural stone walls first, then reusable medieval construction systems
 
 ## Purpose
 
-This folder defines a production plan for replacing the current one-cell wall prop with a deterministic, editable, streamed construction system.
+This folder defines both the implemented bounded procedural-object workshop and the longer-term
+plan for live, editable, streamed construction.
 
 The current repository already provides useful foundations:
 
@@ -25,7 +26,9 @@ The construction system must integrate with those systems. It must not become a 
 
 ## Core decision
 
-Save **construction intent**, compile **structural modules**, generate **masonry detail**, and render **chunked derived geometry**.
+For the editor workshop, save **asset recipes** and use the baked result as a normal instanced game
+object. For future live walls, save **construction intent**, compile **structural modules**, generate
+**masonry detail**, and render **chunked derived geometry**.
 
 ```text
 construction document
@@ -57,6 +60,7 @@ Generated stones are derived data. They are never authoritative world objects.
 14. [Architecture decisions](13-architecture-decisions.md)
 15. [Open questions](14-open-questions.md)
 16. [Implementation notes](IMPLEMENTATION-NOTES.md)
+17. [Procedural object workshop](15-procedural-object-workshop.md)
 
 ## Terminology
 

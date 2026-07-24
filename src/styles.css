@@ -44,7 +44,7 @@ button, input { font: inherit; }
 .panel-note { margin: 9px 0 0; color: #9eaea2; font-size: 12px; }
 
 .tool-row, .terrain-mode-row, .brush-row, .action-grid { display: grid; gap: 8px; }
-.tool-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tool-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .terrain-mode-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .brush-row { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -143,6 +143,143 @@ button, input { font: inherit; }
 }
 .action-button kbd { min-width: 22px; margin: 0 0 0 6px; }
 
+.tool-button--workshop {
+  border-color: #7d6832;
+  color: #f0d98a;
+}
+
+.workshop-overlay {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(5 9 6 / 82%);
+  backdrop-filter: blur(8px);
+}
+
+.workshop-dialog {
+  width: min(1120px, 100%);
+  max-height: min(780px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid #465c4c;
+  border-radius: 14px;
+  background: #172019;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
+}
+
+.workshop-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  padding: 20px 22px;
+  border-bottom: 1px solid #34463a;
+}
+.workshop-header h2 { margin: 2px 0 4px; font-size: 21px; }
+.workshop-header p { margin: 0; color: #9eaea2; font-size: 13px; }
+.workshop-eyebrow {
+  color: #d4b65e !important;
+  font-size: 11px !important;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.workshop-close {
+  width: 38px;
+  height: 38px;
+  border: 1px solid #465c4c;
+  border-radius: 9px;
+  background: #202b23;
+  color: #dce6de;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+.workshop-body {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  min-height: 570px;
+}
+.workshop-controls {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 18px 20px;
+  border-right: 1px solid #34463a;
+}
+.workshop-controls label {
+  display: grid;
+  gap: 6px;
+  color: #bac8bd;
+  font-size: 12px;
+}
+.workshop-controls input,
+.workshop-controls select {
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid #405345;
+  border-radius: 7px;
+  outline: none;
+  background: #111713;
+  color: #edf3ee;
+}
+.workshop-controls input:focus,
+.workshop-controls select:focus { border-color: #d4b65e; }
+.workshop-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.workshop-inline { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.workshop-check { display: grid !important; grid-template-columns: auto 1fr; align-items: center; }
+.workshop-check input { min-height: auto; }
+.workshop-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.workshop-bake { border-color: #d4b65e; background: #3c3920; color: #f5e7ab; }
+.workshop-status {
+  min-height: 36px;
+  margin: 2px 0;
+  color: #aebcaf;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.workshop-status.is-error { color: #e9a3a3; }
+.workshop-preview {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  background: #101612;
+}
+.workshop-preview p {
+  margin: 10px 0 0;
+  color: #87998b;
+  font-size: 12px;
+  text-align: center;
+}
+.workshop-canvas {
+  min-width: 0;
+  min-height: 480px;
+  overflow: hidden;
+  border: 1px solid #34463a;
+  border-radius: 10px;
+}
+.workshop-canvas canvas { display: block; width: 100%; height: 100%; }
+.workshop-preview__badge {
+  position: absolute;
+  z-index: 2;
+  top: 28px;
+  left: 28px;
+  padding: 6px 8px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 6px;
+  background: rgb(16 22 18 / 82%);
+  color: #b8c6ba;
+  font-size: 11px;
+  pointer-events: none;
+}
+
 .viewport-shell { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #0b100d; }
 .viewport-shell canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .topbar, .statusbar, .toast {
@@ -192,4 +329,7 @@ button, input { font: inherit; }
   .editor-shell { grid-template-columns: 240px minmax(0, 1fr); }
   .tile-palette { grid-template-columns: 1fr; }
   .statusbar { max-width: calc(100% - 24px); flex-wrap: wrap; }
+  .workshop-body { grid-template-columns: 1fr; overflow-y: auto; }
+  .workshop-controls { border-right: 0; border-bottom: 1px solid #34463a; }
+  .workshop-canvas { min-height: 380px; }
 }

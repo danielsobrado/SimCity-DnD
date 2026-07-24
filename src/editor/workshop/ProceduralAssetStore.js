@@ -1,0 +1,144 @@
+const ASSET_VERSION = 1;
+const MAX_ASSETS = 32;
+const VALID_ARCHETYPES = new Set(['wall', 'gatehouse', 'tower']);
+const VALID_STYLES = new Set(['granite', 'limestone', 'sandstone']);
+
+function requireFinite(value, field, minimum, maximum) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < minimum || number > maximum) {
+    throw new Error(`${field} must be between ${minimum} and ${maximum}.`);
+  }
+  return number;
+}
+
+function slugify(value) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 28) || 'medieval-build';
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+export function normalizeProceduralRecipe(input = {}) {
+  const archetype = String(input.archetype ?? 'wall');
+  const style = String(input.style ?? 'granite');
+  if (!VALID_ARCHETYPES.has(archetype)) {
+    throw new Error(`Unknown workshop archetype: ${archetype}.`);
+  }
+  if (!VALID_STYLES.has(style)) {
+    throw new Error(`Unknown workshop stone style: ${style}.`);
+  }
+
+  return Object.freeze({
+    archetype,
+    style,
+    width: requireFinite(input.width ?? 8, 'Width', 2, 16),
+    depth: requireFinite(input.depth ?? 2, 'Depth', 1, 12),
+    height: requireFinite(input.height ?? 5, 'Height', 2, 14),
+    seed: Math.trunc(requireFinite(input.seed ?? 1, 'Seed', 0, 0x7fffffff)),
+    detail: Math.trunc(requireFinite(input.detail ?? 2, 'Detail', 1, 3)),
+    remesh: input.remesh !== false,
+    albedo: input.albedo !== false,
+  });
+}
+
+export function createProceduralAssetRecord({ label, recipe }, existingKeys = new Set()) {
+  const normalizedLabel = String(label ?? '').trim().slice(0, 48);
+  if (!normalizedLabel) {
+    throw new Error('A game-object name is required.');
+  }
+  const normalizedRecipe = normalizeProceduralRecipe(recipe);
+  const signature = JSON.stringify([normalizedLabel, normalizedRecipe]);
+  const baseKey = `workshop-${slugify(normalizedLabel)}-${hashString(signature)}`;
+  let key = baseKey;
+  let suffix = 2;
+  while (existingKeys.has(key)) {
+    key = `${baseKey}-${suffix}`;
+    suffix += 1;
+  }
+  return Object.freeze({
+    version: ASSET_VERSION,
+    key,
+    label: normalizedLabel,
+    recipe: normalizedRecipe,
+  });
+}
+
+function normalizeRecord(input) {
+  if (input?.version !== ASSET_VERSION) {
+    throw new Error('Unsupported procedural game-object version.');
+  }
+  if (typeof input.key !== 'string' || !/^workshop-[a-z0-9-]+$/.test(input.key)) {
+    throw new Error('Procedural game object has an invalid key.');
+  }
+  const label = String(input.label ?? '').trim().slice(0, 48);
+  if (!label) {
+    throw new Error('Procedural game object has no label.');
+  }
+  return Object.freeze({
+    version: ASSET_VERSION,
+    key: input.key,
+    label,
+    recipe: normalizeProceduralRecipe(input.recipe),
+  });
+}
+
+export class ProceduralAssetStore {
+  constructor() {
+    this.records = new Map();
+  }
+
+  get size() {
+    return this.records.size;
+  }
+
+  list() {
+    return Array.from(this.records.values());
+  }
+
+  add(input) {
+    if (this.records.size >= MAX_ASSETS) {
+      throw new Error(`The workshop supports at most ${MAX_ASSETS} baked game objects.`);
+    }
+    const record = createProceduralAssetRecord(input, new Set(this.records.keys()));
+    this.records.set(record.key, record);
+    return record;
+  }
+
+  replaceAll(records) {
+    if (!Array.isArray(records)) {
+      throw new Error('Procedural game-object payload must be an array.');
+    }
+    if (records.length > MAX_ASSETS) {
+      throw new Error(`The workshop supports at most ${MAX_ASSETS} baked game objects.`);
+    }
+    const next = new Map();
+    for (const input of records) {
+      const record = normalizeRecord(input);
+      if (next.has(record.key)) {
+        throw new Error(`Duplicate procedural game-object key: ${record.key}.`);
+      }
+      next.set(record.key, record);
+    }
+    this.records = next;
+  }
+
+  toDocument() {
+    return this.list().map((record) => ({
+      version: record.version,
+      key: record.key,
+      label: record.label,
+      recipe: { ...record.recipe },
+    }));
+  }
+}

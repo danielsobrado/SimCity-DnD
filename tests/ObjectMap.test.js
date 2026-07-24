@@ -92,3 +92,28 @@ test('object documents round-trip without overlaps', () => {
   target.loadDocument(objectMap.toDocument());
   assert.deepEqual(target.toDocument(), objectMap.toDocument());
 });
+
+test('runtime workshop definitions use the normal placement map', () => {
+  const { objectMap } = createMaps();
+  objectMap.registerDefinition(Object.freeze({
+    key: 'workshop-wall',
+    label: 'Workshop Wall',
+    footprint: Object.freeze({ width: 3, depth: 1 }),
+    allowedTileIds: Object.freeze([0]),
+  }));
+  const placed = objectMap.place({
+    definitionKey: 'workshop-wall',
+    x: 3,
+    z: 3,
+    rotation: 0,
+  });
+  assert.equal(placed.definitionKey, 'workshop-wall');
+  assert.deepEqual(objectMap.getBounds(3, 3, 'workshop-wall', 0), {
+    minX: 2,
+    minZ: 3,
+    maxX: 4,
+    maxZ: 3,
+    width: 3,
+    depth: 1,
+  });
+});

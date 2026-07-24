@@ -33,7 +33,8 @@ export class EditorUi {
     this.tileCatalog = [...tileCatalog];
     this.tileMap = tileMap;
     this.heightField = heightField;
-    this.objectCatalog = objectCatalog;
+    this.baseObjectCatalog = [...objectCatalog];
+    this.objectCatalog = [...objectCatalog];
     this.objectMap = objectMap;
     this.objectByKey = new Map(objectCatalog.map((definition) => [definition.key, definition]));
     this.controller = null;
@@ -41,6 +42,7 @@ export class EditorUi {
     this.minimapQueued = false;
     this.minimapCenter = { x: 0, z: 0 };
     this.minimapCells = config.world?.minimapCells ?? MINIMAP_SIZE;
+    this.workshop = null;
 
     root.innerHTML = `
       <div class="editor-shell">
@@ -56,6 +58,7 @@ export class EditorUi {
               <button class="tool-button" type="button" data-tool="terrain">Terrain</button>
               <button class="tool-button" type="button" data-tool="object">Objects</button>
               <button class="tool-button" type="button" data-tool="select">Select</button>
+              <button class="tool-button tool-button--workshop" type="button" data-tool="workshop">Workshop</button>
             </div>
           </section>
 
@@ -180,11 +183,26 @@ export class EditorUi {
     this.renderBrushButtons();
   }
 
+  attachWorkshop(workshop) {
+    this.workshop = workshop;
+  }
+
+  setProceduralObjectDefinitions(definitions) {
+    this.objectCatalog = [...this.baseObjectCatalog, ...definitions];
+    this.objectByKey = new Map(this.objectCatalog.map((definition) => [definition.key, definition]));
+    this.renderObjectButtons();
+  }
+
   bind(controller) {
     this.controller = controller;
     this.toolRow.addEventListener('click', (event) => {
       const button = event.target.closest('[data-tool]');
-      if (button) controller.selectTool(button.dataset.tool);
+      if (!button) return;
+      if (button.dataset.tool === 'workshop') {
+        this.workshop?.open();
+        return;
+      }
+      controller.selectTool(button.dataset.tool);
     });
     this.terrainModeRow.addEventListener('click', (event) => {
       const button = event.target.closest('[data-terrain-mode]');
@@ -299,9 +317,9 @@ export class EditorUi {
 
   renderObjectButtons() {
     this.objectPalette.innerHTML = this.objectCatalog.map((definition) => `
-      <button class="object-button" type="button" data-object-key="${definition.key}" title="${definition.label}">
-        <span class="object-button__swatch" style="background:${definition.color}">${definition.icon}</span>
-        <span class="object-button__label">${definition.label}</span>
+      <button class="object-button" type="button" data-object-key="${escapeHtml(definition.key)}" title="${escapeHtml(definition.label)}">
+        <span class="object-button__swatch" style="background:${escapeHtml(definition.color)}">${escapeHtml(definition.icon)}</span>
+        <span class="object-button__label">${escapeHtml(definition.label)}</span>
         <span class="object-button__footprint">${definition.footprint.width}×${definition.footprint.depth}</span>
       </button>
     `).join('');
@@ -341,7 +359,8 @@ export class EditorUi {
 
     this.objectCount.textContent = `${state.objectCount} object${state.objectCount === 1 ? '' : 's'}`;
     const tile = this.tileMap.getTileDefinition(state.selectedTileId);
-    const objectDefinition = this.objectByKey.get(state.selectedObjectKey);
+    const objectDefinition = this.objectByKey.get(state.selectedObjectKey)
+      ?? this.objectCatalog[0];
     const rotatedFootprint = state.objectRotation % 2 === 0
       ? objectDefinition.footprint
       : { width: objectDefinition.footprint.depth, depth: objectDefinition.footprint.width };
@@ -366,7 +385,7 @@ export class EditorUi {
     }
     const selectedDefinition = this.objectByKey.get(state.selectedObject.definitionKey);
     this.selectedObject.innerHTML = `
-      <strong>${selectedDefinition.icon} ${selectedDefinition.label}</strong>
+      <strong>${escapeHtml(selectedDefinition.icon)} ${escapeHtml(selectedDefinition.label)}</strong>
       <span>ID ${state.selectedObject.id}</span>
       <span>Cell ${state.selectedObject.x}, ${state.selectedObject.z}</span>
       <span>Rotation ${state.selectedObject.rotation * 90}°</span>

@@ -44,6 +44,14 @@ export class ObjectMap {
     return definition;
   }
 
+  registerDefinition(definition) {
+    if (!definition || typeof definition.key !== 'string' || !definition.footprint) {
+      throw new Error('Cannot register an invalid object definition.');
+    }
+    this.definitionByKey.set(definition.key, definition);
+    return definition;
+  }
+
   getFootprint(definitionKey, rotation) {
     const definition = this.getDefinition(definitionKey);
     const normalized = normalizeRotation(rotation);
