@@ -54,6 +54,9 @@ Generated stones are derived data. They are never authoritative world objects.
 11. [Configuration, content authoring, and tooling](10-configuration-content-authoring-and-tooling.md)
 12. [Testing, QA, and acceptance](11-testing-qa-and-acceptance.md)
 13. [Delivery roadmap](12-delivery-roadmap.md)
+14. [Architecture decisions](13-architecture-decisions.md)
+15. [Open questions](14-open-questions.md)
+16. [Implementation notes](IMPLEMENTATION-NOTES.md)
 
 ## Terminology
 
