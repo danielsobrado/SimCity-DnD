@@ -1,0 +1,205 @@
+import { canonicalSerialize, checksumCanonical } from './canonicalSerialize.js';
+import { ENTITY_KINDS } from '../model/entityKinds.js';
+import { collectionNameForKind, createEmptyWorldState, listEntities } from '../model/worldState.js';
+import { createWorldDefinition } from '../model/worldDefinition.js';
+
+export const SIMULATION_SCHEMA_VERSION = 1;
+
+export function serializeWorldSnapshot({ definition, state, commandRange = null, eventRange = null }) {
+  const entities = {};
+  for (const kind of ENTITY_KINDS) {
+    entities[collectionNameForKind(kind)] = listEntities(state, kind, { includeDestroyed: true });
+  }
+  const snapshot = {
+    documentVersion: 1,
+    simulationSchemaVersion: SIMULATION_SCHEMA_VERSION,
+    projectionVersion: definition.projectionVersion,
+    worldId: definition.worldId,
+    sourceFingerprint: definition.sourceFingerprint,
+    snapshotTick: state.calendar.tick,
+    worldRevision: state.revision,
+    definition: {
+      worldId: definition.worldId,
+      seed: definition.seed,
+      sourceFingerprint: definition.sourceFingerprint,
+      projectionVersion: definition.projectionVersion,
+      schemaVersion: definition.schemaVersion,
+      physicalScale: definition.physicalScale,
+      cultures: definition.cultures,
+      religions: definition.religions,
+      biomes: definition.biomes,
+      sourceMeta: definition.sourceMeta,
+    },
+    calendar: state.calendar,
+    diagnostics: state.diagnostics,
+    entities,
+    commandRange,
+    eventRange,
+  };
+  const checksum = checksumCanonical(snapshot);
+  return {
+    ...snapshot,
+    snapshotChecksum: checksum,
+  };
+}
+
+export function restoreWorldSnapshot(snapshot) {
+  if (snapshot.simulationSchemaVersion !== SIMULATION_SCHEMA_VERSION) {
+    throw Object.assign(
+      new Error(`unsupported_schema_version:${snapshot.simulationSchemaVersion}`),
+      { code: 'unsupported_schema_version' },
+    );
+  }
+  const expected = checksumCanonical({
+    ...snapshot,
+    snapshotChecksum: undefined,
+  });
+  // Recompute without checksum field
+  const forCheck = { ...snapshot };
+  delete forCheck.snapshotChecksum;
+  const actual = checksumCanonical(forCheck);
+  if (snapshot.snapshotChecksum && snapshot.snapshotChecksum !== actual) {
+    throw Object.assign(new Error('checksum_mismatch'), { code: 'checksum_mismatch' });
+  }
+
+  const definition = createWorldDefinition(snapshot.definition);
+  const state = createEmptyWorldState({
+    calendar: { ...snapshot.calendar },
+    revision: snapshot.worldRevision,
+  });
+  state.diagnostics = structuredClone(snapshot.diagnostics);
+  for (const kind of ENTITY_KINDS) {
+    const key = collectionNameForKind(kind);
+    for (const entity of snapshot.entities[key] ?? []) {
+      state[key].set(entity.id, structuredClone(entity));
+    }
+  }
+  return { definition, state, checksum: actual };
+}
+
+export function createCommandJournal() {
+  const commands = [];
+  return {
+    append(command) {
+      commands.push(structuredClone(command));
+    },
+    list() {
+      return commands.map((c) => structuredClone(c));
+    },
+    clear() {
+      commands.length = 0;
+    },
+    serialize() {
+      return canonicalSerialize(commands);
+    },
+    checksum() {
+      return checksumCanonical(commands);
+    },
+  };
+}
+
+export function createEventHistory({ maxImportant = 10000 } = {}) {
+  const events = [];
+  return {
+    append(event, { important = false } = {}) {
+      events.push({ ...structuredClone(event), important: !!important });
+      if (events.length > maxImportant) {
+        // Drop oldest non-important first
+        const idx = events.findIndex((e) => !e.important);
+        if (idx >= 0) events.splice(idx, 1);
+        else events.shift();
+      }
+    },
+    list() {
+      return events.map((e) => structuredClone(e));
+    },
+    clear() {
+      events.length = 0;
+    },
+  };
+}
+
+export function createInMemorySaveStore() {
+  const saves = new Map();
+  return {
+    async save(slot, payload) {
+      saves.set(slot, structuredClone(payload));
+      return { ok: true, slot };
+    },
+    async load(slot) {
+      if (!saves.has(slot)) {
+        return { ok: false, code: 'missing_save' };
+      }
+      return { ok: true, payload: structuredClone(saves.get(slot)) };
+    },
+    async list() {
+      return [...saves.keys()].sort();
+    },
+  };
+}
+
+export function createReplayRunner({ dispatcher }) {
+  return {
+    replay({ definition, state, commands }) {
+      let current = state;
+      const applied = [];
+      for (const command of commands) {
+        const result = dispatcher.dispatch(current, command);
+        if (!result.ok) {
+          return {
+            ok: false,
+            code: result.code,
+            applied,
+            state: current,
+            definition,
+          };
+        }
+        current = result.state;
+        applied.push(command.id);
+      }
+      return {
+        ok: true,
+        code: 'ok',
+        applied,
+        state: current,
+        definition,
+      };
+    },
+  };
+}
+
+export function createMigrationRegistry() {
+  const migrations = new Map();
+  return {
+    register(fromVersion, toVersion, fn) {
+      migrations.set(`${fromVersion}->${toVersion}`, fn);
+    },
+    migrate(snapshot) {
+      let current = structuredClone(snapshot);
+      while (current.simulationSchemaVersion !== SIMULATION_SCHEMA_VERSION) {
+        const key = `${current.simulationSchemaVersion}->${current.simulationSchemaVersion + 1}`;
+        const fn = migrations.get(key);
+        if (!fn) {
+          throw Object.assign(
+            new Error(`missing_migration:${key}`),
+            { code: 'missing_migration' },
+          );
+        }
+        current = fn(current);
+      }
+      return current;
+    },
+  };
+}
+
+export function buildDiagnosticReport({ definition, state, queries }) {
+  return {
+    worldId: definition.worldId,
+    tick: state.calendar.tick,
+    revision: state.revision,
+    checksum: queries.getStateChecksum(),
+    entityCounts: queries.countByKind(),
+    diagnostics: queries.getDiagnostics(),
+    calendar: queries.getCalendar(),
+  };
+}

@@ -329,3 +329,56 @@ brush:
   defaultSize: 3
 storage:
   key: simcity-dnd.world-editor.v1
+# Authoritative world simulation (test-ready; not wired into the live editor loop).
+simulation:
+  schemaVersion: 1
+  projectionVersion: 1
+  strictValidation: true
+  retainDestroyedEntities: true
+  maxEventsPerTick: 10000
+  kilometersPerUnit: 1
+  time:
+    ticksPerHour: 60
+    hoursPerDay: 24
+    daysPerWeek: 7
+    daysPerMonth: 30
+    monthsPerYear: 12
+    initialYear: 1
+    initialMonth: 1
+    initialDay: 1
+    initialHour: 8
+  geography:
+    graphVersion: 1
+    roadSpeedKmPerHour: 5
+    trailSpeedKmPerHour: 3
+    riverDownstreamSpeedKmPerHour: 8
+    riverUpstreamSpeedKmPerHour: 3
+    seaSpeedKmPerHour: 12
+    maxGeneratedSeaLaneKm: 400
+    pathCacheEntries: 2048
+    dangerWeight: 1.0
+    tollWeight: 1.0
+  persistence:
+    snapshotIntervalDays: 30
+    maximumSnapshots: 12
+    maximumCommandsBetweenSnapshots: 100000
+    importantEventRetentionYears: 20
+    recentReducerEventDays: 30
+  lod:
+    tierBRadiusSettlements: 3
+    tierCRadiusMeters: 500
+    maxPromotionsPerTick: 16
+    maxDemotionsPerTick: 16
+  combat:
+    ticksPerRound: 6
+    defaultMeleeDamage: 8
+    defaultRangedDamage: 6
+    downedThreshold: 0
+  economy:
+    basePriceElasticity: 0.5
+    taxRate: 0.1
+    spoilageEnabled: true
+  population:
+    birthRatePerMonth: 0.002
+    deathRatePerMonth: 0.0015
+    migrationThreshold: 0.4

@@ -1,3 +1,5 @@
+import { validateSimulationConfig } from './validateSimulationConfig.js';
+
 const REQUIRED_POSITIVE_PATHS = Object.freeze([
   Object.freeze(['map', 'tileSize']),
   Object.freeze(['map', 'chunkSize']),
@@ -404,5 +406,8 @@ export function validateEditorConfig(config) {
   }
 
   validateStylizedSurface(config);
+  if (config.simulation !== undefined) {
+    validateSimulationConfig(config.simulation);
+  }
   return config;
 }
